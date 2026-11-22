@@ -745,7 +745,7 @@ esac
                 if libc::setsid() < 0 {
                     return Err(io::Error::last_os_error());
                 }
-                if libc::ioctl(libc::STDIN_FILENO, libc::TIOCSCTTY, 0) < 0 {
+                if libc::ioctl(libc::STDIN_FILENO, libc::TIOCSCTTY as _, 0) < 0 {
                     return Err(io::Error::last_os_error());
                 }
                 Ok(())
@@ -1044,7 +1044,7 @@ esac
             if libc::setsid() < 0 {
                 return Err(io::Error::last_os_error());
             }
-            if libc::ioctl(libc::STDIN_FILENO, libc::TIOCSCTTY, 0) < 0 {
+            if libc::ioctl(libc::STDIN_FILENO, libc::TIOCSCTTY as _, 0) < 0 {
                 return Err(io::Error::last_os_error());
             }
             Ok(())
@@ -1460,7 +1460,7 @@ fn short_workbench_switches_between_graph_and_details_and_preserves_the_draft() 
 }
 
 fn resize_terminal(terminal: &File, rows: u16, columns: u16) {
-    let size = libc::winsize {
+    let mut size = libc::winsize {
         ws_row: rows,
         ws_col: columns,
         ws_xpixel: 0,
@@ -2657,7 +2657,7 @@ fn line_diagnosis_preserves_the_full_evidence_for_every_style_and_preset() {
             assert!(original.contains("model.encoder.out[0]"));
             assert!(!original.contains("contract-repair / baseline · failed-48-32"));
 
-            let size = libc::winsize {
+            let mut size = libc::winsize {
                 ws_row: 24,
                 ws_col: 80,
                 ws_xpixel: 0,
@@ -4311,7 +4311,7 @@ esac
 "##).unwrap();
     std::fs::set_permissions(&backend, std::fs::Permissions::from_mode(0o755)).unwrap();
     let (mut master, mut slave) = (-1, -1);
-    let size = libc::winsize {
+    let mut size = libc::winsize {
         ws_row: 24,
         ws_col: 80,
         ws_xpixel: 0,
@@ -4324,7 +4324,7 @@ esac
                 &mut slave,
                 std::ptr::null_mut(),
                 std::ptr::null_mut(),
-                &size,
+                &mut size,
             )
         },
         0
@@ -4536,7 +4536,7 @@ esac
                 &mut slave,
                 std::ptr::null_mut(),
                 std::ptr::null_mut(),
-                &size,
+                &mut size,
             )
         },
         0
@@ -4628,7 +4628,7 @@ esac
 "##).unwrap();
     std::fs::set_permissions(&backend, std::fs::Permissions::from_mode(0o755)).unwrap();
     let (mut master, mut slave) = (-1, -1);
-    let size = libc::winsize {
+    let mut size = libc::winsize {
         ws_row: 24,
         ws_col: 40,
         ws_xpixel: 0,
@@ -4641,7 +4641,7 @@ esac
                 &mut slave,
                 std::ptr::null_mut(),
                 std::ptr::null_mut(),
-                &size,
+                &mut size,
             )
         },
         0
@@ -4752,7 +4752,7 @@ esac
 "##).unwrap();
     std::fs::set_permissions(&backend, std::fs::Permissions::from_mode(0o755)).unwrap();
     let (mut master, mut slave) = (-1, -1);
-    let size = libc::winsize {
+    let mut size = libc::winsize {
         ws_row: 24,
         ws_col: 40,
         ws_xpixel: 0,
@@ -4765,7 +4765,7 @@ esac
                 &mut slave,
                 std::ptr::null_mut(),
                 std::ptr::null_mut(),
-                &size,
+                &mut size,
             )
         },
         0
@@ -4832,7 +4832,7 @@ esac
 "##).unwrap();
         std::fs::set_permissions(&backend, std::fs::Permissions::from_mode(0o755)).unwrap();
         let (mut master, mut slave) = (-1, -1);
-        let size = libc::winsize {
+        let mut size = libc::winsize {
             ws_row: 24,
             ws_col: width,
             ws_xpixel: 0,
@@ -4845,7 +4845,7 @@ esac
                     &mut slave,
                     std::ptr::null_mut(),
                     std::ptr::null_mut(),
-                    &size,
+                    &mut size,
                 )
             },
             0
@@ -4974,7 +4974,7 @@ fn keyboard_matrix_selects_a_wire_from_another_graph_page() {
         std::fs::write(&backend, script).unwrap();
         std::fs::set_permissions(&backend, std::fs::Permissions::from_mode(0o755)).unwrap();
         let (mut master, mut slave) = (-1, -1);
-        let size = libc::winsize {
+        let mut size = libc::winsize {
             ws_row: 24,
             ws_col: 40,
             ws_xpixel: 0,
@@ -4987,7 +4987,7 @@ fn keyboard_matrix_selects_a_wire_from_another_graph_page() {
                     &mut slave,
                     std::ptr::null_mut(),
                     std::ptr::null_mut(),
-                    &size,
+                    &mut size,
                 )
             },
             0
@@ -5051,7 +5051,7 @@ esac
 "##).unwrap();
         std::fs::set_permissions(&backend, std::fs::Permissions::from_mode(0o755)).unwrap();
         let (mut master, mut slave) = (-1, -1);
-        let size = libc::winsize {
+        let mut size = libc::winsize {
             ws_row: 24,
             ws_col: width,
             ws_xpixel: 0,
@@ -5064,7 +5064,7 @@ esac
                     &mut slave,
                     std::ptr::null_mut(),
                     std::ptr::null_mut(),
-                    &size,
+                    &mut size,
                 )
             },
             0
@@ -5228,7 +5228,7 @@ esac
 "##).unwrap();
         std::fs::set_permissions(&backend, std::fs::Permissions::from_mode(0o755)).unwrap();
         let (mut master, mut slave) = (-1, -1);
-        let size = libc::winsize {
+        let mut size = libc::winsize {
             ws_row: 24,
             ws_col: width,
             ws_xpixel: 0,
@@ -5241,7 +5241,7 @@ esac
                     &mut slave,
                     std::ptr::null_mut(),
                     std::ptr::null_mut(),
-                    &size,
+                    &mut size,
                 )
             },
             0
@@ -5430,7 +5430,7 @@ esac
 "##).unwrap();
                 std::fs::set_permissions(&backend, std::fs::Permissions::from_mode(0o755)).unwrap();
                 let (mut master, mut slave) = (-1, -1);
-                let size = libc::winsize {
+                let mut size = libc::winsize {
                     ws_row: height,
                     ws_col: width,
                     ws_xpixel: 0,
@@ -5443,7 +5443,7 @@ esac
                             &mut slave,
                             std::ptr::null_mut(),
                             std::ptr::null_mut(),
-                            &size,
+                            &mut size,
                         )
                     },
                     0

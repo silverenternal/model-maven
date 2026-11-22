@@ -1659,7 +1659,6 @@ impl<'a> ModelView<'a> {
         self.unconnected_scopes[container].as_ref()
     }
 
-    #[cfg(unix)]
     fn toggle_flat_flow(&mut self) {
         if self.flat_flow {
             self.flat_flow = false;
@@ -4335,7 +4334,7 @@ fn show_view_static(view: &ModelView<'_>, locale: Locale) -> std::io::Result<()>
     Ok(())
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
 

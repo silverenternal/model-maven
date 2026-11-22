@@ -671,7 +671,7 @@ pub(super) fn visible_slice_cells_for_test(
     canvas.visible_slice_cells()
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
 
