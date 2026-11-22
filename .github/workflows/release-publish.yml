@@ -40,13 +40,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create v0.1.0 release/* --target "$(cat "$RUNNER_TEMP/release-sha")" --prerelease --title 'Model-Maven v0.1.0' --notes 'Early release. Native npm packages were built and installation/startup checked on Linux x64/arm64 (glibc 2.39+), macOS x64/arm64, and Windows x64/arm64. Training frameworks and Python environments are managed separately. Windows terminal UI functionality and complete model-training workloads have not been certified across all hardware.'
+          gh release view v0.1.0 >/dev/null 2>&1 || gh release create v0.1.0 release/* --target "$(cat "$RUNNER_TEMP/release-sha")" --prerelease --title 'Model-Maven v0.1.0' --notes 'Early release. Native npm packages were built and installation/startup checked on Linux x64/arm64 (glibc 2.39+), macOS x64/arm64, and Windows x64/arm64. Training frameworks and Python environments are managed separately. Windows terminal UI functionality and complete model-training workloads have not been certified across all hardware.'
       - name: Publish native packages then launcher
         env:
           NODE_AUTH_TOKEN: ${{ secrets.MODEL_MAVEN_NPM_PUBLISH_TOKEN }}
         run: |
           test -n "$NODE_AUTH_TOKEN"
           for package in release/*-linux-*.tgz release/*-darwin-*.tgz release/*-win32-*.tgz; do
-            npm publish "$package" --access public
+            name=$(tar -xOf "$package" package/package.json | node -p "JSON.parse(require('fs').readFileSync(0, 'utf8')).name")
+            if ! npm view "$name@0.1.0" version >/dev/null 2>&1; then npm publish "$GITHUB_WORKSPACE/$package" --access public; fi
           done
-          npm publish release/silverenternal-model-maven-0.1.0.tgz --access public
+          if ! npm view @silverenternal/model-maven@0.1.0 version >/dev/null 2>&1; then npm publish "$GITHUB_WORKSPACE/release/silverenternal-model-maven-0.1.0.tgz" --access public; fi
