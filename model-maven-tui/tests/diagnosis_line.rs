@@ -435,7 +435,7 @@ esac
         .rev()
         .find(|line| line.contains("model probe"))
         .unwrap();
-    assert!(last_probe.starts_with(second.to_str().unwrap()), "{log}");
+    assert!(last_probe.starts_with(second.canonicalize().unwrap().to_str().unwrap()), "{log}");
     assert!(
         !last_probe.contains("--model") && !last_probe.contains("--batch"),
         "{log}"
@@ -741,7 +741,7 @@ elif args[0]=='init':
  config={'schema_version':1,'model':'fixture:build','batch':None,'batch_binding':None,'model_injections':{}}
  dry='--dry-run' in args
  if not dry:
-  time.sleep(.5);path.parent.mkdir(exist_ok=True);path.write_text(json.dumps(config))
+  time.sleep(2.0);path.parent.mkdir(exist_ok=True);path.write_text(json.dumps(config))
  out('init','success',{'committed':not dry,'path':str(path),'config':config})
 else: sys.exit(1)
 "#).unwrap();
@@ -751,7 +751,7 @@ else: sys.exit(1)
         .args(["--line-mode", "--cli", backend.to_str().unwrap()])
         .current_dir(directory.path())
         .env("LC_ALL", "en_US.UTF-8")
-        .env("MODEL_MAVEN_TUI_CLI_TIMEOUT_MS", "200")
+        .env("MODEL_MAVEN_TUI_CLI_TIMEOUT_MS", "1500")
         .env(
             "MODEL_MAVEN_TUI_PREFERENCES",
             directory.path().join("preferences.json"),
@@ -769,7 +769,7 @@ else: sys.exit(1)
         .unwrap();
     let output = child.wait_with_output().unwrap();
     assert!(output.status.success());
-    assert!(started.elapsed() >= Duration::from_millis(500));
+    assert!(started.elapsed() >= Duration::from_millis(2000));
     assert!(
         String::from_utf8(output.stdout)
             .unwrap()
