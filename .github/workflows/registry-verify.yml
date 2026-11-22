@@ -1,0 +1,17 @@
+name: Verify npm registry installation
+on: workflow_dispatch
+permissions:
+  contents: read
+jobs:
+  registry-install:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: |
+          npm install --prefix "$RUNNER_TEMP/installed" --ignore-scripts --no-audit --no-fund @silverenternal/model-maven@0.1.0
+          "$RUNNER_TEMP/installed/node_modules/.bin/m-model" --version
+          "$RUNNER_TEMP/installed/node_modules/.bin/m-model-tui" --version
+          test -d "$RUNNER_TEMP/installed/node_modules/@silverenternal/model-maven-linux-x64"
