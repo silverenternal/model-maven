@@ -36,6 +36,16 @@ for width in (40, 80):
                 if select.select([master], [], [], 0.2)[0]:
                     data.extend(os.read(master, 65536))
             return data.decode(errors="replace")
+        def wait_and_drain(child, master):
+            # The terminal output buffer can fill during repaint, especially on macOS.
+            deadline = time.monotonic() + 20
+            while child.poll() is None and time.monotonic() < deadline:
+                if select.select([master], [], [], 0.1)[0]:
+                    try:
+                        os.read(master, 65536)
+                    except OSError:
+                        break
+            child.wait(timeout=max(0.1, deadline - time.monotonic()))
         child, master = launch()
         try:
             until(child, master, "Open workbench")
@@ -50,7 +60,7 @@ for width in (40, 80):
             os.write(master, b"b")
             until(child, master, "设置")
             os.write(master, b"q")
-            child.wait(timeout=10)
+            wait_and_drain(child, master)
             assert child.returncode == 0
             assert json.loads(preferences.read_text())["language"] == "zh-cn"
         finally:
@@ -62,7 +72,7 @@ for width in (40, 80):
         try:
             until(child, master, "进入工作台")
             os.write(master, b"q")
-            child.wait(timeout=10)
+            wait_and_drain(child, master)
             assert child.returncode == 0
         finally:
             if child.poll() is None:
