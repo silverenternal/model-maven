@@ -1,0 +1,75 @@
+{
+  "schema_version": 1,
+  "task_id": "RUN-01",
+  "status": "done",
+  "baseline": "0.13.41 coordinator worktree",
+  "branch": "master (uncommitted coordinator worktree)",
+  "files_changed": [
+    "src/adapters/runs.rs",
+    "src/application/run_lifecycle.rs",
+    "src/application/evaluation.rs",
+    "src/application/replay_tests.rs",
+    "src/adapters/worker_assets.rs",
+    "python/model_maven_worker/run/snapshot.py",
+    "python/model_maven_worker/run/provenance.py",
+    "python/model_maven_worker/train/probe.py",
+    "python/model_maven_worker/model/loading.py",
+    "tests/train_modes.rs",
+    "tests/cli.rs",
+    "product.json",
+    "runtodo.json",
+    "docs/module-handoff/RUN-01.json",
+    "tests/run_snapshot.rs"
+  ],
+  "implementation": [
+    "Added a project activity lock around run creation and finalization. Only one active run can be admitted; malformed/unknown active records fail closed. Read-only list/show remains available.",
+    "Foreground try/train/evaluate records supervisor PID and start token. Before new admission, the application reconciles verifiably dead supervisors to interrupted, preserving inputs and checkpoints. Missing supervisor identity stays protected.",
+    "Before importing any user model/data/training/evaluator module, the worker snapshots project-local Python files under the run directory, checks each file remained stable during copy, stores a SHA-256 manifest, and imports from read-only snapshot files. Source manifests map snapshot bytes back to stable project paths, so repeat/resume/evaluate compare content rather than per-run snapshot paths.",
+    "Immutable input JSON remains separate from renameable run metadata. Existing parent/child lineage and secret redaction/replay-required behavior remain intact. Environment distribution evidence is recorded; dataset entrypoint/parameters/split/seed and optional data fingerprint are preserved. No content-level data identity is claimed when a fingerprint is absent.",
+    "Coordinator integration patch: snapshot files explicitly pinned by a saved variant under `.model-maven/components` into the immutable run snapshot, verifies the exact descriptor SHA-256, and rejects descriptor drift before user code runs. Discovery remains limited to pinned JSON descriptors; arbitrary non-Python project files remain excluded."
+  ],
+  "validation": [
+    {
+      "command": "cargo test --locked --quiet",
+      "result": "passed: 74 unit, 3 architecture, 42 CLI and all data/model/protocol/readiness/training suites (176 tests total)."
+    },
+    {
+      "command": "cargo test --locked --test train_modes workspace_edits_during_a_run_do_not_change_frozen_code",
+      "result": "passed: running external-loop code writes to the original workspace while the worker continues to execute the run snapshot; snapshot source and execution marker are verified."
+    },
+    {
+      "command": "cargo test --locked --bin m-model adapters::runs::tests",
+      "result": "passed: concurrent creates have one winner; active task blocks new admission; read-only queries work; finish permits next run; unclosed record fails closed."
+    },
+    {
+      "command": "cargo test --locked --bin m-model a_run_with_a_dead_verified_supervisor_is_interrupted_before_new_admission",
+      "result": "passed: dead verified supervisor is recorded interrupted and next task is admitted."
+    },
+    {
+      "command": "cargo test --locked --test train_evaluation",
+      "result": "passed: evaluation gets its own source snapshot and persisted provenance."
+    },
+    {
+      "command": "python3 -m py_compile python/model_maven_worker/run/snapshot.py python/model_maven_worker/run/provenance.py python/model_maven_worker/train/probe.py python/model_maven_worker/model/loading.py python/model_maven_worker/__init__.py; python3 scripts/check_worker_architecture.py; python3 scripts/check_compatibility.py; git diff --check",
+      "result": "passed; 62 worker modules and embedded asset coverage complete."
+    },
+    {
+      "command": "cargo test --locked --test run_snapshot -- --nocapture",
+      "result": "passed: explicitly pinned component descriptor is copied read-only with its exact hash; changed descriptor is rejected as SOURCE_CHANGED."
+    },
+    {
+      "command": "python3 scripts/verify_extension_package.py --binary target/debug/m-model --python python3; python3 scripts/verify_provider_extension.py --binary target/debug/m-model --python python3",
+      "result": "both passed after the snapshot fix: Layer and Provider variant training proceeded; exported bundles restored after original extension/dependency installations were changed or removed; tampered bundle/runtime mismatch checks passed."
+    }
+  ],
+  "integration_patch": [
+    "Synchronized product.json and root TODO source references to 0.13.42.",
+    "RUN-02, RUN-03 and RUN-04 are now ready after RUN-01 completion.",
+    "Snapshot freezes project-local Python files. Non-Python assets and external resources are not copied; dataset content identity requires an explicit fingerprint and is reported as limited when absent.",
+    "The run snapshot originally froze only Python files while edit variants also pin registered component manifest JSON. Training with an extension-backed variant then remapped the manifest fingerprint into a nonexistent snapshot path and failed SOURCE_CHANGED. Snapshot now carries these explicitly pinned component descriptors without broadening to arbitrary data files."
+  ],
+  "remaining": [
+    "Dataset contents, external weights, arbitrary non-Python resources, OS libraries, accelerator drivers and dynamic runtime imports remain outside the code snapshot and must be separately pinned or declared."
+  ],
+  "commit": null
+}

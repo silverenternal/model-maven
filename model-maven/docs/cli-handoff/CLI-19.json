@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "task_id": "CLI-19",
+  "status": "done",
+  "owner": "总协调人",
+  "baseline": "current shared worktree; no commit",
+  "files_changed": [
+    "scripts/verify_cli_interaction.py",
+    "tests/cli_ui_support/mod.rs",
+    "tests/cli_onboarding_ui.rs",
+    "docs/cli-acceptance-matrix.json",
+    "clitodo.json",
+    "docs/cli-handoff/CLI-19.json"
+  ],
+  "implementation": [
+    "Reusable Linux PTY helper sets a predictable terminal size, captures the merged terminal transcript and exit code, and kills timed-out child processes.",
+    "Real-binary smoke runner covers JSON model inspect, JSON forward probe with a real Torch fixture, and TTY existing-model onboarding. It writes step-level report.json and transcript.txt under target/cli-acceptance by default.",
+    "Acceptance matrix traces V0-V3, A0-A13, and CLI-00..CLI-22. Each human workflow separates fixture type, terminal UI evidence, service evidence, and external user/hardware evidence. The runner rejects stale product revision, gate wording/evidence, requirement-status snapshots, workflow references, and CLI task state; release gates remain open.",
+    "The --inject-failure option adds an intentional failed assertion after real steps, writes diagnostic artifacts, and returns exit code 1."
+  ],
+  "validation": [
+    {
+      "command": "python3 scripts/verify_cli_interaction.py",
+      "result": "passed: JSON inspect, JSON probe, and TTY onboarding smoke; report status passed."
+    },
+    {
+      "command": "python3 scripts/verify_cli_interaction.py --output-dir target/cli-acceptance-injected-failure --inject-failure",
+      "result": "verified expected process exit 1; failed status and injected diagnostic persisted in report.json and transcript.txt."
+    },
+    {
+      "command": "cargo test --locked --test cli_onboarding_ui -- --test-threads=1",
+      "result": "passed: all 10 PTY onboarding tests use the shared helper."
+    },
+    {
+      "command": "python3 -m py_compile scripts/verify_cli_interaction.py && cargo fmt --all -- --check && git diff --check",
+      "result": "passed."
+    }
+  ],
+  "evidence_boundary": "These repository fixtures prove the named commands and prompt strings work in this Python/PyTorch environment. They do not prove human usability, product completeness, target hardware behavior, or release readiness.",
+  "remaining": [],
+  "commit": null
+}

@@ -1,0 +1,106 @@
+{
+  "task_id": "CLI-18",
+  "title": "窄终端、纯文本和终端兼容",
+  "status": "in_review",
+  "scope": [
+    "Measure CJK/full-width text, sanitize ANSI/control sequences, wrap and truncate text by display columns.",
+    "Provide terminal-width normalization, color policy for redirection/NO_COLOR/TERM=dumb, and deterministic pagination helpers.",
+    "Cover 40/80/120-column layouts, long paths, Unicode, ANSI cleanup, and pagination in focused tests."
+  ],
+  "files": [
+    "src/presentation/widgets/layout.rs",
+    "src/presentation/widgets/text.rs",
+    "tests/cli_terminal_layout.rs"
+  ],
+  "integration_note": "Production workbench wraps page headings, summaries, action lists and component catalog detail lines by terminal width. Component catalog and run list both support line-based n/p/back pagination; a 40-column PTY session exercises each with 12 records. Real child-process help, parse errors, and human `runs list` output keep stdout/stderr separate and emit no ANSI under redirection.",
+  "validation": [
+    {
+      "command": "rustc --edition=2024 --test tests/cli_terminal_layout.rs --extern libc=target/debug/deps/liblibc-8afd53b54854ee52.rlib -L dependency=target/debug/deps -o /tmp/model-maven-cli18-integration-tests && /tmp/model-maven-cli18-integration-tests",
+      "result": "passed: 9 unit/integration checks, including 40/80/120-column CJK and path wrapping, ANSI/control cleanup, color policy, and pagination"
+    },
+    {
+      "command": "rustc --test src/presentation/widgets/text.rs -o /tmp/model-maven-cli18-text-tests && /tmp/model-maven-cli18-text-tests",
+      "result": "passed: 3 text helper tests"
+    },
+    {
+      "command": "rustfmt --check src/presentation/widgets/layout.rs src/presentation/widgets/text.rs tests/cli_terminal_layout.rs",
+      "result": "passed after formatting"
+    },
+    {
+      "command": "git diff --check -- src/presentation/widgets/layout.rs src/presentation/widgets/text.rs tests/cli_terminal_layout.rs",
+      "result": "passed"
+    },
+    {
+      "command": "cargo test --locked --test cli_terminal_layout",
+      "result": "blocked before compilation: locked clap_complete 4.6.12 requires is_executable ^1.0.6, but the configured crates.io index only offers up to 1.0.5"
+    },
+    {
+      "command": "cargo test --locked --test cli_terminal_layout -- --nocapture",
+      "result": "passed: 9 checks for 40/80/120-column layouts, CJK and long paths, ANSI/control cleanup, color policy, and deterministic pagination."
+    },
+    {
+      "command": "cargo test --locked --bin m-model presentation::widgets::action_list::tests -- --nocapture",
+      "result": "passed: long Unicode action labels wrap within width and ANSI controls are removed."
+    },
+    {
+      "command": "cargo test --locked --quiet",
+      "result": "passed: full Rust workspace after workbench layout integration."
+    },
+    {
+      "command": "cargo test --locked --test cli_terminal_layout -- --nocapture",
+      "result": "passed: 11 tests, including live PTY stderr width resize from 40 to 120 columns, actual NO_COLOR/TERM=dumb environment policy, CJK/path wrapping, ANSI cleanup, redirection policy, and pagination helper"
+    },
+    {
+      "command": "cargo test --locked --test cli_terminal_layout -- --nocapture",
+      "result": "passed: 13 tests, including 40→120 live PTY resize, terminal color environment policy, actual child-process piped help/error stdout/stderr separation with no ANSI under default and NO_COLOR/TERM=dumb, and a PTY workbench run-list session with 12 records navigating next/previous/back across two pages."
+    },
+    {
+      "command": "cargo test --locked --test cli_terminal_layout -- --nocapture",
+      "result": "passed: 13 tests, including live width resize, piped help/error stdout/stderr separation, no ANSI under redirected/default/NO_COLOR/TERM=dumb, and a 12-record PTY run-list next/previous/back session."
+    },
+    {
+      "command": "cargo test --locked --test cli_terminal_layout -- --nocapture",
+      "result": "passed: 13 tests. This includes live PTY resize (40→120), real `m-model runs list` stdout/stderr redirection, piped help/error stream separation, no ANSI with default/NO_COLOR/TERM=dumb, and 40-column PTY run-list navigation through 12 records using n/p/back."
+    },
+    {
+      "command": "cargo clippy --locked --test cli_terminal_layout -- -D warnings",
+      "result": "passed after updating the workbench page renderer call and removing its obsolete text helper import."
+    },
+    {
+      "command": "rustfmt --check --edition 2024 tests/cli_terminal_layout.rs src/presentation/workbench.rs",
+      "result": "passed for CLI-18 touched Rust files; full workspace format check remains independently affected by unformatted shared files."
+    },
+    {
+      "command": "cargo test --locked --test cli_terminal_layout -- --nocapture",
+      "result": "passed: 13/13, including a 40-column PTY workbench session that pages component catalog and run list with n/p/back, 12 fixtures each, and redirected human `m-model runs list` stdout/stderr checks."
+    },
+    {
+      "command": "cargo test --locked --test cli_components_ui -- --nocapture",
+      "result": "passed: 5/5 component workbench regression tests after catalog pagination integration."
+    },
+    {
+      "command": "cargo clippy --locked --test cli_terminal_layout -- -D warnings",
+      "result": "passed."
+    },
+    {
+      "command": "cargo fmt --all && cargo fmt --all -- --check",
+      "result": "format check is currently blocked by rustfmt diffs in unrelated `tests/edit_migration.rs`; that EDIT-05 file was not modified. CLI-18 touched Rust files were formatted."
+    },
+    {
+      "command": "cargo test --locked --test cli_terminal_layout workbench_model_tree_and_probe_calls_paginate_at_40_columns -- --nocapture",
+      "result": "passed: real 40-column PTY workbench session with 46 model-tree rows and 46 observed forward calls; next/previous/back traversed both pages in each browser. Human readability observation remains open."
+    },
+    {
+      "command": "cargo test --locked --test cli_terminal_layout evaluation_sample_history_pages_and_displays_records_at_40_columns -- --exact --nocapture",
+      "result": "passed 1/1: real PyTorch training/evaluation stores 8 evaluator-owned long-ID/long-prediction records; a 40-column PTY opens history, pages next/previous, returns, and selects global row 5 for JSON detail. This proves navigation/access only, not human comprehension of wrapped long values."
+    }
+  ],
+  "remaining": [
+    "No human usability observation has confirmed full-path and long-detail readability at 40 columns; current PTY tests prove interaction and wrapping paths, not visual/user comprehension."
+  ],
+  "assessment": "automated interaction covered; human usability evidence remains open",
+  "integration_files": [
+    "src/presentation/pages/components.rs",
+    "src/presentation/workbench.rs"
+  ]
+}

@@ -1,0 +1,60 @@
+{
+  "schema_version": 1,
+  "task_id": "EDIT-04",
+  "status": "done",
+  "baseline": "Coordinator shared worktree; implementation candidate from explicit root-factory and named-injection recipe; 2026-11-19.",
+  "branch": "master (uncommitted shared worktree)",
+  "files_changed": [
+    "README.md",
+    "docs/cli-guide.md",
+    "docs/contracts/compatibility.json",
+    "docs/module-handoff/EDIT-04.json",
+    "edittodo.json",
+    "examples/assembly/README.md",
+    "examples/assembly/components.py",
+    "examples/assembly/generate.py",
+    "examples/assembly/generated/model_assembly.py",
+    "examples/assembly/recipe.json",
+    "examples/assembly/root_model.py",
+    "moduletodo.json",
+    "product.json",
+    "python/model_maven_worker/__init__.py",
+    "python/model_maven_worker/edit/codegen.py",
+    "python/model_maven_worker/protocol.py",
+    "python/model_maven_worker/runtime/capabilities.py",
+    "src/application/config.rs",
+    "src/cli.rs",
+    "src/domain/capability.rs",
+    "tests/edit_codegen.rs"
+  ],
+  "implementation": [
+    "Readable schema v1 adapters reproduce a user-owned root factory and named injection seams without rewriting project source. The generated module remains importable using normal Python paths and runtime dependencies.",
+    "Schema v2 lowers persisted variant edits to readable Python: built-in Layer add/set/replace/remove, ordered transactions, share-selected and clone-selected across native Sequential, ModuleList and ModuleDict containers. Active cursor, variant seed and per-operation initialization seeds are honored.",
+    "The CLI validates and replays the selected variant before generation, rejects unsupported provider/component edit recipes before creating output, prevents traversal/symlink/overwrite writes, and reports the selected variant revision.",
+    "Generated variant adapters can be used as normal training entrypoints; source snapshot, export and independent restore include the adapter and imported project modules."
+  ],
+  "validation": [
+    {
+      "command": "cargo test --locked --test edit_codegen -- --nocapture",
+      "result": "passed 4/4. Coverage includes v1 fresh-process state/output parity, invalid recipe/overwrite and unsupported Provider/component rejection, selected variant parity against the worker replay (state_dict, outputs, aliases, Sequential/ModuleList/ModuleDict, transaction, add/set/replace/remove/share/clone, cursor truncation), and variant-generated train/export/independent restore."
+    },
+    {
+      "command": "cargo clippy --locked --test edit_codegen -- -D warnings",
+      "result": "passed."
+    },
+    {
+      "command": "python3 -m py_compile python/model_maven_worker/edit/codegen.py; python3 scripts/check_worker_architecture.py; python3 scripts/check_compatibility.py",
+      "result": "passed; 71 embedded modules, protocol/API/state contracts match."
+    },
+    {
+      "command": "cargo fmt -- src/cli.rs src/application/config.rs tests/edit_codegen.rs; git diff --check -- <EDIT-04 files>",
+      "result": "passed."
+    }
+  ],
+  "remaining": [
+    "Not a generic Python graph serializer: arbitrary internal code, dynamic control flow, non-JSON factory arguments and automatic forward rewiring are outside this generator.",
+    "Registered component Layer references and custom Layer Edit Providers fail explicitly; no package installation/lock enforcement is embedded in generated adapters. User modules and compatible dependencies must remain importable."
+  ],
+  "integration_patch": "The public CLI now permits --variant only for assembly generate; it validates the saved variant and active cursor before emitting schema v2 Python. The export lifecycle test trains using the generated variant adapter and restores from an independent directory. Existing project source is unchanged; unsupported extension-layer semantics fail before output creation.",
+  "commit": null
+}

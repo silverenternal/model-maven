@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "task_id": "CLI-21",
+  "status": "in_progress",
+  "owner": "coordinator",
+  "baseline": "0.13.63 shared worktree; acceptance matrix refreshed against current product/clitodo task inventory.",
+  "branch": "master (shared worktree)",
+  "files_changed": [
+    "scripts/verify_cli_interaction.py",
+    "docs/cli-acceptance-matrix.json",
+    "clitodo.json",
+    "docs/cli-handoff/CLI-21.json",
+    "src/presentation/pages/home.rs",
+    "src/presentation/workbench.rs",
+    "tests/cli_recovery_project.rs",
+    "tests/cli_custom_model_journey.rs",
+    "tests/cli_preview_generation.rs"
+  ],
+  "implementation": [
+    "The acceptance matrix now separates current clitodo tasks from completed historical task snapshots. Workflow references may point to either set; archived rows must be completed, unique and disjoint from live tasks.",
+    "The verifier checks current product version, exact current task IDs/status/title/product refs, archived completion state, workflow references, gate snapshots, explicit UI/service/external evidence boundaries, and open release gates before running commands.",
+    "The real CLI acceptance script exercises JSON model inspect, an actual forward probe, and an existing-Python-project TTY onboarding path through return to the workbench.",
+    "项目配置页现提供可达的打开/切换项目目录入口；跨项目后台预览恢复由真实 PTY 验证，原项目请求身份保持绑定，目标项目无预览副作用。",
+    "Real custom-model workflow: existing-project onboarding, an actual failing forward pass, a layer-parameter repair committed only after a successful candidate forward, a repaired probe, background data preview, confirmed one-step managed training, checkpoint evaluation and prediction browsing, two distinct try runs compared in the workbench, and verified export. Original Python source remains byte-identical."
+  ],
+  "validation": [
+    {
+      "command": "python3 scripts/verify_cli_interaction.py --binary target/debug/m-model --python python3 --output-dir docs/acceptance/results/cli-interaction-20261121-current",
+      "result": "passed: matrix integrity; real JSON inspect; real forward probe with observed module calls; PTY onboarding displays existing-project flow, completes probe, returns to workbench, and does not require training inputs. Exit code 0."
+    },
+    {
+      "command": "python3 -m py_compile scripts/verify_cli_interaction.py; python3 -m json.tool docs/cli-acceptance-matrix.json >/dev/null; python3 -m json.tool clitodo.json >/dev/null; git diff --check",
+      "result": "passed: Python syntax, JSON parsing for the CLI matrix and task ledger, and git diff whitespace validation."
+    },
+    {
+      "command": "cargo test --locked --test cli_recovery_project -- --exact --nocapture",
+      "result": "passed 1/1: while a real background preview belongs to A, open project B through the workbench, retry the old preview, confirm success is published in A and no preview/training side effect is created in B."
+    },
+    {
+      "command": "cargo test --locked --test cli_custom_model_journey -- --exact --nocapture",
+      "result": "passed 1/1 on Linux with real PyTorch and PTY: attach a custom model, repair an observed shape error, preview data, train, evaluate and browse predictions, compare two real runs, and export; source file stayed unchanged."
+    }
+  ],
+  "evidence": [
+    "docs/acceptance/results/cli-interaction-20261121-current-refresh/report.json",
+    "docs/acceptance/results/cli-interaction-20261121-current-refresh/transcript.txt",
+    "tests/cli_custom_model_journey.rs"
+  ],
+  "remaining": [
+    "H2 target-user observation of discovery, comprehension, time-to-first-diagnosis, edit consequences and full-path recovery remains external. Platform and accelerator validation remain open."
+  ],
+  "commit": null
+}

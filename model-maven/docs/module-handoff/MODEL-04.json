@@ -1,0 +1,75 @@
+{
+  "schema_version": 1,
+  "task_id": "MODEL-04",
+  "status": "done",
+  "baseline": "da40a7248e07de3bb91775359bcbbc6cdee747c4 plus coordinator worktree changes already present",
+  "branch": "master (uncommitted coordinator worktree)",
+  "files_changed": [
+    "python/model_maven_worker/model/evidence_store.py",
+    "python/model_maven_worker/model/local_probe.py",
+    "python/model_maven_worker/model/probe.py",
+    "tests/model_evidence.rs",
+    "docs/model-contracts.md",
+    "docs/contracts/operations.json",
+    "docs/contracts/module-interfaces.json",
+    "src/cli.rs",
+    "src/application/model.rs",
+    "src/application/mod.rs",
+    "src/application/run_request.rs",
+    "src/domain/worker.rs",
+    "src/adapters/worker_assets.rs",
+    "src/presentation/workbench.rs"
+  ],
+  "implementation": [
+    "Added `--local` for a selected `model probe` path/call. It captures actual call arguments transiently, clones the selected module and input tensors, replays the chosen invocation, and returns invocation-scoped input/output metadata. At most 8 calls are replayed; global side effects from arbitrary user code remain outside the copy boundary.",
+    "Added optional `--batch-fingerprint` for deterministic Dataset factories whose dataset implements stable `sample_id(index)`. Evidence identity covers project Python/TOML/small YAML sources, external Python source for custom module classes, installed dependency versions, model state, model/batch params, injection metadata, variant, contract, worker protocol, sample/split identity and probe selection.",
+    "Only eval-mode probes with stable sample IDs and successful FX/Meta static coverage are cached. Training, dynamic/unsupported graphs, missing identities, incomplete source inventory, oversized weights and partial contracts fail closed. Budget/timeout values are excluded from the key.",
+    "Cache files contain only structural tensor metadata, contract and call identity; user Tensor values, batch params, sample IDs and credentials are not stored. Cache files are atomically replaced with mode 0600 in a mode 0700 directory, retain at most 64 records, and report source/batch/weights/dependency/variant invalidation reasons.",
+    "Added bounded per-invocation structural evidence reconciliation for source-only edits. It reuses unaffected call metadata only when static FX/Meta coverage, complete trace, stable input-content signatures, unique call identity, complete source inventory and isolated implementation-file attribution all hold. The current root forward always executes; cached Tensor values are never reused."
+  ],
+  "verification": [
+    {
+      "command": "cargo test --locked --test model_contracts --test model_evidence --test model_probe --test model_discovery -- --nocapture",
+      "result": "passed: 5 contract, 3 evidence, 1 discovery, and 1 probe integration tests"
+    },
+    {
+      "command": "cargo check --locked",
+      "result": "passed"
+    },
+    {
+      "command": "cargo fmt --all -- --check",
+      "result": "passed"
+    },
+    {
+      "command": "python3 scripts/check_worker_architecture.py",
+      "result": "passed: 55 modules, complete embedded asset coverage"
+    },
+    {
+      "command": "python3 scripts/check_compatibility.py",
+      "result": "passed"
+    },
+    {
+      "command": "git diff --check",
+      "result": "passed"
+    },
+    {
+      "command": "cargo run --locked --quiet -- model probe --help",
+      "result": "confirmed --contract, --batch-fingerprint, and --local are exposed in CLI help"
+    },
+    {
+      "command": "cargo test --locked --test model_evidence --test model_probe -- --nocapture",
+      "result": "passed 6/6. A real two-branch fixture edits branch A implementation and reports partial_reuse for unaffected B/B.linear metadata while revalidating A and root; dynamic FX, shared repeated calls and un-attributable/root/helper source changes fail closed to whole_probe."
+    },
+    {
+      "command": "python3 -m py_compile python/model_maven_worker/model/evidence_store.py python/model_maven_worker/model/probe.py; python3 scripts/check_worker_architecture.py; cargo fmt --all -- --check; git diff --check",
+      "result": "passed after incremental evidence reconciliation; worker architecture asset/import checks, Python syntax, formatting and whitespace checks are clean."
+    }
+  ],
+  "limitations": [
+    "The declared dataset fingerprint is the data provider/user revision boundary. When external sample contents change, callers must change this fingerprint; raw tensors are deliberately not hashed or persisted.",
+    "Source/dependency and weight fingerprinting is bounded. Unknown or oversized inputs disable cache reuse and report a reason.",
+    "FX/Meta unsupported dynamic paths are always reprobed. Local replay copies module state and tensor arguments but cannot isolate arbitrary external side effects.",
+    "Partial reuse is limited to structural metadata. Every invocation still performs a real root forward; dynamic paths, shared/repeated calls, incomplete input fingerprints, un-attributable helper/root sources and any non-source identity change expand to a full probe. It does not reduce forward compute or prove unexecuted branches."
+  ],
+  "integration_patch": "Rust CLI/WorkerRequest pass the optional contract, stable dataset fingerprint and local replay flag. TTY Probe can select a contract, module path and stable batch fingerprint. Worker package assets include both new model services. `docs/contracts/operations.json` and `module-interfaces.json` describe report fields. Product version advanced to 0.13.35 and task source versions were synchronized."
+}

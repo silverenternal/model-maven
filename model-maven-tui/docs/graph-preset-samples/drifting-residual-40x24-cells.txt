@@ -1,0 +1,23 @@
+SPATIAL 3D  /  …[-][+][<][>][^][v][R][E]
+100%  ·  SOURCE · static Drifting graph…
+────────────────────────────────────────
+
+
+                block_07
+ ⠏⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠇
+         ⢀⢄
+⢀⣄⢀⣀⣄⣀⢀⢀⠔⠁⠒⠑⡄              ⣔⠊⠑⠒⠢⢤
+⠐⠖⠐⠒⠖⠒⢔⠁⢝⢵⢕⢵⠈⡢⠐⠒⠐⠒⠐⠒⠰⠒⠐⠒⠐⠒⠐⢮▓⣕⢕⢵⡳⠶⠰⠶⠶⠶⠶⠆
+⠈⠋⠈⠉⠋⠉⠈⠑⠤⡀⣉⡠⠊              ⠓⠤⠤⣉⡩⠝
+         ⠈⠊
+  attention_residu…         norm2
+
+
+
+────────────────────────────────────────
+› DitGen.backbone.blocks.block_07.atten…
+  models/generator.py:304
+  Parameter count unknown
+Space · Toggle motion   │   / x Slice s…
+PgUp / PgDn or [ ]  Pages
+L Layout off · T Mouse on · v detail · …

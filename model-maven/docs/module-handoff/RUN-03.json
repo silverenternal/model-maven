@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "task_id": "RUN-03",
+  "status": "done",
+  "baseline": "Shared working tree at current coordinator integration; Linux x86_64, Python 3.14.10 + torch 2.15.0.",
+  "branch": "master (uncommitted coordinator worktree)",
+  "files_changed": [
+    "acceptancetodo.json",
+    "docs/contracts/compatibility.json",
+    "docs/contracts/module-interfaces.json",
+    "docs/contracts/operations.json",
+    "docs/module-handoff/RUN-03.json",
+    "docs/run-artifacts.md",
+    "moduletodo.json",
+    "product.json",
+    "python/model_maven_worker/run/artifacts.py",
+    "python/model_maven_worker/train/external.py",
+    "runtodo.json",
+    "src/adapters/artifacts.rs",
+    "src/adapters/mod.rs",
+    "src/adapters/runs.rs",
+    "src/adapters/worker_assets.rs",
+    "src/application/run_lifecycle.rs",
+    "tests/run_artifacts.rs"
+  ],
+  "implementation": [
+    "artifacts.json schema v2 stores typed consumes identities as producer {run_id, artifact_id}; external-loop callers can declare them with context.register_artifact(..., consumes=[...]). The request includes its current run_id and rejects malformed identities and self-consumption.",
+    "Resumed runs automatically register consumption of parent_run_id/repeat_of training-checkpoint on the standard checkpoint artifact.",
+    "Cleanup builds a project-wide reverse index from complete schema-v2 run manifests, checks every producer identity exists, and protects standard and custom checkpoints with consumers. Active/unknown runs, legacy v1 manifests, incomplete manifests, invalid/dangling edges and unreadable project run directories fail closed.",
+    "Opaque legacy references remain conservative protection. Cleanup plans re-resolve project consumers at preview and apply through existing fixed-plan checks; unregistered files remain outside the managed catalog."
+  ],
+  "validation": [
+    {
+      "command": "cargo test --locked --test run_artifacts -- --nocapture",
+      "result": "passed 1/1 on Linux/PyTorch. Real producer/consumer runs registered typed identities; cleanup preview returned the actual consumer. A separate release preview was created before a third run declared consumption, and apply re-resolved the graph and skipped release. Existing hash-race, hard-link and multi-file release assertions also passed."
+    },
+    {
+      "command": "cargo test --locked --bin m-model adapters::artifacts::tests -- --nocapture",
+      "result": "passed; manifest path/hash/ownership checks, unsafe declarations, failure semantics, and typed parent checkpoint identity coverage."
+    },
+    {
+      "command": "cargo clippy --locked --test run_artifacts -- -D warnings",
+      "result": "passed."
+    },
+    {
+      "command": "python3 -m py_compile python/model_maven_worker/run/artifacts.py python/model_maven_worker/train/external.py; python3 scripts/check_worker_architecture.py",
+      "result": "passed; 71 modules and complete embedded asset coverage."
+    },
+    {
+      "command": "cargo fmt --all -- --check; git diff --check",
+      "result": "passed."
+    }
+  ],
+  "remaining": [
+    "The graph can only resolve registered Model-Maven run artifacts; arbitrary external copies and consumers that omit declarations are not discoverable.",
+    "Legacy schema-v1 or incomplete runs make project cleanup fail closed until their records are repaired or removed through a future explicit recovery workflow.",
+    "Variant/component package dependency graphs outside run artifact declarations are not unified with this resolver."
+  ],
+  "integration_patch": [
+    "The worker request now carries run_id; this is additive. artifacts.json advances to schema v2 and preserves legacy references. Readers accept v1 manifests for display/local validation but they cannot authorize cleanup.",
+    "tests/run_artifacts.rs exercises real producer/consumer registration and cleanup resolution. No presentation/TUI code changed."
+  ],
+  "commit": null,
+  "limitations": [
+    "The integration fixture reference consumer-run:consumer-42/artifact:weights-v1 is intentionally synthetic and does not resolve to a real consumer run. It proves conservative protection for a non-empty opaque declaration only; it does not prove consumer existence, loading, or complete project-wide reference discovery."
+  ]
+}

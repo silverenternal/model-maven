@@ -1,0 +1,29 @@
+Axis index · output rows
+Selected 1/3
+>    1 model.encoder.out[0]
+     2 model.encoder.out[1]
+     3 net.adapter.out[0]
+Tab axis · ↑/↓ choose · v details
+Enter/click · locate   Esc/a · cancel
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

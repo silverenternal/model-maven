@@ -1,0 +1,61 @@
+{
+  "task_id": "EXT-01",
+  "owner": "总协调人",
+  "baseline": "36dd0f9",
+  "branch": "master",
+  "status": "done",
+  "files_changed": [
+    "src/adapters/components.rs",
+    "python/model_maven_worker/extensions/metadata.py",
+    "tests/extensions_metadata.rs",
+    "docs/module-handoff/EXT-01.json",
+    "python/model_maven_worker/extensions/catalog.py",
+    "src/adapters/worker_assets.rs",
+    "tests/cli.rs"
+  ],
+  "contracts_changed": [
+    "Manifest capability states other than supported require an explanatory reason in both Rust registration validation and the Python metadata validator.",
+    "Capability requires entries are unique, non-empty strings.",
+    "Python metadata validation uses the v1 manifest, schema, defaults, package source, and common SemVer range subset without importing component code."
+  ],
+  "implemented": [
+    "Added a dependency-free Python metadata validator for component IDs, API/schema versions, kinds, entry points, nested parameter Schema/defaults, capabilities, dependency declarations, package source fingerprints, and basic parameter values.",
+    "Aligned Rust capability validation with Python: unsupported/unknown/conditional states require reasons even when written as scalar strings, and requires entries must be unique and non-empty.",
+    "Added Rust integration coverage using shared valid/invalid metadata examples; verifies Rust registration accepts nested defaults/capabilities and rejects unexplained capabilities and malformed dependency ranges.",
+    "Added direct Python validator coverage for accepted nested schema/defaults and rejection of unsupported capabilities, invalid defaults, and malformed dependency ranges.",
+    "Coordinator integrated validate_manifest into the static discovery path before component registration and embedded extensions/metadata.py. Invalid manifest metadata becomes a per-entry discovery issue; the import-marker integration regression confirms discovery remains static."
+  ],
+  "validation": [
+    {
+      "command": "cargo fmt --all -- --check; git diff --check; python3 -m py_compile python/model_maven_worker/extensions/metadata.py; cargo test --locked --test extensions_metadata -- --nocapture",
+      "result": "passed",
+      "scope": "Formatting, diff hygiene, Python syntax and all 3 new metadata integration tests passed."
+    },
+    {
+      "command": "cargo test --locked --test cli component_dependencies_resolve_semver_ranges_transitively_and_lock_variants -- --exact --nocapture; cargo test --locked --test cli component_discovery_registers_static_package_metadata_without_importing_it -- --exact --nocapture",
+      "result": "passed",
+      "scope": "Existing transitive SemVer resolution/optional skip/lock coverage and static discovery no-import marker test passed."
+    },
+    {
+      "command": "cargo test --locked",
+      "result": "passed",
+      "scope": "50 Rust unit tests, 36 CLI integration tests and 3 extension metadata tests passed."
+    },
+    {
+      "command": "python3 scripts/check_worker_architecture.py; cargo test --locked --test extensions_metadata -- --nocapture; cargo test --locked --test cli component_discovery_registers_static_package_metadata_without_importing_it -- --exact --nocapture",
+      "result": "passed",
+      "scope": "46 worker modules, complete embedded asset inventory and acyclic domain imports; 3 cross-language metadata tests; static discovery regression including invalid metadata rejection without importing extension code."
+    },
+    {
+      "command": "cargo fmt --all -- --check; git diff --check; python3 scripts/check_architecture.py; python3 scripts/check_worker_architecture.py; Python syntax compile for all worker modules; cargo test --locked; cargo build --release --locked; run release binary from a temporary project outside the source tree for init/revision, assembly readiness, Dataset probe observation and static extension discovery",
+      "result": "passed",
+      "scope": "58 Rust unit tests, 37 CLI integration tests, 1 core input integration test, 4 Dataset adapter tests, 3 extension metadata tests and 1 model discovery test all passed. Rust and worker architecture checks passed; 47 worker modules compile and have complete embedded assets. Release binary outside repository reported config revision, ready inspect plan, indexed Dataset coverage and one statically discovered component without importing extension code."
+    }
+  ],
+  "integration_patch": [],
+  "remaining": [],
+  "commit": "c2c5c5e",
+  "notes": [
+    "Python metadata validation and Rust registration currently share the tested v1 manifest and common dependency range subset; changing the accepted VersionReq grammar requires extending both sides and their cross-language examples together."
+  ]
+}

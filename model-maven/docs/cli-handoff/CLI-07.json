@@ -1,0 +1,72 @@
+{
+  "task_id": "CLI-07",
+  "status": "done",
+  "owner": "coordinator",
+  "branch": "integration",
+  "files_changed": [
+    "src/presentation/pages/layer_edit.rs",
+    "src/presentation/pages/edit_plan.rs",
+    "src/presentation/widgets/edit_diff.rs",
+    "src/presentation/pages/mod.rs",
+    "src/presentation/widgets/mod.rs",
+    "src/presentation/workbench.rs",
+    "src/presentation/pages/home.rs",
+    "src/presentation/terminal.rs",
+    "tests/cli.rs",
+    "clitodo.json"
+  ],
+  "implemented": [
+    "变体 Layer 参数修改使用目标类型对应的 Schema Patch 表单，展示字段说明、当前值/默认值；留空保留值，只提交实际变更。",
+    "增加成组变体 Layer 参数修复对话：固定显示 model/batch/variant，累计最多 64 项 set 操作，支持继续添加、撤销末项、清空、预览和退出。候选失败时保留可修复草稿，不提交；整体通过后一次提交为单个可撤销版本。",
+    "计划摘要展示目标、操作路径/字段、构造与前向验证状态，不泄露参数值；差异页展示实际结构编辑、共享别名、参数保留/初始化、源码文件和 unified diff。",
+    "工作台已有 Layer add/set/replace/remove 与 variant undo/redo；Layer 模型和批次上下文复用，跨动作无需重复输入。"
+  ],
+  "validation": [
+    {
+      "command": "cargo test --locked --test cli --quiet",
+      "result": "passed: 54 passed, 0 failed"
+    },
+    {
+      "command": "cargo test --locked --quiet edit_plan::tests",
+      "result": "passed: 2 passed"
+    },
+    {
+      "command": "cargo check --locked --quiet",
+      "result": "passed"
+    },
+    {
+      "command": "cargo fmt --all -- --check && git diff --check",
+      "result": "passed"
+    },
+    {
+      "command": "python scripts/check_worker_architecture.py",
+      "result": "passed: 63 modules; embedded asset coverage complete"
+    },
+    {
+      "command": "python scripts/check_compatibility.py",
+      "result": "passed"
+    },
+    {
+      "command": "python scripts/check_architecture.py",
+      "result": "passed"
+    },
+    {
+      "command": "Linux PTY: add Dropout → schema-set p → remove → reload working variant in a new process",
+      "result": "passed: model and batch each requested once; output shape verified"
+    },
+    {
+      "command": "Linux PTY: invalid encoder dimension then add matching head dimension",
+      "result": "passed: failed candidate remains a repairable draft, complete candidate commits, then variant undo/redo succeeds"
+    },
+    {
+      "command": "Source edit integration: multi-file preview/commit/undo/redo and external-change undo guard",
+      "result": "passed: actual unified diff and both file paths reported; external user change is preserved on conflict"
+    }
+  ],
+  "integration_patch": [
+    "Registered layer edit/plan pages and edit diff widget in presentation modules and the human workbench.",
+    "Kept grouped repair as variant parameter edits; source/assembly operations continue through their declared handlers and common report rendering."
+  ],
+  "backend_requests": [],
+  "remaining": []
+}

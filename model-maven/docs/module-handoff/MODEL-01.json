@@ -1,0 +1,53 @@
+{
+  "task_id": "MODEL-01",
+  "owner": "总协调人",
+  "baseline": "36dd0f9",
+  "branch": "master",
+  "status": "done",
+  "files_changed": [
+    "python/model_maven_worker/model/discovery.py",
+    "python/model_maven_worker/model/construction.py",
+    "tests/model_discovery.rs",
+    "src/adapters/worker_assets.rs"
+  ],
+  "interface_changes": [
+    "Added ConstructionSiteCollector in model/discovery.py. It scopes construction provenance to one model factory invocation and returns source locations plus counts for live returned-model instances only.",
+    "construction.py re-exports project_construction_site for the existing model package API and filters captured identities against the returned model graph."
+  ],
+  "implemented": [
+    "Construction capture retains strong references during the factory call, preventing Python id reuse from assigning one instance’s source site to a different instance.",
+    "Source-site counts now include only distinct live modules reachable from the returned model. Temporary modules created and discarded at the same source line do not incorrectly disable source editing.",
+    "The application model job builder was reviewed: Inspect already starts from empty_job and does not require training configuration; no application change was needed.",
+    "Added a CLI integration test covering direct root inspection without project initialization/training config, shared aliases, a user-defined Sequential subclass, construction and class source locations, discarded same-site modules, and invalid/raising factories.",
+    "Coordinator added model_maven_worker/model/discovery.py to the Rust embedded worker asset inventory; embedded-asset coverage and the new root-inspection CLI regression now pass."
+  ],
+  "validation": [
+    {
+      "command": "python3 -m py_compile python/model_maven_worker/model/discovery.py python/model_maven_worker/model/construction.py; direct source-package construction/inspection smoke with PyTorch; cargo fmt --all -- --check; git diff --check",
+      "result": "passed",
+      "scope": "Python syntax, live-instance filtering, same-site discarded module behavior, shared aliases, user-defined container and source definition/construction location checks passed."
+    },
+    {
+      "command": "cargo test --locked --test model_discovery --no-run",
+      "result": "passed",
+      "scope": "The new CLI integration test compiles. Runtime execution is pending the shared Rust worker asset manifest registering model/discovery.py."
+    },
+    {
+      "command": "python3 scripts/check_worker_architecture.py; cargo test --locked --test model_discovery -- --nocapture; cargo test --locked --test cli custom_multimodal_model_handles_dynamic_batches_shared_layers_and_named_losses -- --exact --nocapture",
+      "result": "passed",
+      "scope": "45 worker modules have complete embedded asset coverage and valid import direction; new root inspection/provenance CLI test passed; existing complex multimodal/shared-layer/named-loss CLI regression passed."
+    },
+    {
+      "command": "cargo fmt --all -- --check; git diff --check; python3 scripts/check_architecture.py; python3 scripts/check_worker_architecture.py; Python syntax compile for all worker modules; cargo test --locked; cargo build --release --locked; run release binary from a temporary project outside the source tree for init/revision, assembly readiness, Dataset probe observation and static extension discovery",
+      "result": "passed",
+      "scope": "58 Rust unit tests, 37 CLI integration tests, 1 core input integration test, 4 Dataset adapter tests, 3 extension metadata tests and 1 model discovery test all passed. Rust and worker architecture checks passed; 47 worker modules compile and have complete embedded assets. Release binary outside repository reported config revision, ready inspect plan, indexed Dataset coverage and one statically discovered component without importing extension code."
+    }
+  ],
+  "integration_patch": [],
+  "remaining": [],
+  "notes": [
+    "The existing inspect_model source_definition reports the defining file for a class (for example torch.nn.Linear), while construction_site reports the project callsite. The integration test checks the user Root class definition and the Linear construction site separately.",
+    "No test was skipped or reported as passing at runtime for the Rust CLI integration test; it was compile-checked only because this branch deliberately excludes the shared worker asset manifest."
+  ],
+  "commit": "2c3af5d"
+}

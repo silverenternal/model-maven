@@ -1,0 +1,56 @@
+{
+  "task_id": "CLI-09",
+  "status": "done",
+  "owner": "总协调人",
+  "branch": "integration",
+  "files_changed": [
+    "src/presentation/pages/components.rs",
+    "src/presentation/pages/component_detail.rs",
+    "src/presentation/pages/mod.rs",
+    "src/presentation/workbench.rs",
+    "tests/cli_components_ui.rs",
+    "clitodo.json"
+  ],
+  "implemented": [
+    "组件目录展示 ID、版本、类型、描述、入口、来源、依赖、声明能力和参数 Schema；能力按实际声明状态展示，partial/conditional 不会被夸大为普遍兼容。",
+    "组件详情分开呈现静态 manifest 校验、运行时导入、依赖解析和 Provider 验证状态；操作入口由组件种类和当前清单动态决定。",
+    "交互流程支持组件发现、详情、测试重试和卸载影响预览；测试参数失败后可保留所选组件并重新填写。",
+    "卸载显示配置/变体/源码引用；活动运行阻止卸载时展示运行 ID 与状态，避免继续请求无效确认。"
+  ],
+  "validation": [
+    {
+      "command": "cargo test --locked --quiet",
+      "result": "passed: 110 unit tests, 54 CLI tests, and all integration targets; exit code 0"
+    },
+    {
+      "command": "cargo test --locked --test cli_components_ui --quiet",
+      "result": "passed: 4 PTY integration tests covering component catalog/detail and retry, install failure, referenced-component force confirmation, and active-run uninstall blocking"
+    },
+    {
+      "command": "cargo test --locked --bin m-model --quiet presentation::pages::components::tests",
+      "result": "passed: 2 page tests"
+    },
+    {
+      "command": "cargo test --locked --bin m-model --quiet presentation::pages::component_detail::tests",
+      "result": "passed: 1 page test"
+    },
+    {
+      "command": "cargo check --locked --quiet",
+      "result": "passed"
+    },
+    {
+      "command": "cargo fmt --all -- --check && git diff --check",
+      "result": "passed"
+    },
+    {
+      "command": "python scripts/check_worker_architecture.py && python scripts/check_compatibility.py && python scripts/check_architecture.py",
+      "result": "passed in the prior validation of the same implementation state"
+    }
+  ],
+  "integration_patch": [
+    "Connected component catalog/detail renderers and dynamic actions to the workbench component flow.",
+    "Kept backend component operations and confirmations in the application service layer; presentation consumes operation results and diagnostics."
+  ],
+  "backend_requests": [],
+  "remaining": []
+}

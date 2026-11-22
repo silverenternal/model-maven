@@ -1,0 +1,1383 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://model-maven.local/contracts/operations-v2.json",
+  "title": "Model-Maven operation plan contract v2",
+  "description": "Version 2 is produced and consumed by the application service for supported operations; conditional capability state is preserved separately from unknown.",
+  "type": "object",
+  "required": [
+    "contract_version",
+    "plan_id",
+    "operation",
+    "readiness",
+    "inputs"
+  ],
+  "properties": {
+    "contract_version": {
+      "const": 2
+    },
+    "plan_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "operation": {
+      "type": "string",
+      "minLength": 1
+    },
+    "readiness": {
+      "$ref": "#/$defs/readiness"
+    },
+    "inputs": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/inputBinding"
+      }
+    },
+    "base_revision": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "additionalProperties": true,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "readiness": {
+            "properties": {
+              "state": {
+                "const": "ready"
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "readiness": {
+            "properties": {
+              "facts": {
+                "items": {
+                  "$ref": "#/$defs/availableWhenRequired"
+                }
+              },
+              "capabilities": {
+                "items": {
+                  "$ref": "#/$defs/availableWhenRequired"
+                }
+              }
+            }
+          },
+          "inputs": {
+            "items": {
+              "$ref": "#/$defs/availableWhenRequired"
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "readiness": {
+            "properties": {
+              "state": {
+                "const": "conditional"
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "readiness": {
+            "properties": {
+              "conditions": {
+                "minItems": 1,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "factState": {
+      "type": "string",
+      "enum": [
+        "available",
+        "missing",
+        "unsupported",
+        "conditional",
+        "unknown"
+      ]
+    },
+    "readinessState": {
+      "type": "string",
+      "enum": [
+        "ready",
+        "needs_input",
+        "conditional",
+        "unsupported",
+        "unknown"
+      ]
+    },
+    "source": {
+      "type": "object",
+      "required": [
+        "kind"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "project_config",
+            "command_line",
+            "user_session",
+            "saved_run",
+            "model_variant",
+            "data_adapter",
+            "user_callable",
+            "generated",
+            "external",
+            "unknown"
+          ]
+        },
+        "reference": {
+          "type": "string"
+        },
+        "revision": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    },
+    "inputBinding": {
+      "type": "object",
+      "required": [
+        "key",
+        "state",
+        "source",
+        "required",
+        "sensitive"
+      ],
+      "properties": {
+        "key": {
+          "type": "string",
+          "minLength": 1
+        },
+        "state": {
+          "$ref": "#/$defs/factState"
+        },
+        "source": {
+          "$ref": "#/$defs/source"
+        },
+        "value": {},
+        "required": {
+          "type": "boolean"
+        },
+        "sensitive": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": true
+    },
+    "fact": {
+      "type": "object",
+      "required": [
+        "key",
+        "state",
+        "required"
+      ],
+      "properties": {
+        "key": {
+          "type": "string",
+          "minLength": 1
+        },
+        "state": {
+          "$ref": "#/$defs/factState"
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/source"
+        }
+      },
+      "additionalProperties": true
+    },
+    "capability": {
+      "type": "object",
+      "required": [
+        "id",
+        "state",
+        "required"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "state": {
+          "$ref": "#/$defs/factState"
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "provider": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    },
+    "action": {
+      "type": "object",
+      "required": [
+        "id",
+        "label",
+        "availability"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1
+        },
+        "availability": {
+          "type": "string",
+          "enum": [
+            "available",
+            "conditional",
+            "unsupported",
+            "unknown"
+          ]
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    },
+    "readiness": {
+      "type": "object",
+      "required": [
+        "state",
+        "facts",
+        "capabilities",
+        "conditions",
+        "actions"
+      ],
+      "properties": {
+        "state": {
+          "$ref": "#/$defs/readinessState"
+        },
+        "facts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/fact"
+          }
+        },
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/capability"
+          }
+        },
+        "conditions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "actions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/action"
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "operationRequest": {
+      "type": "object",
+      "required": [
+        "contract_version",
+        "operation",
+        "inputs",
+        "parameters"
+      ],
+      "properties": {
+        "contract_version": {
+          "const": 2
+        },
+        "operation": {
+          "type": "string",
+          "minLength": 1
+        },
+        "inputs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/inputBinding"
+          }
+        },
+        "parameters": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": true
+    },
+    "availableWhenRequired": {
+      "if": {
+        "properties": {
+          "required": {
+            "const": true
+          }
+        },
+        "required": [
+          "required"
+        ]
+      },
+      "then": {
+        "properties": {
+          "state": {
+            "const": "available"
+          }
+        }
+      }
+    },
+    "modelIdentity": {
+      "type": "object",
+      "required": [
+        "model_ref"
+      ],
+      "properties": {
+        "model_ref": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_revision": {
+          "type": "string"
+        },
+        "variant_ref": {
+          "type": "string"
+        },
+        "variant_revision": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    },
+    "moduleInvocationIdentity": {
+      "type": "object",
+      "required": [
+        "probe_id",
+        "forward_id",
+        "batch_id",
+        "module_instance_id",
+        "invocation_index",
+        "alias_paths",
+        "input_output_paths"
+      ],
+      "properties": {
+        "probe_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "forward_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "batch_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "module_instance_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "invocation_index": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "parent_invocation_id": {
+          "type": "string"
+        },
+        "alias_paths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "input_output_paths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "callsite": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    },
+    "stateDisposition": {
+      "type": "string",
+      "enum": [
+        "preserved",
+        "reset",
+        "migrated",
+        "not_applicable",
+        "unknown"
+      ]
+    },
+    "stateImpact": {
+      "type": "object",
+      "required": [
+        "model_weights",
+        "optimizer_state",
+        "random_state",
+        "data_cursor",
+        "scheduler_state",
+        "notes"
+      ],
+      "properties": {
+        "model_weights": {
+          "$ref": "#/$defs/stateDisposition"
+        },
+        "optimizer_state": {
+          "$ref": "#/$defs/stateDisposition"
+        },
+        "random_state": {
+          "$ref": "#/$defs/stateDisposition"
+        },
+        "data_cursor": {
+          "$ref": "#/$defs/stateDisposition"
+        },
+        "scheduler_state": {
+          "$ref": "#/$defs/stateDisposition"
+        },
+        "notes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "editPlan": {
+      "type": "object",
+      "required": [
+        "plan_id",
+        "base_revision",
+        "state",
+        "operations",
+        "impact"
+      ],
+      "properties": {
+        "plan_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "base_revision": {
+          "type": "string",
+          "minLength": 1
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "draft",
+            "needs_decision",
+            "ready_to_apply",
+            "applied",
+            "rejected",
+            "stale",
+            "unknown"
+          ]
+        },
+        "operations": {
+          "type": "array"
+        },
+        "impact": {
+          "$ref": "#/$defs/stateImpact"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "ready_to_apply"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "operations": {
+                "minItems": 1
+              }
+            }
+          }
+        }
+      ],
+      "additionalProperties": true
+    },
+    "artifactRef": {
+      "type": "object",
+      "required": [
+        "artifact_id",
+        "kind",
+        "uri",
+        "owner_operation_id"
+      ],
+      "properties": {
+        "artifact_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "type": "string",
+          "minLength": 1
+        },
+        "uri": {
+          "type": "string",
+          "minLength": 1
+        },
+        "media_type": {
+          "type": "string"
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{64}$"
+        },
+        "owner_operation_id": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": true
+    },
+    "operationEvent": {
+      "type": "object",
+      "required": [
+        "operation_id",
+        "sequence",
+        "kind",
+        "state",
+        "artifacts"
+      ],
+      "properties": {
+        "operation_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "kind": {
+          "type": "string",
+          "minLength": 1
+        },
+        "state": {
+          "type": "string",
+          "minLength": 1
+        },
+        "progress": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        "message": {
+          "type": "string"
+        },
+        "artifacts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/artifactRef"
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "diagnostic": {
+      "type": "object",
+      "required": [
+        "code",
+        "message"
+      ],
+      "properties": {
+        "code": {
+          "type": "string",
+          "minLength": 1
+        },
+        "message": {
+          "type": "string"
+        },
+        "hint": {
+          "type": "string"
+        },
+        "details": {
+          "type": "object",
+          "required": [
+            "severity",
+            "recovery_actions",
+            "evidence_state"
+          ],
+          "properties": {
+            "severity": {
+              "type": "string",
+              "enum": [
+                "info",
+                "warning",
+                "error",
+                "fatal"
+              ]
+            },
+            "scope": {
+              "type": "object",
+              "properties": {
+                "operation_id": {
+                  "type": "string"
+                },
+                "model_ref": {
+                  "type": "string"
+                },
+                "source_revision": {
+                  "type": "string"
+                },
+                "batch_ref": {
+                  "type": "string"
+                },
+                "run_id": {
+                  "type": "string"
+                },
+                "module_path": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": true
+            },
+            "recovery_actions": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "id",
+                  "label",
+                  "availability",
+                  "requires_confirmation"
+                ],
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "label": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "availability": {
+                    "type": "string",
+                    "enum": [
+                      "available",
+                      "conditional",
+                      "unsupported",
+                      "unknown"
+                    ]
+                  },
+                  "reason": {
+                    "type": "string"
+                  },
+                  "requires_confirmation": {
+                    "type": "boolean"
+                  }
+                },
+                "additionalProperties": true
+              }
+            },
+            "evidence_state": {
+              "type": "string",
+              "enum": [
+                "complete",
+                "partial",
+                "unknown",
+                "not_applicable"
+              ]
+            }
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "contract_status": {
+    "protocol": "proposed",
+    "current_report_shell": "implemented",
+    "planner_and_typed_operation_service": "proposed"
+  },
+  "readiness_semantics": {
+    "ready": "当前所选操作的必要输入与能力均 available。",
+    "needs_input": "一个或多个必要事实为 missing；只阻塞所选操作。",
+    "unsupported": "必要能力明确不受当前 provider 支持。",
+    "conditional": "可执行但必须先满足列明的条件或用户决策；conditions 必须非空。",
+    "unknown": "没有足够证据判断；不得降格成 available 或成功。",
+    "optional_unknown": "required=false 的事实或能力不会阻止 ready；仍须如实展示。"
+  },
+  "operation_catalog": {
+    "authority": "product.json#/behavior_contracts/G-validation/operation_requirements",
+    "execution_owner_semantics": {
+      "python_worker": "worker_operation must be a registered key in compatibility.json.operations; dispatch and feature presence are checked against the live worker registry.",
+      "rust_cli": "The operation is completed by Rust-side adapters/services and must not claim a Python worker operation.",
+      "current_cli": "Each documented CLI path must resolve in the derived public Clap command tree; alternatives use slash-separated command names and option tokens are checked on the owning command."
+    },
+    "operations": {
+      "inspect_model": {
+        "required": [
+          "可构造的模型入口及其实际所需参数"
+        ],
+        "not_required": [
+          "示例批次",
+          "完整数据适配器",
+          "train.mode",
+          "训练步骤",
+          "Loss",
+          "优化器",
+          "评估器"
+        ],
+        "current_cli": "model inspect",
+        "worker_operation": "inspect",
+        "execution_status": "implemented",
+        "plan_status": "proposed",
+        "execution_owner": "python_worker"
+      },
+      "forward_probe": {
+        "required": [
+          "可构造的模型入口",
+          "一个示例批次及可执行的 forward 参数绑定"
+        ],
+        "not_required": [
+          "DataLoader",
+          "train.mode",
+          "训练步骤",
+          "Loss",
+          "优化器",
+          "评估器"
+        ],
+        "current_cli": "model probe",
+        "worker_operation": "probe",
+        "execution_status": "implemented",
+        "plan_status": "proposed",
+        "execution_owner": "python_worker"
+      },
+      "loss_probe": {
+        "required": [
+          "模型与批次",
+          "无更新的 Loss 计算入口或 managed-step 的前向/Loss 能力"
+        ],
+        "not_required": [
+          "优化器",
+          "完整训练循环"
+        ],
+        "current_cli": "model verify --loss",
+        "worker_operation": "verify",
+        "execution_status": "partial: 当前 verify 会执行 backward；独立只算 Loss 的操作未接入",
+        "plan_status": "proposed",
+        "execution_owner": "python_worker"
+      },
+      "training_probe": {
+        "required": [
+          "当前训练模式所需输入",
+          "适配器可预算执行的步骤与所需观测能力"
+        ],
+        "training_mode_requirements": true,
+        "current_cli": "try",
+        "worker_operation": "training_probe",
+        "execution_status": "implemented",
+        "plan_status": "proposed",
+        "execution_owner": "python_worker"
+      },
+      "managed_train": {
+        "required": [
+          "当前 managed/manual 训练模式所需输入",
+          "可停止和可报告进度的执行适配器"
+        ],
+        "training_mode_requirements": true,
+        "current_cli": "train",
+        "worker_operation": "train",
+        "execution_status": "implemented",
+        "plan_status": "proposed",
+        "execution_owner": "python_worker"
+      },
+      "external_train": {
+        "required": [
+          "可调用 train.loop 及其实际参数"
+        ],
+        "not_required": [
+          "独立 data 字段",
+          "独立 model 字段",
+          "项目优化器声明",
+          "评估器"
+        ],
+        "current_cli": "train --loop",
+        "worker_operation": "train",
+        "execution_status": "implemented",
+        "plan_status": "proposed",
+        "execution_owner": "python_worker"
+      },
+      "resume_train": {
+        "required": [
+          "明确可解析的来源运行",
+          "可用 checkpoint 与适配器恢复协议",
+          "T-continue 兼容性检查"
+        ],
+        "not_required": [
+          "与该循环无关的额外数据或模型描述"
+        ],
+        "current_cli": "train --resume",
+        "worker_operation": "train",
+        "execution_status": "partial: 已支持内建状态恢复；完整自定义状态兼容仍受声明协议限制",
+        "plan_status": "proposed",
+        "execution_owner": "python_worker"
+      },
+      "inspect_component": {
+        "required": [
+          "一个注册或临时组件描述"
+        ],
+        "not_required": [
+          "完整训练配置"
+        ],
+        "current_cli": "component show/list",
+        "execution_status": "implemented",
+        "plan_status": "proposed",
+        "execution_owner": "rust_cli"
+      },
+      "inspect_layers": {
+        "required": [
+          "可构造模型或与当前来源匹配的结构证据"
+        ],
+        "not_required": [
+          "训练步骤",
+          "Loss",
+          "优化器"
+        ],
+        "current_cli": "layer list",
+        "worker_operation": "layers",
+        "execution_status": "implemented",
+        "plan_status": "proposed",
+        "execution_owner": "python_worker"
+      },
+      "plan_layer_edit": {
+        "required": [
+          "可解析模型来源和明确 Layer 选择",
+          "目标持久化方式与适用编辑提供者"
+        ],
+        "not_required": [
+          "训练循环",
+          "优化器"
+        ],
+        "current_cli": "layer add/set/replace/remove --dry-run",
+        "worker_operation": "edit",
+        "execution_status": "partial: 当前 CRUD 计划能力已接入；统一多来源计划/冲突状态待 EDIT",
+        "plan_status": "proposed",
+        "execution_owner": "python_worker"
+      },
+      "apply_layer_edit": {
+        "required": [
+          "基础版本仍匹配的编辑计划",
+          "必需检查通过及已明确的状态/连接策略",
+          "目标可写或可保存变体"
+        ],
+        "not_required": [
+          "完整训练接入"
+        ],
+        "current_cli": "layer add/set/replace/remove",
+        "worker_operation": "edit",
+        "execution_status": "partial: variant/source 事务已实现；统一 state impact 与迁移能力待 EDIT",
+        "plan_status": "proposed",
+        "execution_owner": "python_worker"
+      },
+      "test_extension": {
+        "required": [
+          "扩展描述/入口与对应能力测试夹具"
+        ],
+        "not_required": [
+          "全部训练功能"
+        ],
+        "current_cli": "component test",
+        "worker_operation": "component_test",
+        "execution_status": "implemented",
+        "plan_status": "proposed",
+        "execution_owner": "python_worker"
+      },
+      "evaluate": {
+        "required": [
+          "已结束的训练运行和可验证 checkpoint",
+          "当前模型源码与训练时模型源码一致",
+          "项目评估入口与指定数据切分"
+        ],
+        "not_required": [
+          "训练步骤",
+          "优化器",
+          "分类 logits 或单一标签结构"
+        ],
+        "current_cli": "evaluate --run <id> --evaluator <module:callable> --data <module:factory>",
+        "worker_operation": "evaluate",
+        "execution_status": "implemented: custom task evaluator, checkpoint verification and source/data provenance",
+        "plan_status": "proposed",
+        "execution_owner": "python_worker"
+      },
+      "data_classification_index": {
+        "required": [
+          "可读取的分类目录（类别子目录）",
+          "项目元数据目录"
+        ],
+        "not_required": [
+          "PyTorch",
+          "模型入口",
+          "训练器"
+        ],
+        "current_cli": "data index --root <CLASS_FOLDER> --verify",
+        "worker_operation": "data_index",
+        "execution_status": "implemented",
+        "plan_status": "proposed",
+        "execution_owner": "python_worker",
+        "notes": [
+          "完整扫描内容指纹；verify 显式解码全部索引图像。",
+          "损坏文件排除须用户选择并确认；原始文件不会被改动。",
+          "分类预设只应用根路径与源指纹匹配的项目协议，源内容变化后拒绝静默复用。"
+        ]
+      }
+    }
+  },
+  "current_report_compatibility": {
+    "status": "implemented legacy shell; not equivalent to OperationPlan readiness",
+    "fields": {
+      "protocol_version": "worker/report envelope integer; currently 1",
+      "operation": "string. Worker-backed Report.operation commonly uses inspect/probe/verify/training_probe/train/layers/edit; Rust-owned operations use names such as assembly_show, component_show, or runs_list. These are not yet one canonical operation_ref.",
+      "status": "success|error only; does not encode needs_input/unsupported/unknown readiness.",
+      "data": "operation-specific JSON object; fields documented per operation and not globally uniform.",
+      "diagnostics[]": {
+        "code": "stable machine identifier by existing behavior",
+        "message": "human-readable concise explanation",
+        "hint": "optional recovery guidance; not an executable action"
+      }
+    },
+    "data_field_mappings": {
+      "inspect_model / inspect_layers": {
+        "legacy_paths": [
+          "data.modules[]",
+          "data.parameters",
+          "data.trainable_parameters",
+          "data.origin",
+          "data.seed",
+          "data.variant_applied"
+        ],
+        "module_row_fields": [
+          "path",
+          "aliases",
+          "type",
+          "instance_id",
+          "own_parameters",
+          "parameters",
+          "editable_params",
+          "source",
+          "source_editable_fields",
+          "source_set_block_reason",
+          "can_source_set",
+          "source_definition",
+          "construction_site",
+          "can_set",
+          "can_insert",
+          "can_source_insert"
+        ],
+        "planned_mapping": {
+          "path": "ModelIdentity/ModuleIdentity",
+          "aliases": "ModuleIdentity.alias_paths",
+          "instance_id": "ModuleIdentity.module_instance_id",
+          "editable_params/can_set/can_insert": "module capability evidence",
+          "source/source_definition/construction_site": "source location evidence"
+        },
+        "status": "legacy worker fields implemented; typed identity and capability DTOs proposed"
+      },
+      "forward_probe": {
+        "legacy_paths": [
+          "data.inputs",
+          "data.outputs",
+          "data.calls[]",
+          "data.shape_inference",
+          "data.contract_report",
+          "data.local_probe_reports[]",
+          "data.evidence_cache",
+          "data.calls_observed",
+          "data.trace_truncated",
+          "data.observed_mode",
+          "data.coverage",
+          "data.origin",
+          "data.seed",
+          "data.variant_applied",
+          "data.edit_effects",
+          "on error: data.failure_location.last_observed_module_call",
+          "on error: data.failure_location.project_stack"
+        ],
+        "call_fields": [
+          "call_id",
+          "module_instance_id",
+          "paths",
+          "module_type",
+          "invocation_index",
+          "parent_call_id",
+          "inputs",
+          "outputs"
+        ],
+        "evidence_cache_contract": {
+          "branch_reuse_path": "data.evidence_cache.branch_reuse",
+          "status": [
+            "partial_reuse",
+            "whole_probe"
+          ],
+          "reused": "Only matching unaffected per-call structural metadata; never Tensor values or forward computation.",
+          "revalidated": "Per-call metadata checked against the current execution.",
+          "root_forward_executed": "true; a new real root forward is required for every probe.",
+          "tensor_reuse": "false",
+          "expanded_scope_reason": "Explains why dynamic, shared, incomplete, or unattributable evidence requires whole-probe validation."
+        },
+        "planned_mapping": {
+          "module_instance_id": "ModuleInvocationIdentity.module_instance_id",
+          "paths": "ModuleInvocationIdentity.alias_paths",
+          "parent_call_id": "parent_invocation_id",
+          "inputs/outputs": "port evidence",
+          "trace_truncated/coverage": "evidence boundary"
+        },
+        "status": "runtime probe and optional declared port contracts implemented; typed cross-language port DTO remains proposed"
+      },
+      "loss_probe / verify": {
+        "legacy_paths": [
+          "data.inputs",
+          "data.outputs",
+          "data.loss",
+          "data.gradients[]",
+          "data.disconnected_parameters[]",
+          "data.gradient_count",
+          "data.observed_mode",
+          "data.coverage"
+        ],
+        "gradient_fields": [
+          "name",
+          "finite",
+          "norm"
+        ],
+        "planned_mapping": {
+          "loss": "named metric/evaluation evidence",
+          "gradients[].name": "parameter identity",
+          "gradients[].finite/norm": "gradient evidence",
+          "disconnected_parameters": "diagnostic scope"
+        },
+        "status": "backward verification implemented; independent no-backward loss-only operation proposed"
+      },
+      "training_probe": {
+        "legacy_paths": [
+          "data.training_mode",
+          "data.training_step|data.training_loop",
+          "data.requested_steps",
+          "data.completed_steps",
+          "data.optimizer/optimizer_groups",
+          "data.optimizer_updates",
+          "data.mean_loss",
+          "data.last_loss",
+          "data.mean_losses",
+          "data.mean_metrics",
+          "data.last_outputs",
+          "data.elapsed_seconds",
+          "data.checkpoint_saved",
+          "data.coverage",
+          "data.runtime",
+          "data.source_manifest"
+        ],
+        "planned_mapping": {
+          "requested_steps/completed_steps": "budget and progress evidence",
+          "optimizer/optimizer_groups/optimizer_updates": "named optimizer state",
+          "mean_loss/last_loss/mean_losses/mean_metrics": "named metric evidence",
+          "last_outputs": "model output evidence",
+          "runtime": "environment identity",
+          "source_manifest": "input source revision"
+        },
+        "status": "worker training probe implemented; stable metric/state DTOs proposed"
+      },
+      "managed_train / external_train / resume_train": {
+        "legacy_paths": [
+          "Report.status",
+          "data.training_mode",
+          "data.completed_steps",
+          "data.mean_loss",
+          "data.mean_metrics",
+          "data.checkpoint_saved",
+          "data.checkpoint",
+          "data.checkpoint_state",
+          "data.resume_state",
+          "data.model_state_sha256",
+          "data.coverage",
+          "data.runtime",
+          "run repository record/progress.jsonl/worker.log",
+          "diagnostics[]"
+        ],
+        "planned_mapping": {
+          "run repository record": "run identity and immutable input snapshot",
+          "progress.jsonl": "ordered OperationEvent",
+          "data.checkpoint/checkpoint_state/resume_state": "ArtifactRef plus state compatibility",
+          "data.mean_metrics": "named metric artifact"
+        },
+        "status": "current run/report shapes implemented with mode-specific gaps; unified typed event/artifact payload proposed"
+      },
+      "plan_layer_edit / apply_layer_edit": {
+        "legacy_paths": [
+          "data.edit",
+          "data.diff",
+          "data.validation",
+          "data.variant",
+          "data.source_transaction",
+          "data.history",
+          "data.weight_transfer"
+        ],
+        "planned_mapping": {
+          "data.edit/diff": "EditPlanContract.operations",
+          "data.validation": "candidate readiness and diagnostics",
+          "data.variant/source_transaction": "target revision and commit receipt",
+          "data.weight_transfer": "StateImpact.model_weights and dependent state decisions"
+        },
+        "status": "legacy variant/source edit behavior implemented; unified immutable plan and complete StateImpact proposed"
+      },
+      "component operations": {
+        "legacy_paths": [
+          "data.component",
+          "data.manifest",
+          "data.dependencies",
+          "data.verification",
+          "data.activation",
+          "data.issues"
+        ],
+        "planned_mapping": {
+          "manifest/dependencies": "versioned ComponentSpec and dependency closure",
+          "verification/activation": "capability evidence",
+          "issues": "scoped Diagnostic"
+        },
+        "status": "current local component behavior partly implemented; versioned cross-module DTO proposed"
+      },
+      "operation_error": {
+        "legacy_paths": [
+          "status=error",
+          "diagnostics[].code",
+          "diagnostics[].message",
+          "diagnostics[].hint",
+          "data (operation-specific; may be empty)"
+        ],
+        "planned_mapping": {
+          "code/message/hint": "Diagnostic",
+          "operation-specific failure location": "DiagnosticDetails.scope",
+          "recovery affordances": "DiagnosticDetails.recovery_actions",
+          "coverage certainty": "DiagnosticDetails.evidence_state"
+        },
+        "status": "legacy diagnostic fields implemented; structured details proposed"
+      },
+      "evaluation": {
+        "legacy_paths": [
+          "Report.status",
+          "data.source_run_id",
+          "data.checkpoint",
+          "data.evaluation.split",
+          "data.evaluation.samples_evaluated",
+          "data.evaluation.metrics",
+          "data.provenance",
+          "data.coverage",
+          "diagnostics[]"
+        ],
+        "planned_mapping": {
+          "data.checkpoint": "verified source ArtifactRef and model-state fingerprint",
+          "data.evaluation.metrics": "task-owned named finite scalar metrics",
+          "data.evaluation.samples_evaluated": "actual sample count or unknown",
+          "data.provenance": "source run, checkpoint, code, declared data identity and protocol versions"
+        },
+        "status": "custom evaluation implemented; project-specific metric semantics and data fingerprints remain evaluator/user-owned"
+      },
+      "run_artifact_catalog": {
+        "legacy_paths": [
+          "runs show data.artifacts",
+          "runs storage data.categories.artifacts",
+          "train result data.managed_artifacts"
+        ],
+        "meaning": "run-local producer-owned file declarations, integrity and references; registration does not imply cleanup eligibility",
+        "status": "run artifact manifest schema v1 supports standard checkpoint and declared external-loop multi-file sets; per-ID fixed-plan release revalidates ownership/references and records the released state."
+      }
+    },
+    "mapping_policy": "Adapters may translate legacy operation/data into canonical contracts. Never infer missing readiness from Report.status=success, and do not claim a proposed field is currently produced."
+  },
+  "contract_examples": {
+    "valid_ready_forward_probe": {
+      "contract_version": 2,
+      "plan_id": "plan-01",
+      "operation": "forward_probe",
+      "readiness": {
+        "state": "ready",
+        "facts": [
+          {
+            "key": "model",
+            "state": "available",
+            "required": true
+          },
+          {
+            "key": "batch",
+            "state": "available",
+            "required": true
+          }
+        ],
+        "capabilities": [
+          {
+            "id": "forward_execution",
+            "state": "available",
+            "required": true
+          },
+          {
+            "id": "backward",
+            "state": "unknown",
+            "required": false
+          }
+        ],
+        "conditions": [],
+        "actions": [
+          {
+            "id": "run",
+            "label": "Run probe",
+            "availability": "available"
+          }
+        ]
+      },
+      "inputs": [
+        {
+          "key": "model",
+          "state": "available",
+          "source": {
+            "kind": "project_config",
+            "reference": "project.model",
+            "revision": "sha256:abc"
+          },
+          "required": true,
+          "sensitive": false
+        },
+        {
+          "key": "batch",
+          "state": "available",
+          "source": {
+            "kind": "user_callable",
+            "reference": "example.data:batch",
+            "revision": "sha256:def"
+          },
+          "required": true,
+          "sensitive": false
+        }
+      ],
+      "base_revision": "project:sha256:abc"
+    },
+    "invalid_ready_missing_batch": {
+      "contract_version": 2,
+      "plan_id": "plan-invalid",
+      "operation": "forward_probe",
+      "readiness": {
+        "state": "ready",
+        "facts": [
+          {
+            "key": "batch",
+            "state": "missing",
+            "required": true
+          }
+        ],
+        "capabilities": [],
+        "conditions": [],
+        "actions": []
+      },
+      "inputs": []
+    },
+    "valid_local_inspect_without_training": {
+      "contract_version": 2,
+      "plan_id": "plan-inspect",
+      "operation": "inspect_model",
+      "readiness": {
+        "state": "ready",
+        "facts": [
+          {
+            "key": "model",
+            "state": "available",
+            "required": true
+          },
+          {
+            "key": "training_step",
+            "state": "missing",
+            "required": false
+          }
+        ],
+        "capabilities": [
+          {
+            "id": "module_inspection",
+            "state": "available",
+            "required": true
+          }
+        ],
+        "conditions": [],
+        "actions": []
+      },
+      "inputs": [
+        {
+          "key": "model",
+          "state": "available",
+          "source": {
+            "kind": "user_callable",
+            "reference": "model:build",
+            "revision": "sha256:123"
+          },
+          "required": true,
+          "sensitive": false
+        }
+      ]
+    },
+    "valid_conditional_capability": {
+      "contract_version": 2,
+      "plan_id": "plan-conditional",
+      "operation": "apply_layer_edit",
+      "readiness": {
+        "state": "conditional",
+        "facts": [
+          {
+            "key": "provider_manifest",
+            "state": "available",
+            "required": true
+          }
+        ],
+        "capabilities": [
+          {
+            "id": "provider.layer_edit",
+            "state": "conditional",
+            "required": true,
+            "reason": "Requires a model-specific adapter."
+          }
+        ],
+        "conditions": [
+          "provider.layer_edit：Requires a model-specific adapter."
+        ],
+        "actions": []
+      },
+      "inputs": []
+    }
+  }
+}

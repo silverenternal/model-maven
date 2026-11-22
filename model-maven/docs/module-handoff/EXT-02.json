@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "task_id": "EXT-02",
+  "status": "done",
+  "baseline": "0.13.46 coordinator worktree",
+  "files_changed": [
+    "python/model_maven_worker/extensions/metadata.py",
+    "python/model_maven_worker/train/checkpoint.py",
+    "python/model_maven_worker/train/probe.py",
+    "python/model_maven_worker/train/runner.py",
+    "python/model_maven_worker/train/state.py",
+    "python/model_maven_sdk/src/model_maven_sdk/__init__.py",
+    "python/model_maven_sdk/src/model_maven_sdk/contracts.py",
+    "python/model_maven_sdk/src/model_maven_sdk/manifest.py",
+    "python/model_maven_sdk/tests/test_manifest.py",
+    "tests/extensions_state.rs",
+    "docs/extensions/sdk.md",
+    "docs/module-handoff/EXT-02.json"
+  ],
+  "implementation": [
+    "Added explicit SDK StateFormat metadata and bind_state_format() for callable state_dict/load_state_dict hooks, with exact FROM_VERSION->TO_VERSION migrator routes bound to declared entrypoints.",
+    "Worker validates finite JSON state against the declared schema before saving and before loading; same-version schema drift, missing identity, incompatible formats, downgrade and undeclared routes fail closed.",
+    "Checkpoint payload records callable module/source/distribution identity and a normalized environment inventory (distribution name/version/source kind, Python ABI, PyTorch/CUDA identity); no indexes or credentials are recorded.",
+    "Resume can exempt only one explicitly versioned state callable and its uniquely mapped owning distribution when an exact current migrator exists. Python/PyTorch identity, every other distribution, model/data/other training sources and source ownership remain exact. Ambiguous ownership, multiple state callables, missing inventories, unrelated changes and chained/mixed migrations are rejected.",
+    "Successful migrated external-loop resume loads the converted state and writes the next checkpoint in the current format. Checkpoint bytes are not rewritten during failed validation."
+  ],
+  "validation": [
+    {
+      "command": "cargo test --locked --test extensions_state -- --nocapture",
+      "result": "passed: real CPU training created a v1 checkpoint, upgraded the extension callable/distribution, migrated state on resume, completed training, and saved a v2 checkpoint; an unrelated distribution change was rejected without modifying checkpoint bytes."
+    },
+    {
+      "command": "PYTHONPATH=python/model_maven_sdk/src python3 -m unittest python.model_maven_sdk.tests.test_manifest -v",
+      "result": "passed: 6 SDK manifest/schema tests, including exact callable migrator binding."
+    },
+    {
+      "command": "python3 -m py_compile python/model_maven_worker/extensions/metadata.py python/model_maven_worker/train/state.py python/model_maven_worker/train/checkpoint.py python/model_maven_worker/train/runner.py python/model_maven_worker/train/probe.py python/model_maven_sdk/src/model_maven_sdk/manifest.py python/model_maven_sdk/src/model_maven_sdk/contracts.py",
+      "result": "passed."
+    },
+    {
+      "command": "python3 scripts/check_worker_architecture.py",
+      "result": "passed: 72 worker modules; embedded asset coverage and allowed import direction verified."
+    }
+  ],
+  "integration_points": [
+    "The worker checkpoint code consumes the existing environment snapshot and source manifest; no Rust payload schema change was needed.",
+    "train.state imports extensions.metadata for the shared static state-schema validator. The architecture checker needs this explicit dependency edge; parent coordinator was notified and is handling it."
+  ],
+  "limitations": [
+    "Versioned extension state must be finite JSON data and use the worker's supported object Schema subset; arbitrary Python values and tensor payloads are not portable under this contract.",
+    "Migration is one exact direct upgrade for one stateful callable/distribution. Multi-step migration chains, simultaneous callable migrations, mixed-format transitions, and package ownership ambiguities are deliberately unsupported.",
+    "Distribution inventory records normalized metadata, not artifact hashes or a reproducible lockfile. It proves exact reported versions/source categories, not wheel byte identity."
+  ],
+  "commit": null
+}

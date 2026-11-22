@@ -1,0 +1,97 @@
+{
+  "schema_version": 1,
+  "task_id": "CLI-22",
+  "status": "in_review",
+  "baseline": "0.13.45 coordinator worktree",
+  "branch": "master (uncommitted coordinator worktree)",
+  "files_changed": [
+    "src/presentation/pages/evaluation.rs",
+    "src/presentation/workbench.rs",
+    "docs/cli-guide.md",
+    "src/application/evaluation.rs",
+    "python/model_maven_worker/train/evaluation.py",
+    "python/model_maven_sdk/src/model_maven_sdk/contracts.py",
+    "src/cli.rs",
+    "tests/train_evaluation.rs",
+    "tests/cli.rs",
+    "tests/cli_onboarding_ui.rs",
+    "python/model_maven_sdk/src/model_maven_sdk/__init__.py",
+    "python/model_maven_sdk/src/model_maven_sdk/contracts.py",
+    "docs/extensions/sdk.md",
+    "product.json",
+    "clitodo.json",
+    "docs/cli-handoff/CLI-22.json"
+  ],
+  "implementation": [
+    "Added a pure report renderer for evaluation run ID, source training run, evaluator, data entrypoint when available, split, checkpoint step, scalar metrics, declared sample count/limit, and data identity scope.",
+    "Unknown or omitted sample counts remain unknown and are never rendered as zero. The page does not assume classification semantics and does not reinterpret custom artifacts as samples or predictions.",
+    "Failure reports retain diagnostic codes, messages, and actionable hints. Data fingerprints are shown only when explicitly present in provenance.",
+    "Coordinator registered the page module and replaced the terminal evaluate summary; both successful and failed evaluate reports now use the human renderer.",
+    "Evaluation service and optional SDK now expose a typed, evaluator-owned preview contract. `m-model evaluate --preview-samples N` requests 1–32 records; each record has a unique sample ID and finite JSON prediction/optional target, capped at 64 KiB. The service rejects unsolicited, duplicate, invalid, oversized, or over-limit records and persists valid records in the evaluation run report. Generic custom artifacts remain opaque.",
+    "The human workbench now offers an evaluate action for completed training runs with an available checkpoint. It prompts for evaluator/data factories, split, optional sample/preview limits, fingerprint and dynamic parameters, then uses the existing Command::Evaluate service.",
+    "Evaluation history offers a samples pager only for evaluate records. It displays evaluator-owned records persisted in the run report, with JSON detail view; opaque custom artifacts are never treated as predictions.",
+    "The human workbench offers an evaluate action for completed training runs with an available checkpoint. It prompts for evaluator/data factories, split, optional sample/preview limits, fingerprint and dynamic parameters, shows a readable evaluation plan, and requires explicit confirmation before invoking Command::Evaluate.",
+    "Evaluation history renders the saved metrics/provenance summary and offers a samples pager only when explicit records exist. It displays evaluator-owned records persisted in the run report, with JSON detail view; opaque custom artifacts are never treated as predictions."
+  ],
+  "validation": [
+    {
+      "command": "rustfmt --edition 2024 --check src/presentation/pages/evaluation.rs",
+      "result": "passed."
+    },
+    {
+      "command": "cargo test --locked --test cli evaluation_command_uses_checkpoint_custom_metrics_and_persists_provenance -- --exact --nocapture",
+      "result": "passed: actual human CLI evaluation success renders the page summary; invalid metric failure prints the page and structured diagnostic."
+    },
+    {
+      "command": "cargo test --locked --test train_evaluation -- --nocapture && cargo test --locked --test cli evaluation_command_uses_checkpoint_custom_metrics_and_persists_provenance -- --exact --nocapture",
+      "result": "passed: PyTorch-backed service and real CLI evaluation; typed previews are bounded, persisted in run history, and evaluator-owned. Negative cases reject over-limit and unsolicited preview records."
+    },
+    {
+      "command": "PYTHONPATH=python/model_maven_sdk/src python3 -m pytest -q python/model_maven_sdk/tests",
+      "result": "passed: 6 SDK tests and 6 subtests, including public SDK contract imports."
+    },
+    {
+      "command": "python3 -m py_compile python/model_maven_worker/train/evaluation.py python/model_maven_sdk/src/model_maven_sdk/contracts.py && cargo run --locked --quiet -- evaluate --help",
+      "result": "passed: Python syntax and human CLI help show the bounded --preview-samples option."
+    },
+    {
+      "command": "cargo fmt --check && cargo clippy --locked --test train_evaluation --test cli -- -D warnings && git diff --check",
+      "result": "passed: formatting, strict lint, and whitespace validation."
+    },
+    {
+      "command": "cargo test --locked",
+      "result": "complete Rust workspace passed after evaluation report rendering was integrated into human CLI success/failure output."
+    },
+    {
+      "command": "cargo test --locked --bin m-model presentation::pages::evaluation -- --nocapture",
+      "result": "passed: 4 page tests cover metrics/provenance, unknown coverage, failure hints, and explicit preview counts."
+    },
+    {
+      "command": "cargo test --locked --test cli_onboarding_ui completed_training_run_can_be_evaluated_and_its_previews_browsed_in_the_workbench -- --exact --nocapture",
+      "result": "passed: Unix PTY test creates a real one-step checkpoint, configures and runs a PyTorch evaluator through the workbench, browses its bounded preview, then re-enters the restored runs page and opens the persisted preview from history."
+    },
+    {
+      "command": "cargo test --locked --bin m-model",
+      "result": "passed: all 190 Rust unit tests after interactive workbench evaluation summary and explicit plan confirmation were integrated."
+    },
+    {
+      "command": "cargo test --locked --test cli_onboarding_ui -- --nocapture",
+      "result": "passed: 14/14 workbench/onboarding PTY cases, including real evaluation-from-run, explicit confirmation and historical preview browsing."
+    }
+  ],
+  "remaining": [
+    "Implementation and repository acceptance are covered. A human workflow/usability study is still needed to validate how people discover evaluator/data entrypoints and understand the optional preview controls; no participant evidence is claimed here."
+  ],
+  "integration_patch": [
+    "Page registration and terminal success/failure rendering are integrated.",
+    "The interactive workbench invokes the existing Command::Evaluate path and reads historical data from Runs Show.",
+    "The human workbench displays only explicit sample_previews records and does not infer predictions from custom_artifacts."
+  ],
+  "backend_preview_contract": {
+    "request": "m-model evaluate --preview-samples N, 1 <= N <= 32 and N <= --samples when a sample limit is supplied",
+    "evaluator_api": "context.max_preview_samples and context.report_prediction(sample_id, prediction, target=None)",
+    "record_limits": "Unique visible sample IDs; finite JSON values; at most 10,000 nodes, depth 16, and 64 KiB per record; requested-count cap.",
+    "human_display": "The workbench may render only explicit sample_previews records; custom_artifacts remain opaque."
+  },
+  "commit": null
+}

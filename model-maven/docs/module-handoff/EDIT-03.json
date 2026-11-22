@@ -1,0 +1,100 @@
+{
+  "schema_version": 1,
+  "task_id": "EDIT-03",
+  "status": "done",
+  "baseline": "0.13.51 coordinator worktree",
+  "branch": "master (uncommitted coordinator worktree)",
+  "files_changed": [
+    "python/model_maven_worker/edit/providers.py",
+    "python/model_maven_worker/edit/sharing.py",
+    "python/model_maven_worker/edit/layers.py",
+    "python/model_maven_worker/edit/variants.py",
+    "python/model_maven_worker/protocol.py",
+    "python/model_maven_worker/edit/__init__.py",
+    "python/model_maven_sdk/src/model_maven_sdk/contracts.py",
+    "python/model_maven_sdk/src/model_maven_sdk/__init__.py",
+    "src/adapters/worker_assets.rs",
+    "src/adapters/components.rs",
+    "src/application/edit.rs",
+    "src/application/readiness.rs",
+    "src/presentation/pages/home.rs",
+    "src/presentation/workbench.rs",
+    "src/presentation/terminal.rs",
+    "src/adapters/component_scaffold.rs",
+    "tests/edit_providers.rs",
+    "tests/cli.rs",
+    "README.md",
+    "docs/extensions/sdk.md",
+    "docs/contracts/compatibility.json",
+    "product.json",
+    "docs/acceptance/requirements.json",
+    "edittodo.json"
+  ],
+  "implemented": [
+    "Preserves API v1 callable providers and adds API v2 object lifecycle: describe/can_edit/plan/candidate/persist/rollback. API v2 plans and persisted JSON descriptors are stored in the variant operation; replay rejects descriptor drift; candidate errors invoke the Provider compensation hook.",
+    "Provider JSON lifecycle outputs are finite, object-shaped and bounded to 64 KiB. Unsupported/conditional can_edit decisions fail closed with an actionable reason.",
+    "Adds path-based clone-selected and share-selected operations. Clone keeps copied parameters/buffers while breaking one named alias; share explicitly binds target paths to a source module. Default replace behavior still rebinds all aliases to one replacement.",
+    "Adds a guided workbench interaction for observed shared aliases, with operation preview, confirmation and variant persistence. Custom forward branch semantics remain owned by the Provider.",
+    "Updates the generated Provider scaffold to API v2 and adds a named-branch Provider example; increments Provider conformance-suite version and synchronizes Rust verification checks.",
+    "The interactive share-selected preview explicitly states that each target module and its parameters/buffers will be replaced by the source instance; clone-selected states that weights and buffers are copied."
+  ],
+  "validation": [
+    {
+      "command": "cargo test --locked --test edit_providers -- --nocapture",
+      "result": "passed 4 tests, including API v2 disk-backed CLI replay/undo/redo and compensation after an injected post-mutation failure."
+    },
+    {
+      "command": "cargo test --locked --test cli workbench_guides_explicit_shared_layer_split_and_persists_variant -- --exact --nocapture",
+      "result": "passed real PTY workbench shared alias preview/confirmation and variant persistence."
+    },
+    {
+      "command": "cargo test --locked --test cli versioned_local_provider_can_edit_a_custom_container_and_replay_after_reload -- --exact --nocapture",
+      "result": "passed; API v1 local Provider compatibility retained."
+    },
+    {
+      "command": "cargo test --locked --test cli registered_layer_edit_provider_requires_matching_runtime_verification -- --exact --nocapture",
+      "result": "passed after synchronizing conformance suite version 2."
+    },
+    {
+      "command": "cargo test --locked --test edit_codegen --test cli_terminal_layout -- --nocapture",
+      "result": "passed EDIT-04 2 tests and CLI-18 13 tests; output recorded by focused run."
+    },
+    {
+      "command": "python3 scripts/check_architecture.py && python3 scripts/check_worker_architecture.py && python3 scripts/check_compatibility.py && cargo fmt --all -- --check && git diff --check",
+      "result": "passed before the latest scaffold/help edits; rerun pending."
+    },
+    {
+      "command": "cargo test --locked --test edit_providers -- --nocapture",
+      "result": "passed 4 tests, including API v2 disk-backed CLI replay/undo/redo and compensation after an injected post-mutation failure."
+    },
+    {
+      "command": "python3 scripts/verify_component_scaffold.py --binary target/debug/m-model --python python3",
+      "result": "passed: independent Layer and Provider wheels built, installed, discovered and tested; TTY scaffold/install/uninstall and run-artifact cleanup passed; reference and shared-wheel retention checks passed; selected Python environment unchanged."
+    },
+    {
+      "command": "cargo test --locked --quiet",
+      "result": "passed full workspace after correcting legacy PTY menu navigation expectations for the added shared-layer action."
+    },
+    {
+      "command": "cargo test --locked --test edit_providers api_v2_provider_variant_replays_through_cli_undo_redo_and_recovers_failures -- --exact --nocapture",
+      "result": "passed: API v2 plan/descriptor persisted by layer apply, replayed from disk in separate CLI invocations for undo and redo, alias state restored on redo, then injected failure after mutation invoked Provider rollback and left the saved variant byte-identical."
+    },
+    {
+      "command": "cargo test --locked --test extensions_state --test edit_providers --test edit_migration --test run_artifacts --test component_transform_conformance --test extensions_conformance -- --nocapture",
+      "result": "passed: component transform 1/1, migration 2/2, Provider lifecycle 4/4, extension conformance 2/2, extension state migration 1/1, project artifact graph 1/1."
+    },
+    {
+      "command": "python3 scripts/verify_product_acceptance.py --case edit-persistence-and-migration --python python3 --binary target/debug/m-model --output-dir docs/acceptance/results/qa02-incremental-20261120",
+      "result": "verified: real Layer CRUD/variant transaction+undo test, PTY workbench reload, disk-backed Provider replay/failure compensation, parent-to-child weight migration all passed; evidence is in the linked QA-02 record."
+    }
+  ],
+  "limitations": [
+    "Direct sharing operations use registered module paths; they do not infer custom forward control flow or semantic branch compatibility.",
+    "Fixture checks plus focused tests are finite evidence, not arbitrary-input correctness, general state migration, or commercial-value validation.",
+    "Provider Python can perform side effects outside the variant transaction; compensation is provider-owned and not an OS sandbox.",
+    "Provider Python executes with selected-interpreter permissions. rollback cannot reverse arbitrary filesystem/network/process side effects and is not an OS sandbox.",
+    "Shared-layer operations use declared module paths and do not infer arbitrary custom forward/control-flow semantics."
+  ],
+  "remaining": [],
+  "commit": null
+}

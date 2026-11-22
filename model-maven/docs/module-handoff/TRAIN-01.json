@@ -1,0 +1,47 @@
+{
+  "task_id": "TRAIN-01",
+  "owner": "总协调人",
+  "baseline": "2629b5d",
+  "branch": "master",
+  "status": "done",
+  "files_changed": [
+    "python/model_maven_worker/__init__.py",
+    "python/model_maven_worker/train/checkpoint.py",
+    "python/model_maven_worker/train/external.py",
+    "python/model_maven_worker/train/runner.py",
+    "src/application/readiness.rs",
+    "src/application/run_inputs.rs",
+    "src/application/run_prepare.rs",
+    "tests/train_modes.rs"
+  ],
+  "interface_changes": [
+    "External-loop can omit a model factory and batch factory. The callable still receives (model, context), with model=None when no model source is supplied.",
+    "Model-less external-loop checkpoints store no model state or model digest. Resume validates that the checkpoint and current run agree on model-state presence; checkpoints containing weights still require a model."
+  ],
+  "implemented": [
+    "Updated Rust input resolution, readiness requirements and run preparation so external-loop needs its loop entry but does not inherit independent model/batch requirements.",
+    "Updated Python dispatch and loop execution to import project loop modules without loading a model, invoke model-less loops, and report parameter-finiteness as not applicable when no model is present.",
+    "Added a dedicated CLI integration test covering formal external-loop training without model/batch, checkpoint creation and continuation by one additional step.",
+    "Zero-step external-loop trial now uses a first-class inconclusive worker/report status, retains structured zero-step evidence and exits with code 5; the same condition in formal train remains a failed run.",
+    "Human terminal output says the result is inconclusive rather than printing it as an execution error."
+  ],
+  "validation": [
+    {
+      "command": "cargo test --locked --test train_modes -- --nocapture",
+      "result": "passed: 4 real Python/PyTorch CLI integration tests for no-model external-loop resume, zero-step inconclusive/formal-failure distinction, managed finite-loss/optional-parameter behavior, and manual missing-update rejection."
+    },
+    {
+      "command": "cargo test --locked",
+      "result": "passed: full workspace regression; command output includes all unit, CLI, data, model, protocol, readiness and training integration suites."
+    },
+    {
+      "command": "cargo fmt --all -- --check; git diff --check; python3 scripts/check_worker_architecture.py; python3 scripts/check_compatibility.py",
+      "result": "passed."
+    }
+  ],
+  "integration_patch": [
+    "Product plan documents zero-step inconclusive status and the product/task source versions are synchronized to 0.13.39."
+  ],
+  "backend_requests": [],
+  "remaining": []
+}

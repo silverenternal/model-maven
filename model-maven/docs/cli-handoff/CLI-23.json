@@ -1,0 +1,71 @@
+{
+  "id": "CLI-23",
+  "status": "done",
+  "product_refs": [
+    "behavior_contracts/S-supervision"
+  ],
+  "baseline": "Current shared workspace, 2026-11-20; command-only implementation, no TUI page changes.",
+  "owned_files": [
+    "src/cli.rs",
+    "src/application/model.rs",
+    "src/application/readiness.rs",
+    "src/presentation/service.rs",
+    "src/presentation/workbench.rs",
+    "docs/cli-guide.md",
+    "tests/cli.rs",
+    "product.json"
+  ],
+  "scope": "定义并接入命令式的人类引导流程：选择观测块、人工标注、绑定规则/目标、只读预览、明确启用及查看结果；复用同一 --json 服务输出。",
+  "acceptance": [
+    "流程不要求先写 hook 或改训练循环即可完成标注和只读预览。",
+    "每步显示锚点、语义、覆盖与后果；penalty 变更目标前需要明确命令/确认。",
+    "失效绑定、无法执行和 stale 规则给出可操作修复提示；JSON 稳定区分错误和覆盖状态。",
+    "仅命令接口/帮助，不修改 TUI 页面或现有 TUI owned files。"
+  ],
+  "implementation": "Added `m-model model supervise guide`: resolves explicit or project-default model/batch, runs a real Probe, lists only observed module/port candidates, asks the user to choose and manually author role/meaning, persists a source-anchored mark, adds one observe/require/penalty rule, and runs a read-only preview. Displays source file/hash, current-call coverage, violations and later training consequence. Rules never activate implicitly; managed/manual try/train require explicit `--apply-supervision`. JSON/no-interactive mode returns `GUIDED_FLOW_REQUIRES_TTY` with exact scripted alternatives. Existing mark/rule/preview services are reused. 引导支持 batch-alignment：用户选 require/observe 后手动填写批次 Tensor 路径和轴；预览显示目标路径及模型/目标形状，不声称标签值正确。 For finite/range, the shared CLI also accepts a user-selected --axis and can preview current-batch violations against declared stable IDs in envelope metadata; managed/manual require failures include violating IDs before updates. Top-level coverage remains partial, IDs are user-asserted, and multi-batch completeness is not inferred. 外部循环可选择 --apply-supervision，并需遵守 context.supervised_step(batch)、context.backward(loss)、context.register_optimizer(optimizer) 协议；普通外部循环保持用户自有逻辑，未登记的 optimizer 更新不被计入监督。",
+  "verification": [
+    {
+      "command": "cargo test --locked --test cli supervision_guide -- --nocapture",
+      "result": "passed 2/2: PTY flow loads saved model/batch, manually marks a project-defined module port, adds weighted penalty, previews observed-runtime coverage and writes exact source anchor/rule to sidecar; JSON mode returns actionable structured error."
+    },
+    {
+      "command": "cargo clippy --locked --bin m-model --test cli -- -D warnings",
+      "result": "passed."
+    },
+    {
+      "command": "cargo test --locked --test model_supervision -- --nocapture",
+      "result": "passed 2/2: existing real-port read-only preview and stale-binding rejection remain intact."
+    },
+    {
+      "command": "python3 -m json.tool product.json",
+      "result": "passed."
+    },
+    {
+      "command": "git diff --check",
+      "result": "passed."
+    },
+    {
+      "command": "python3 scripts/check_compatibility.py",
+      "result": "passed after reconciling the compatibility matrix with the already-registered semantic_mark/semantic_supervise operations and training.supervision_apply feature."
+    },
+    {
+      "command": "python3 scripts/check_worker_architecture.py",
+      "result": "passed: 76 worker modules, embedded asset coverage complete, imports follow domain direction."
+    },
+    {
+      "command": "cargo test --locked --test cli supervision_guide -- --nocapture",
+      "result": "passed 2/2 including PTY workflows for weighted penalty and manual batch.kwargs.targets alignment; guided rule and anchor persisted and previews reported."
+    },
+    {
+      "command": "cargo test --locked --test model_supervision --test train_supervision -- --nocapture",
+      "result": "passed after structured partial coverage reporting: 3 model-supervision and 6 training-supervision integration tests."
+    },
+    {
+      "command": "cargo test --locked --test cli supervision_guide -- --nocapture",
+      "result": "passed: both guided PTY workflows, including manually selected batch alignment, remain connected to the shared preview/service contract."
+    }
+  ],
+  "remaining": [
+    "稳定 ID 与原始记录的真实性、逐样本标签语义及数据集覆盖率分母未验证；自定义规则插件协议仍未实现。"
+  ]
+}

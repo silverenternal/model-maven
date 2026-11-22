@@ -1,0 +1,142 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Model-Maven acceptance evidence record",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "requirement_id",
+    "status",
+    "product_version",
+    "revision",
+    "environment",
+    "command",
+    "result",
+    "evidence_paths",
+    "covered_scope",
+    "uncovered_scope",
+    "recorded_at"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0.0"
+    },
+    "requirement_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "status": {
+      "enum": [
+        "verified",
+        "implemented",
+        "failed",
+        "missing",
+        "external_evidence_required",
+        "skipped",
+        "simulated",
+        "not_run"
+      ]
+    },
+    "product_version": {
+      "type": "string"
+    },
+    "revision": {
+      "type": "string"
+    },
+    "environment": {
+      "type": "object",
+      "required": [
+        "os",
+        "architecture"
+      ],
+      "properties": {
+        "os": {
+          "type": "string"
+        },
+        "architecture": {
+          "type": "string"
+        },
+        "rust": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "python": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "pytorch": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "device": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "notes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "command": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "exit_code": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "result": {
+      "type": "string",
+      "minLength": 1
+    },
+    "evidence_paths": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "covered_scope": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "uncovered_scope": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "observations": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "participant_or_fixture": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "recorded_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

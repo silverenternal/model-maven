@@ -1,0 +1,23 @@
+MODEL-MAVEN · Tab Details · ? Controls …
+100%  ·  2D  ·  OFFLINE · observed tens…
+────────────────────────────────────────
+                  ⢀⣀⣀⡀
+                  ⢸▒▒⡇
+         ⣤⠤⠤⠤⠤⠤⠤⠤⠤⠬⢹⠏⠁  ⢀⢀
+       ⢀⣲⣇⡐⠒⠒⠒⠒⠒⠒encoder⠐⠑  ⠉⢉⣉⣇⡀
+       ⢸▒▒⡇                  ⢸▓▓⡇
+       ⠈⠉⠉⠁                  ⠈⠉⠉⠁
+       merge                 head
+› model.encoder[0] → net.head[0]
+  2×48 → …×32  ·  shape mismatch
+Space · Toggle motion   │   / z 2D/3D ·…
+PgUp / PgDn or [ ]  Pages
+L Layout off · T Mouse on · W Wires · D…
+
+────────────────────────────────────────
+Offline sample · Failed · Graph
+model.head #2 · demo.py:12 · a Axes
+Observed 2×48 · Expected …×32
+changing-batch-01 · trace captured
+observed
+? · ↑↓ calls · e Preview · Tab · s Sett…

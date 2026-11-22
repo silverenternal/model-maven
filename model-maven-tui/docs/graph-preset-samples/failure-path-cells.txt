@@ -1,0 +1,29 @@
+Failure path · call evidence
+Failure · model.head #2
+Report failed-48-32 · changing-batch-01
+Input 1/1
+  model.encoder.out[0]
+       │
+       ↓ net.head.in[0]
+  Observed source · earlier call unknown
+1 Actual 2×48 (observed)
+2 Expected …×32 (declared)
+Last axis · shared scale
+  1 ├━━━━━━━━━━━━━━━━━━━━━━━━┤
+  2 ├━━━━━━━━━━━━━━━━┤
+↑↓ input · v evidence · Enter graph · F/Esc back
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

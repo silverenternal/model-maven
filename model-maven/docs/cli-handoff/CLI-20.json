@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "task_id": "CLI-20",
+  "status": "done",
+  "owner": "总协调人",
+  "baseline": "current shared worktree; no commit",
+  "files_changed": [
+    "README.md",
+    "clitodo.json",
+    "docs/cli-acceptance-matrix.json",
+    "docs/cli-guide.md",
+    "docs/cli-handoff/CLI-20.json",
+    "docs/cli-user-study.md"
+  ],
+  "implementation": [
+    "Wrote a task-oriented guide for existing-code first diagnosis, call evidence, complex mismatch repair, persistent Layer variants/source-edit boundaries, training trial/resume, saved entrypoints, and the human workbench.",
+    "Added an actual PTY transcript excerpt sourced from the real CLI smoke report and labeled its temporary Linear fixture limitation.",
+    "Prepared a paired user-study protocol and blank anonymized session record covering complex existing projects, baseline workflow, timing, adaptation cost, repeated inputs, recovery, editing, user understanding, and negative findings. No participant results were invented.",
+    "README integration is proposed for the coordinator; the shared README was not edited as part of this documentation task."
+  ],
+  "validation": [
+    {
+      "command": "Human CLI flow: model probe → layer set --dry-run → layer set → --variant working model probe",
+      "result": "passed against a temporary copy of examples/complex_acceptance; expected 48-to-32 probe error returned exit 4, preview and commit returned 0, reloaded variant forward returned 0 with logits shape [2,4]. Total elapsed 13.91s in this Python 3.14.10/PyTorch environment."
+    },
+    {
+      "command": "JSON CLI equivalent for the same diagnose/preview/commit/reload flow",
+      "result": "passed all four steps; elapsed 13.94s; artifact target/cli20-guide-validation.json."
+    },
+    {
+      "command": "CLI-19 interaction smoke and matrix verifier",
+      "result": "passed after synchronizing this task status; real binary inspect/probe and TTY onboarding pass. The status matrix continues to leave release gates open."
+    },
+    {
+      "command": "Markdown/JSON review, cargo fmt --all -- --check, git diff --check",
+      "result": "passed."
+    }
+  ],
+  "evidence_boundary": "The end-to-end walkthrough uses a repository fixture copied to a temporary project. Timing is a local fixture run, not real-user evidence or a performance claim. No participant was recruited or observed.",
+  "remaining": [
+    "Real participant observation and value comparison remain open under value_validation, A6, and QA-04."
+  ],
+  "commit": null,
+  "integration_patch": [
+    "README links the task-oriented guide for new model engineers and clearly labels the study protocol as preparation material with no participant results.",
+    "The task-based CLI guide and blank paired-observation protocol remain separate from the product-wide README reference."
+  ]
+}

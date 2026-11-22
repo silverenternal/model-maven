@@ -1,0 +1,69 @@
+{
+  "task_id": "CORE-01",
+  "owner": "总协调人",
+  "baseline": "d139e2c",
+  "branch": "integration",
+  "status": "done",
+  "commit": "56d3a8b",
+  "files_changed": [
+    "docs/contracts/operations.json",
+    "docs/contracts/module-interfaces.json",
+    "src/domain.rs",
+    "src/domain/diagnostic.rs",
+    "src/domain/operation.rs",
+    "src/ports.rs",
+    "src/ports/services.rs"
+  ],
+  "contracts_changed": [
+    "C-operation: versioned OperationRequest/OperationPlan and per-operation readiness states/facts/capabilities/actions.",
+    "C-input envelope: value source and optional source-scoped revision; CORE-04 still owns effective input resolution and conflict semantics.",
+    "C-diagnostic: backward-compatible code/message/hint plus proposed scoped severity, recovery actions and evidence state.",
+    "C-model identity envelope: model revision and per-probe module invocation identity; MODEL owns evidence production and dynamic contract semantics.",
+    "C-edit envelope: edit plan/base revision and explicit model/optimizer/RNG/data/scheduler state impact; EDIT owns operation payload and migration algorithms.",
+    "C-run/C-artifact envelope: operation events, progress bounds, artifact owner and digest; RUN owns persistence, supervision and lifecycle.",
+    "Module ownership and native callable protocol boundaries for model, edit, train, run, extension, data, environment, CLI and acceptance."
+  ],
+  "implemented": [
+    "Added Rust serializable domain types and structural validators for ready/needs_input/unsupported/conditional/unknown plans, required inputs/capabilities, source revisions, edit state impact, invocation identity, progress and artifact integrity.",
+    "InputBinding Debug output redacts sensitive values; legacy Diagnostic JSON remains byte-shape compatible when optional details are absent.",
+    "Added proposed OperationPlanner, OperationExecutor, OperationEventSource and ArtifactReferenceResolver ports. Existing Backend/Report remain the implemented runtime boundary until CORE-03 migration.",
+    "operations.json is a Draft 2020-12 JSON Schema, includes G-validation operation requirements and a field-by-field mapping from current inspect/probe/verify/train/edit/component reports to proposed contracts.",
+    "module-interfaces.json assigns field ownership, producer/consumer boundaries, callable signatures, compatibility rules and implemented-versus-proposed status."
+  ],
+  "cli_contract_review": {
+    "result": "Reviewed CLI-01 PageDescriptor/ActionDescriptor/Availability/TaskProgress and UiServices against readiness/action/progress contracts.",
+    "alignment": [
+      "available/conditional/unsupported/unknown states line up with the CLI availability states.",
+      "TaskProgress.unknown remains explicit when no backend event exists.",
+      "UI continues to consume command reports; the new typed operation ports are not claimed as connected to CLI."
+    ],
+    "limitation": "This was a coordinator source review; no separate peer implementer was available for a live review."
+  },
+  "validation": [
+    {
+      "command": "python3 jsonschema Draft202012Validator.check_schema(docs/contracts/operations.json) and validate contract_examples",
+      "result": "passed: valid ready forward probe accepted; ready plan missing required batch rejected; local inspect with no training configuration accepted."
+    },
+    {
+      "command": "cargo fmt --check && git diff --check && cargo check --locked && cargo test --locked",
+      "result": "passed: 46 unit + 33 CLI integration tests; 0 failed."
+    },
+    {
+      "command": "Diagnostic legacy JSON shape compatibility test",
+      "result": "passed: parsing and re-serializing code/message/hint does not add the proposed details field."
+    },
+    {
+      "command": "Current report field differential review against src/app.rs and python/worker.py",
+      "result": "passed: operations.json records envelope fields plus actual inspect, probe, verify, training, train/resume, edit and component payload paths and their proposed target fields."
+    }
+  ],
+  "integration_patch": [
+    "Added `pub mod operation`/`pub mod diagnostic` and Diagnostic re-export through the existing src/domain.rs flat module.",
+    "Added proposed service ports through src/ports.rs. No application command dispatch, worker protocol or CLI execution path was migrated in this task."
+  ],
+  "remaining": [
+    "The planner/readiness engine and actual typed service use are not implemented by this contract task; CORE-03/04/05 own those migrations and behavior.",
+    "MODEL/EDIT/TRAIN/RUN/EXT/DATA/ENV own their operation-specific DTO payloads and capability semantics; this task defines shared envelopes only."
+  ],
+  "external_dependencies": []
+}

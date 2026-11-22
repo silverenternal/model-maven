@@ -1,0 +1,68 @@
+{
+  "task_id": "CLI-08",
+  "status": "done",
+  "owner": "总协调人",
+  "branch": "integration",
+  "files_changed": [
+    "src/presentation/pages/assembly.rs",
+    "src/presentation/pages/mod.rs",
+    "src/presentation/workbench.rs",
+    "tests/cli_assembly_ui.rs",
+    "clitodo.json"
+  ],
+  "implemented": [
+    "新增根工厂装配页面，显示项目默认配置目标、模型入口、配置文件、每个接缝的绑定/版本/参数、模型树实际注册路径和调用覆盖证据。",
+    "将 forward=not_run、passed、failed 分别解释为尚未执行代表批次、代表批次检查通过、检查失败；没有调用证据时明确显示未知/尚未观测。",
+    "工作台只执行一次 assembly show；操作提示明确区分根工厂接缝名与 model.encoder 一类 Layer 路径。支持 add/set/remove 和显式 preview dry-run。",
+    "保留已登记组件的 Schema 表单与 Python module:factory 入口；批次绑定、临时批次参数和根模型工厂参数各自说明。候选提交沿用服务提供的一次确认；失败/取消保持当前配置。",
+    "页面明确限定项目默认装配，说明已有变体保留固定快照；不声称支持不存在的 --target assembly。"
+  ],
+  "validation": [
+    {
+      "command": "cargo test --locked --quiet",
+      "result": "passed: full workspace; 107 unit tests, 54 CLI tests, all integration targets passed"
+    },
+    {
+      "command": "cargo test --locked --bin m-model --quiet presentation::pages::assembly::tests",
+      "result": "passed: 2 page tests"
+    },
+    {
+      "command": "cargo test --locked --test cli_assembly_ui --quiet",
+      "result": "passed: 2 PTY integration tests"
+    },
+    {
+      "command": "cargo check --locked --quiet",
+      "result": "passed"
+    },
+    {
+      "command": "cargo fmt --all -- --check && git diff --check",
+      "result": "passed"
+    },
+    {
+      "command": "python scripts/check_worker_architecture.py",
+      "result": "passed"
+    },
+    {
+      "command": "python scripts/check_compatibility.py",
+      "result": "passed"
+    },
+    {
+      "command": "python scripts/check_architecture.py",
+      "result": "passed"
+    },
+    {
+      "command": "Linux PTY: preview add then inspect JSON config",
+      "result": "passed: candidate forward validation ran; project.json had no persisted slots"
+    },
+    {
+      "command": "Linux PTY: invalid factory add, valid add, cancelled set, confirmed set, remove; non-TTY assembly show",
+      "result": "passed: failed/cancelled candidates preserved prior state; all committed operations validated; final JSON config had no slots"
+    }
+  ],
+  "integration_patch": [
+    "Added pages::assembly and used its renderer for the workbench action that inspects and edits root factory seams.",
+    "Changed interactive assembly to support a preview-only route while preserving application-owned candidate verification and project-config confirmation."
+  ],
+  "backend_requests": [],
+  "remaining": []
+}

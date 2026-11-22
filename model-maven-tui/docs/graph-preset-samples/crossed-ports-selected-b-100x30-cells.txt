@@ -1,0 +1,30 @@
+Tab Details · ? Controls · M Port matrix · T Mouse on           [-][+][<][>][^][v][R][E][1]{2}[3][4]
+100%  ·  2D  ·  OFFLINE · observed tensor flow v1  |  1–4/4  ·  CELLS
+────────────────────────────────────────────────────────────────────────────────────────────────────
+  ╭─ model.encoder[1] → net.merge[0]
+  ╰─ 2×48 → …×48  ·  last axis match
+
+                                         ⡀     ⢠⠤⠤⠤⠤⡄                            ⡤⠤⠤⠤⢤
+                            ⢰⠒⠒⠒⠒⠒⠒⠒  ⡏⠉⠙⠛⠛⠛⠛⠛⠛⢸⣀⣀⣀⣀⡇                            ⣇⣀⣀⣀⣸
+              ⣀⣀⣀⣀⣀         ⢺         ⡇         merge                           adapter
+              ⡇▒▒▒▒⠶⠶⠶⠶⠶⠶⠶⠶⠶⠾⠶⠶⠶⠶⡦⠤⠤⠤⠤⠇
+              ⠉⠉⠉⠉⠉             ⢐⢔
+             encoder             ⣇⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⢸⠉⠉⠉⠉⡇
+                                               ⠘⠒⠒⠒⠒⠃
+                                                head
+
+
+────────────────────────────────────────────────────────────────────────────────────────────────────
+› model.encoder[1] → net.merge[0]
+  2×48 → …×48  ·  last axis match
+
+Space · Toggle motion   │   / Search · × mismatch · dashed unknown · H tree · 1 3D · 2 Flow · 3 x1 …
+L Layout off · T Mouse on · W Wires · Drag pan · +/- Zoom · Enter · z 2D/3D · Esc
+w Cycle · W Wire list · u Source · d Destination
+────────────────────────────────────────────────────────────────────────────────────────────────────
+Offline sample · Failed · Graph
+model.head #2 · demo.py:12 · a Axes
+Observed 2×48 · Expected …×32
+changing-batch-01 · trace captured
+observed
+? · ↑↓ calls · e Preview · Tab graph · q quit · i Call evidence · s Settings · m Welcome

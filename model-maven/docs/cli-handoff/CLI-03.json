@@ -1,0 +1,61 @@
+{
+  "task_id": "CLI-03",
+  "status": "done",
+  "owner": "总协调人",
+  "baseline": "d2f9367",
+  "branch": "integration",
+  "files_changed": [
+    "src/presentation/forms/mod.rs",
+    "src/presentation/forms/schema.rs",
+    "src/presentation/forms/fields.rs",
+    "src/presentation/widgets/field_help.rs",
+    "src/presentation/contracts.rs",
+    "src/presentation/terminal.rs",
+    "src/presentation/workbench.rs",
+    "src/ports.rs",
+    "src/presentation/service.rs",
+    "src/presentation/mod.rs",
+    "src/presentation/widgets/mod.rs",
+    "src/main.rs"
+  ],
+  "implemented": [
+    "抽取 Schema 字段表单和就地帮助；显示描述、当前值/来源、默认、枚举、数值/字符串/数组边界、必填和敏感值遮蔽；支持嵌套 object/array。",
+    "支持 Full/Patch 输入语义、当前值保留、:skip/:back/:cancel；无效值在当前字段重试，取消不会提交部分结果。",
+    "表单接入注册 Layer/Provider 组件、内置 Layer 的新增/替换、变体与源码参数修改、训练步数/checkpoint/lr/weight decay、外部训练参数及装配参数。",
+    "自由参数从 NAME=JSON 循环改成分步名称和值输入；未知组件 Python 工厂明确说明没有注册 Schema。",
+    "修复 Layer 路径选择文案与行为不一致的问题：留空现在可浏览候选。"
+  ],
+  "validation": [
+    {
+      "command": "cargo fmt --check",
+      "result": "passed"
+    },
+    {
+      "command": "git diff --check",
+      "result": "passed"
+    },
+    {
+      "command": "cargo check --locked",
+      "result": "passed"
+    },
+    {
+      "command": "cargo test --locked",
+      "result": "passed: 17 unit + 33 CLI integration tests; 0 failed"
+    },
+    {
+      "command": "PTY temporary Sequential project: add Linear, enter out_features :back, update in_features, finish",
+      "result": "passed: field help displayed; prior input was retained and editable; candidate validated and saved to working variant."
+    },
+    {
+      "command": "PTY temporary Sequential project: invalid in_features JSON, correct it, then cancel at out_features",
+      "result": "passed: invalid value prompted for retry; :cancel returned without creating working variant."
+    }
+  ],
+  "integration_patch": [
+    "FieldDescriptor now carries current_value and value_source.",
+    "UserInteraction exposes read_line and terminal capability through UiServices; Application UI boundary is updated.",
+    "Workbench routes interactive prompts and terminal checks through the presentation boundary."
+  ],
+  "backend_requests": [],
+  "remaining": []
+}

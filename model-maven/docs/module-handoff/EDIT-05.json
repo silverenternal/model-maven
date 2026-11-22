@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "task_id": "EDIT-05",
+  "status": "done",
+  "baseline": "Current shared worktree, 2026-11-20 coordinator iteration.",
+  "branch": "master (uncommitted shared worktree)",
+  "files_changed": [
+    "edittodo.json",
+    "docs/module-handoff/EDIT-05.json",
+    "python/model_maven_worker/edit/migration.py",
+    "python/model_maven_worker/edit/__init__.py",
+    "python/model_maven_worker/train/checkpoint.py",
+    "python/model_maven_worker/train/runner.py",
+    "python/model_maven_worker/__init__.py",
+    "src/application/train.rs",
+    "src/application/run_request.rs",
+    "src/domain/worker.rs",
+    "src/cli.rs",
+    "docs/weight-migration.md",
+    "src/adapters/worker_assets.rs",
+    "tests/edit_migration.rs"
+  ],
+  "implementation": [
+    "Implemented pure fail-closed state migration: explicit source/target tensor mapping requires a non-empty user semantic_reason; exact shape/dtype only; unknown/duplicate/unaccounted state rejected.",
+    "Target state is copied before mutation; preserve/reset/drop accounting is exact. Reports optimizer reset and rejects non-Tensor custom extra state without an explicit adapter.",
+    "Training checkpoints persist shared parameter/buffer alias groups. Migration requires full one-to-one mapping of each preserved alias group to an identical target group; topology changes must reset/drop the whole groups. A source checkpoint without alias evidence fails closed.",
+    "CLI supports `train --migrate-from RUN_ID --migration-plan FILE`; a verified parent checkpoint seeds a new step-zero child checkpoint and report, while optimizer state resets and the parent checkpoint remains immutable.",
+    "Added migration module to Rust embedded worker assets and public edit package exports."
+  ],
+  "validation": [
+    "python3 scripts/check_worker_architecture.py — passed (embedded asset coverage and domain direction).",
+    "`cargo test --locked --test edit_migration -- --nocapture` passed (2/2) after alias changes, including a real tied-weight parent/child migration, alias-group report/checkpoint persistence, parent immutability, optimizer reset, failed-plan no-checkpoint, and child resume.",
+    "Direct PyTorch check passed: missing alias evidence fails closed, and matching tied groups migrate with the expected report.",
+    "A real weights_only checkpoint with a valid latest.json SHA-256 but no model_state_alias_groups field was loaded through load_verified_checkpoint_payload and rejected by run_training_run as MIGRATION_SHARED_IDENTITY_UNKNOWN before creating child checkpoint state.",
+    "python3 -m py_compile migration.py/checkpoint.py/runner.py/worker __init__.py — passed; check_architecture.py, check_worker_architecture.py, check_compatibility.py and git diff --check passed.",
+    "`cargo test --locked --test run_supervision -- --nocapture` passed (3/3), including PTY HUP/reconnect; data_presets passed 6/6; cli_terminal_layout passed 13/13 after updating the scripted paginated component navigation. `cargo fmt --all -- --check` and `cargo clippy --all-targets --locked -- -D warnings` pass.",
+    "`cargo test --locked --quiet` completed successfully across the full workspace after the migration and CLI-18 changes.",
+    {
+      "command": "cargo test --locked --test edit_migration -- --nocapture (current targeted rerun)",
+      "result": "passed 2/2: explicit tensor semantics/accounting planner and full parent->child CLI migration. The integration test covers tied alias preservation, tied-to-untied refusal, immutable parent checkpoint, optimizer reset, child resume, legacy checkpoint physically missing alias metadata rejected before child checkpoint publication, and failure/no-half-publish."
+    },
+    {
+      "command": "cargo test --locked --test edit_migration -- --nocapture (final audit rerun)",
+      "result": "passed 2/2. The CLI integration creates a real trained parent checkpoint, migrates exact tensors with tied aliases into a child, verifies parent bytes are unchanged and optimizer state resets, inspects checkpoint alias metadata, resumes the child, and rejects missing alias metadata, tied-to-untied preservation, and unaccounted migration plans without publishing child latest.json."
+    }
+  ],
+  "limitations": [
+    "Tensor transforms such as slicing, reshaping, widening, narrowing, merging, splitting, or dtype conversion have no adapter and fail closed; supported migration is exact shape/dtype one-to-one copy with an explicit semantic reason.",
+    "Non-Tensor custom extra state has no migration adapter and fails closed. Optimizer, scheduler, scaler, and step state do not transfer; the child starts at step zero with fresh optimizer state.",
+    "Preserving a shared parameter/buffer requires matching complete source and target alias groups. Topology changes can only reset the whole target alias group and drop the whole source group; checkpoints without alias-group evidence cannot be migration sources.",
+    "Failure publication evidence covers migration validation failures before child checkpoint publication. A successfully migrated step-zero checkpoint is intentionally durable so a later training failure can resume from it."
+  ],
+  "remaining": [],
+  "commit": null,
+  "blockers": []
+}

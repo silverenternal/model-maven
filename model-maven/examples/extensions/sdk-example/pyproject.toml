@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "model-maven-sdk-example"
+version = "0.1.0"
+description = "An extension package authored with the optional Model-Maven SDK"
+requires-python = ">=3.10"
+dependencies = ["model-maven-sdk>=0.1.0,<0.2.0", "torch>=2.1"]
+
+[project.entry-points."model_maven.components"]
+scaled-identity = "sdk_component.layer:make_scaled_identity"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+sdk_component = ["__model_maven__/*.json"]

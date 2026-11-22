@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "namespace": "example",
+  "component_id": "example/scaled-identity",
+  "component_version": "0.1.0",
+  "extension_api_version": 1,
+  "kind": "layer",
+  "entrypoint": "sdk_component.layer:make_scaled_identity",
+  "description": "Multiply each input value by an editable scale factor.",
+  "params_schema": {
+    "type": "object",
+    "properties": {
+      "scale": {
+        "type": "number",
+        "description": "Multiplier applied in forward.",
+        "default": 1.0
+      }
+    },
+    "required": [],
+    "additionalProperties": false
+  },
+  "capabilities": {
+    "construct": "supported"
+  }
+}

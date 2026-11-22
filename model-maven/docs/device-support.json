@@ -1,0 +1,83 @@
+{
+  "schema_version": 1,
+  "updated_at_utc": "2026-11-18T18:25:30Z",
+  "default_device": "cpu",
+  "selection_syntax": [
+    "cpu",
+    "auto",
+    "cuda",
+    "cuda:N"
+  ],
+  "automatic_selection_policy": "auto chooses the first GPU visible to the current PyTorch CUDA-compatible runtime (CUDA or ROCm); if no usable GPU is visible, it chooses CPU. The selected device and backend are recorded in the run.",
+  "execution_limits": {
+    "devices_per_run": 1,
+    "distributed_training": "not_supported",
+    "automatic_oom_prediction": "not_supported",
+    "batch_containers_moved_automatically": [
+      "mapping values",
+      "list items",
+      "tuple items",
+      "namedtuple fields"
+    ],
+    "custom_batch_objects": "User-defined objects are passed through unchanged; use external-loop context.to_device(batch) or move their tensors in user code."
+  },
+  "profiles": [
+    {
+      "id": "cpu-linux-pytorch-2.15.0",
+      "status": "verified",
+      "hardware": "Linux x86_64 host; AMD Ryzen 9 8945HS",
+      "python": "3.14.10",
+      "pytorch": "2.15.0",
+      "coverage": [
+        "auto falls back to CPU when no GPU is visible and records the selected device",
+        "explicit CPU selection",
+        "nested batch forward/backward/update",
+        "process peak RSS measurement"
+      ],
+      "evidence": "cargo test --locked --test train_device cpu_is_an_explicit_device_and_reports_measured_process_memory -- --exact --nocapture"
+    },
+    {
+      "id": "amd-rocm-rx7800xt-single-gpu",
+      "status": "verified_for_this_profile",
+      "tested_at_utc": "2026-11-18T18:25:30Z",
+      "hardware": {
+        "gpu": "AMD Radeon RX 7800 XT",
+        "visible_index": 0,
+        "architecture": "gfx1101",
+        "memory_bytes": 17163091968,
+        "other_visible_device": "AMD Radeon 780M Graphics (not selected)"
+      },
+      "software": {
+        "os": "Linux x86_64",
+        "kernel_and_amdgpu_driver": "7.3.4-zen2-1-zen",
+        "rocm_smi_reported_rocm": "7.2.4",
+        "pytorch": "2.15.0",
+        "pytorch_hip_build": "7.2.53211",
+        "python": "3.14.10"
+      },
+      "coverage": [
+        "auto selects the first visible GPU and records cuda:0 plus the ROCm backend",
+        "managed-step forward/backward/AdamW update on cuda:0",
+        "nested mapping/list/tuple batch transfer",
+        "real measured allocated, reserved, peak and available GPU memory",
+        "atomic checkpoint save and resume on the same selected device",
+        "manual-step optimizer update on one GPU",
+        "external-loop context.to_device(batch) on one GPU",
+        "ambiguous multi-GPU selection rejected",
+        "injected GPU out-of-memory error reports phase and measured resources"
+      ],
+      "evidence": "cargo test --locked --test train_device -- --nocapture",
+      "limitations": [
+        "This verifies one local hardware/software profile; it does not establish support for all AMD GPUs or ROCm versions.",
+        "NVIDIA CUDA hardware was not available for verification.",
+        "OOM reporting was tested with an injected PyTorch OOM exception; no physical memory-exhaustion stress run was performed.",
+        "The integrated Radeon 780M was visible but not selected or independently verified."
+      ]
+    },
+    {
+      "id": "nvidia-cuda",
+      "status": "not_verified",
+      "reason": "No NVIDIA device was available in this environment."
+    }
+  ]
+}

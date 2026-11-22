@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "task_id": "DATA-03",
+  "status": "done",
+  "baseline": "da40a72 plus coordinator worktree changes already present",
+  "branch": "master (uncommitted coordinator worktree)",
+  "files_changed": [
+    "python/model_maven_worker/data/transforms.py",
+    "python/model_maven_worker/data/__init__.py",
+    "src/adapters/worker_assets.rs",
+    "tests/data_transforms.rs",
+    "docs/contracts/module-interfaces.json",
+    "datatodo.json",
+    "product.json",
+    "all root *todo.json source document versions"
+  ],
+  "implementation": [
+    "Added versioned registry metadata for Resize, ToTensor, Normalize and RandomHorizontalFlip, including field types, required values, defaults and help text for CLI forms/autocomplete.",
+    "Preserves and executes the exact declared order. Built-ins support PIL images, NumPy images and CHW/BCHW tensors where their contracts allow; no fixed Resize/Normalize ordering rule is imposed.",
+    "Added custom Python module:callable transforms with keyword parameters and optional input/output port contracts.",
+    "Observes actual type, shape, rank, dtype, storage layout and tensor memory format at each step. Port mismatch and runtime errors identify the exact step and input/output direction.",
+    "RandomHorizontalFlip uses a stable per-step seed derived without Python's process-randomized hash, enabling same-input/seed replay.",
+    "Embedded the service into the Rust worker bundle and exposed the Python data package functions."
+  ],
+  "validation": [
+    {
+      "command": "cargo test --locked --test data_transforms --test data_sampling --test data_adapters",
+      "result": "passed: 5 transform, 4 classification/sampling, and 4 Dataset adapter integration tests"
+    },
+    {
+      "command": "python3 -m py_compile python/model_maven_worker/data/transforms.py python/model_maven_worker/data/__init__.py",
+      "result": "passed"
+    },
+    {
+      "command": "python3 scripts/check_worker_architecture.py",
+      "result": "passed: 58 worker modules, embedded asset coverage complete"
+    },
+    {
+      "command": "cargo fmt --all -- --check; git diff --check",
+      "result": "passed"
+    }
+  ],
+  "limitations": [
+    "Transform execution is exposed as a worker Python service; the interactive preview and preset flows that call it are separate DATA-04/DATA-05 and CLI integration work.",
+    "Built-in image/tensor operations require the corresponding optional runtime library only when invoked. Custom transforms remain unrestricted Python code and run in the selected project environment."
+  ],
+  "integration_patch": "Product document advanced to 0.13.37; task source versions were synchronized. C-data now reflects the ordered transform and step-port service.",
+  "commit": null
+}

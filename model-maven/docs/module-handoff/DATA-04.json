@@ -1,0 +1,102 @@
+{
+  "schema_version": 1,
+  "task_id": "DATA-04",
+  "status": "done",
+  "baseline": "0.13.37 coordinator worktree; DATA-02 and DATA-03 completed",
+  "branch": "master (uncommitted coordinator worktree)",
+  "files_changed": [
+    "python/model_maven_worker/data/preview.py",
+    "python/model_maven_worker/data/renderers.py",
+    "python/model_maven_worker/data/batch.py",
+    "python/model_maven_worker/data/__init__.py",
+    "python/model_maven_worker/protocol.py",
+    "src/adapters/previews.rs",
+    "src/adapters/mod.rs",
+    "src/adapters/worker_assets.rs",
+    "src/application/data_preview.rs",
+    "src/application/run.rs",
+    "src/cli.rs",
+    "src/domain/capability.rs",
+    "src/presentation/terminal.rs",
+    "src/presentation/workbench.rs",
+    "tests/data_preview.rs",
+    "docs/contracts/compatibility.json",
+    "docs/contracts/module-interfaces.json",
+    "datatodo.json",
+    "product.json",
+    "all root *todo.json source document versions",
+    "docs/module-handoff/DATA-04.json",
+    "src/ports/previews.rs",
+    "src/ports.rs",
+    "src/application/mod.rs",
+    "src/application/replay_tests.rs",
+    "src/adapters/preview_repository.rs",
+    "src/main.rs"
+  ],
+  "interface_changes": [
+    "新增 worker operation preview / feature data.preview；Dataset source 条件声明 data.dataset_probe 并由 protocol validator 对该来源开放。",
+    "DataCommand::Preview 提供 Dataset/batch factory、NAME=JSON 参数、split/sample/fingerprint/seed、变换 JSON、内建或项目自定义 renderer 和 local/SSH 指引。",
+    "preview_only 模式复用 DatasetAdapter 采样但不要求 model forward batch binding；请求身份绑定运行时代码、来源参数、数据指纹/样本身份、变换、renderer 与运行环境锁。"
+  ],
+  "implementation": [
+    "Built-in auto renderer 为图像生成真实 PNG 网格及自包含 HTML；summary 输出不暴露 payload 的结构摘要；项目 renderer 需显式声明 module:callable 和版本，artifact 必须留在请求目录。",
+    "Rust FilePreviewStore 以独立请求目录、文件锁、generation、原子 JSON 和产物 hash/size 校验处理缓存、失败、取消、篡改及最新请求发布；仅稳定样本身份可复用成功结果。",
+    "TTY 无来源时通过提示选择 Dataset 或 batch 工厂；终端显示样本数、切分、缓存状态和产物。SSH 模式校验用户输入并生成含绝对路径的 scp 命令，不连接、不传输、不自动打开。",
+    "Dataset 与直接 batch 工厂结果采用预览专用路径，不要求模型前向绑定；截取请求预算时从真实 batch 维度逐样本切分，保留多输入标签结构。",
+    "将预览输入读取、项目指纹和请求状态生命周期收敛到 PreviewRepository 端口；FilePreviewStore 通过独立 adapter glue 实现该端口，data_preview 应用用例不再直接承担文件 I/O 或依赖具体存储。"
+  ],
+  "validation": [
+    {
+      "command": "cargo test --locked",
+      "result": "passed: full workspace suite; 69 unit tests, 41 CLI tests and all integration suites including DATA-04."
+    },
+    {
+      "command": "cargo test --locked --test data_preview -- --nocapture",
+      "result": "passed: 6 tests including embedded-worker batch, Dataset and custom renderer CLI paths."
+    },
+    {
+      "command": "python3 scripts/check_compatibility.py",
+      "result": "passed: Rust/Python protocol, operation registry, state formats and features align."
+    },
+    {
+      "command": "python3 scripts/check_worker_architecture.py",
+      "result": "passed: 60 worker modules; embedded asset coverage complete."
+    },
+    {
+      "command": "python3 -m py_compile python/model_maven_worker/data/preview.py python/model_maven_worker/data/batch.py python/model_maven_worker/protocol.py",
+      "result": "passed."
+    },
+    {
+      "command": "cargo fmt --all",
+      "result": "passed."
+    },
+    {
+      "command": "python3 scripts/check_architecture.py",
+      "result": "passed: Rust architecture boundaries."
+    },
+    {
+      "command": "python3 scripts/check_worker_architecture.py",
+      "result": "passed: 63 worker modules; embedded asset coverage complete."
+    },
+    {
+      "command": "cargo check --locked",
+      "result": "passed after PreviewRepository wiring."
+    },
+    {
+      "command": "cargo test --locked --test data_preview -- --nocapture",
+      "result": "passed: 6 preview integration tests."
+    },
+    {
+      "command": "cargo test --locked --quiet",
+      "result": "passed: complete Rust workspace suite, including CLI and all integration test binaries."
+    }
+  ],
+  "limitations": [
+    "CLI deliberately does not launch a browser or perform SSH transfer; it reports the local file or a user-reviewable command.",
+    "Project renderer and user Dataset/batch factories execute as user Python code in the selected runtime process; this operation does not claim an OS-level security sandbox.",
+    "Preview cache requires a user data fingerprint, a project environment lock, project-local source and stable sample identity; otherwise each request renders fresh.",
+    "Full product remains incomplete: DATA-05 presets and CLI-21/QA release/real-user acceptance remain outstanding."
+  ],
+  "integration_patch": "Coordinator integration complete: preview file I/O and request persistence are behind PreviewRepository; main and replay test wiring use FilePreviewStore. CLI-14 integration now carries the last successful publication back on a current-generation renderer/publication failure only when it is explicitly stale, so the human page can locate but not mislabel the previous artifact. Full Rust workspace and boundary checks passed before this final UI integration; current target/full regression is recorded in docs/cli-handoff/CLI-14.json.",
+  "commit": null
+}

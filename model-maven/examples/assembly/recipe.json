@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "description": "A user-owned classifier root with a separately declared encoder seam.",
+  "initialization_seed": 17,
+  "model": {
+    "factory": "root_model:build_model",
+    "params": {
+      "classes": 3
+    }
+  },
+  "model_injections": {
+    "encoder": {
+      "factory": "components:build_encoder",
+      "params": {
+        "width": 4
+      }
+    }
+  }
+}

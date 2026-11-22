@@ -1,0 +1,443 @@
+{
+  "schema_version": 1,
+  "task_id": "QA-02",
+  "status": "in_review",
+  "overall_result": "partial",
+  "baseline": "product.json 0.13.63; Linux x86_64 / Python 3.14.10; current source fingerprint captured consistently across the 2026-11-21 final QA-02 sweep.",
+  "branch": "master (uncommitted coordinator worktree)",
+  "files_changed": [
+    "scripts/verify_product_acceptance.py",
+    "docs/acceptance/results/qa02-incremental-20261118/complex-model-workflow.json",
+    "docs/acceptance/results/qa02-incremental-20261118/edit-persistence-and-migration.json",
+    "docs/acceptance/results/qa02-incremental-20261118/human-value-validation.json",
+    "docs/acceptance/results/qa02-incremental-20261118/logs/complex-model-workflow.stdout.log",
+    "docs/acceptance/results/qa02-incremental-20261118/logs/complex-model-workflow.stderr.log",
+    "docs/module-handoff/QA-02.json",
+    "scripts/verify_external_loop.py",
+    "docs/acceptance/results/qa02-incremental-20261120/complex-model-workflow.json",
+    "docs/acceptance/results/qa02-incremental-20261120/external-loop.json",
+    "docs/acceptance/results/qa02-incremental-20261120/extension-package.json",
+    "docs/acceptance/results/qa02-incremental-20261120/provider-extension.json",
+    "docs/acceptance/results/qa02-incremental-20261120/environment-offline-setup.json",
+    "docs/acceptance/results/qa02-incremental-20261120/edit-persistence-and-migration.json",
+    "docs/acceptance/results/qa02-incremental-20261120/provider-conformance.json",
+    "docs/acceptance/results/qa02-incremental-20261120/supervisor-disconnect.json",
+    "docs/acceptance/results/qa02-incremental-20261120/project-artifact-reference-graph.json",
+    "docs/acceptance/results/qa02-incremental-20261120/independent-export-restore.json",
+    "docs/acceptance/results/qa02-incremental-20261120/human-value-validation.json",
+    "docs/acceptance/results/qa02-incremental-20261120/logs/complex-model-workflow.stderr.log",
+    "docs/acceptance/results/qa02-incremental-20261120/logs/complex-model-workflow.stdout.log",
+    "docs/acceptance/results/qa02-incremental-20261120/logs/environment-offline-setup.stderr.log",
+    "docs/acceptance/results/qa02-incremental-20261120/logs/environment-offline-setup.stdout.log",
+    "docs/acceptance/results/qa02-incremental-20261120/logs/extension-package.stderr.log",
+    "docs/acceptance/results/qa02-incremental-20261120/logs/extension-package.stdout.log",
+    "docs/acceptance/results/qa02-incremental-20261120/logs/external-loop.stderr.log",
+    "docs/acceptance/results/qa02-incremental-20261120/logs/external-loop.stdout.log",
+    "docs/acceptance/results/qa02-incremental-20261120/logs/provider-extension.stderr.log",
+    "docs/acceptance/results/qa02-incremental-20261120/logs/provider-extension.stdout.log",
+    "docs/test-performance.md",
+    "tests/cli.rs",
+    "tests/train_device.rs",
+    "tests/train_modes.rs",
+    "src/application/config.rs",
+    "src/application/mod.rs",
+    "src/adapters/project_source.rs",
+    "src/adapters/mod.rs",
+    "src/ports/project_source.rs",
+    "src/ports.rs",
+    "src/main.rs",
+    "python/model_maven_worker/protocol.py",
+    "scripts/verify_edit_persistence.py",
+    "tests/extensions_component_state.rs",
+    "python/model_maven_worker/extensions/layer_conformance.py",
+    "python/model_maven_worker/extensions/conformance.py",
+    "scripts/verify_extension_conformance_suite.py",
+    "docs/module-handoff/EXT-03.json",
+    "extensiontodo.json",
+    "acceptancetodo.json",
+    "docs/acceptance/results/qa02-incremental-20261120-extension-state/provider-conformance.json",
+    "python/model_maven_worker/extensions/trainer_conformance.py",
+    "tests/extensions_trainer_conformance.rs",
+    "docs/extensions/sdk.md",
+    "README.md",
+    "src/application/readiness.rs",
+    "src/application/extensions.rs",
+    "src/adapters/components.rs",
+    "src/adapters/worker_assets.rs",
+    "src/presentation/service.rs",
+    "src/cli.rs",
+    "moduletodo.json",
+    "docs/acceptance/results/qa02-20261120-supervision-0.13.57/*.json + logs",
+    "docs/acceptance/results/qa02-20261120-final-cli16-0.13.57/*.json + logs",
+    "scripts/verify_supervision_acceptance.py",
+    "docs/acceptance/results/qa02-20261120-supervision-index-0.13.57/supervision-rules.json",
+    "docs/acceptance/results/qa02-20261120-supervision-index-0.13.57/logs/supervision-rules.stdout.log",
+    "docs/acceptance/results/qa02-20261120-supervision-index-0.13.57/logs/supervision-rules.stderr.log",
+    "docs/acceptance/requirements.json",
+    "docs/acceptance/README.md",
+    "python/model_maven_worker/train/supervision.py",
+    "python/model_maven_worker/train/state.py",
+    "python/model_maven_worker/train/managed.py",
+    "python/model_maven_worker/train/manual.py",
+    "python/model_maven_worker/data/batch.py",
+    "tests/test_supervision_preview.py",
+    "docs/model-contracts.md",
+    "docs/cli-guide.md",
+    "docs/cli-handoff/CLI-23.json",
+    "docs/module-handoff/TRAIN-05.json",
+    "docs/acceptance/results/qa02-20261120-supervision-verified-0.13.58/supervision-rules.json",
+    "docs/acceptance/results/qa02-20261120-supervision-verified-0.13.58/logs/supervision-rules.stdout.log",
+    "docs/acceptance/results/qa02-20261120-supervision-verified-0.13.58/logs/supervision-rules.stderr.log",
+    "docs/acceptance/results/qa02-20261120-supervision-multibatch-0.13.59/supervision-rules.json",
+    "docs/acceptance/results/qa02-20261120-supervision-multibatch-0.13.59/logs/supervision-rules.stdout.log",
+    "docs/acceptance/results/qa02-20261120-supervision-multibatch-0.13.59/logs/supervision-rules.stderr.log",
+    "docs/acceptance/results/qa02-20261120-supervision-manual-marks-0.13.62/supervision-rules.json",
+    "docs/acceptance/results/qa02-20261120-supervision-manual-marks-0.13.62/logs/supervision-rules.stdout.log",
+    "docs/acceptance/results/qa02-20261120-supervision-manual-marks-0.13.62/logs/supervision-rules.stderr.log",
+    "python/model_maven_worker/tensor_inputs/content_identity.py",
+    "python/model_maven_worker/tensor_inputs/snapshot.py",
+    "scripts/check_worker_architecture.py",
+    "scripts/verify_release_install.py",
+    "docs/contracts/compatibility.json",
+    "product.json",
+    "src/application/data_preview.rs",
+    "src/presentation/terminal.rs",
+    "python/model_maven_worker/__init__.py",
+    "tests/data_presets.rs",
+    "docs/cli-handoff/CLI-04.json",
+    "clitodo.json",
+    "python/model_maven_worker/model/probe.py",
+    "python/model_maven_worker/data/content_identity.py",
+    "python/model_maven_worker/data/input_snapshot.py",
+    "python/model_maven_worker/tensor_inputs/__init__.py",
+    "python/model_maven_worker/tensor_inputs/protocol.py",
+    "tests/test_tui_input_snapshot.py",
+    "tests/model_evidence.rs",
+    "python/model_maven_worker/train/external.py",
+    "python/model_maven_worker/runtime/capabilities.py",
+    "python/model_maven_sdk/src/model_maven_sdk/contracts.py",
+    "docs/acceptance/results/qa02-20261120-trainer-deadline-0.13.63/provider-conformance.json",
+    "python/model_maven_worker/environment/adapters.py",
+    "src/application/environment.rs",
+    "tests/environment_adapters.rs",
+    "docs/environment-adapters.md",
+    "scripts/verify_environment_runtime_probe.py",
+    "docs/acceptance/results/qa02-20261120-env-runtime-final-0.13.63/environment-runtime-probe.json",
+    "docs/acceptance/results/delivery-current-20261121-qa02/complex-model-workflow.json",
+    "docs/acceptance/results/delivery-current-20261121-qa02/external-loop.json",
+    "docs/acceptance/results/delivery-current-20261121-qa02/supervision-rules.json",
+    "docs/acceptance/results/delivery-current-20261121-qa02/extension-package.json",
+    "docs/acceptance/results/delivery-current-20261121-qa02/provider-extension.json",
+    "docs/acceptance/results/delivery-current-20261121-qa02/environment-offline-setup.json",
+    "docs/acceptance/results/delivery-current-20261121-qa02/environment-runtime-probe.json",
+    "docs/acceptance/results/delivery-current-20261121-qa02/project-artifact-reference-graph.json",
+    "docs/acceptance/results/delivery-current-20261121-qa02/supervisor-disconnect.json",
+    "docs/acceptance/results/delivery-current-20261121-qa02/independent-export-restore.json",
+    "docs/acceptance/results/delivery-current-20261121-qa02/provider-conformance.json",
+    "docs/acceptance/results/delivery-current-20261121-qa02/edit-persistence-and-migration.json",
+    "docs/acceptance/results/qa02-current-tree-20261121-4/",
+    "tests/environment_system_site.rs",
+    "tests/cli_recovery_storage.rs",
+    "tests/cli_recovery_data.rs",
+    "docs/environment-portability.md"
+  ],
+  "implementation": [
+    "Added an explicit scenario runner that lists runnable and blocked acceptance cases and only runs user-selected cases; it does not start a long suite by default.",
+    "The provider-conformance acceptance scenario verifies formal external-loop timeout checkpointing and Linux worker process-group cleanup. Current-source Trainer conformance additionally exposes the runner-owned cooperative deadline and verifies finite stop-at-step-boundary behavior; a blocked Python/CUDA call still requires the process watchdog and may not checkpoint.",
+    "Existing complex-model, external-loop, independent extension, provider, and offline environment acceptance scripts are wired as runnable cases. Their scenario-level covered/uncovered scope is stated separately from overall product acceptance.",
+    "Each emitted record binds the product document version, Git HEAD plus dirty-worktree content fingerprint, runtime details, exact argv, exit code, captured logs, timestamp, and covered/uncovered scope. Generated acceptance output is excluded from the source worktree fingerprint.",
+    "Reduced repeated test-only PyTorch availability probing: the 57-test CLI binary previously spawned one `import torch` process per guarded test (50 occurrences); CLI, device and training-mode test binaries now memoize this per process. The train-device suite also memoizes GPU discovery.",
+    "The initial hard-coded edit-persistence blocker was replaced with a runnable focused acceptance wrapper after EDIT-01/02/03/05 integrations passed; the only currently blocked scenario is real target-user value validation.",
+    "Moved generated assembly file creation behind the ProjectSourceWriter port and file adapter; the application layer no longer performs filesystem writes. Synchronized run_artifact_manifest schema version 2 between Python protocol and compatibility contract.",
+    "Added a provenance-bound S-supervision acceptance scenario for manual semantic marking, batch-axis binding, read-only preview, explicit managed/manual training, pre-update mismatch rejection, and honest partial/insufficient coverage reporting. The evidence is mapped to product.json 0.13.62; full S-supervision remains partial because custom validator/penalty protocol and semantic target validation are unimplemented.",
+    "S-supervision now binds manually selected finite/range sample axis to explicitly declared stable batch envelope IDs or StepContext.report_sample_ids. Current-batch violations can be named in previews and pre-update require errors; missing/mismatched IDs are unsupported. The acceptance fixture exercises this behavior while preserving the broader partial-coverage statement.",
+    "S-supervision 0.13.59 adds per-rule multi-batch deduplication and checkpoint/resume continuity using SHA-256 ID summaries; repository acceptance proves repeated IDs are deduplicated after explicit sampler reset. Authenticity, dataset denominator and broader supervision extensions remain uncovered.",
+    "S-supervision 0.13.61 acceptance covers explicit external-loop supervision through a user-owned supervised_step/context.backward/registered-optimizer protocol, including formal checkpoint/resume and multi-batch sample evidence. Product 0.13.62 records the manual mark → target/rule binding → read-only preview → explicit mode selection flow and reconciles the delivered external-loop/deduplication behavior against remaining custom-plugin and identity/label limits.",
+    "S-supervision 0.13.63 adds current-source acceptance for project-local custom validator and differentiable-penalty callables: real read-only preview, explicit named loss contribution, and pinned source drift rejection. The plugin protocol is input/output constrained but runs as trusted in-process Python; no OS sandbox/resource budget is claimed. ID authenticity, dataset denominator and task-label semantics remain uncovered.",
+    "RUN-02 local Linux support boundary was re-verified on product 0.13.63: PTY HUP/reconnect, detached supervisor SIGKILL to unknown, checkpoint preservation and child-run recovery all pass; real SSH/network/host faults remain external evidence rather than a claimed capability.",
+    "Added a runner-owned cooperative deadline to external-loop Trainer conformance. The deadline starts at worker startup, is exposed through context.timeout_requested/remaining_time_seconds, and report_step() returns false at the first step boundary after expiry; ignoring that boundary fails with TRAINER_TIMEOUT_IGNORED. Formal CLI watchdog remains the process-level backstop.",
+    "QA-02 added a distinct environment-runtime-probe acceptance case: it exercises an explicitly selected Python interpreter with `m-model env probe --library torch --check-runtime`, verifies real CPU arithmetic and the no-auto-install/no-auto-bind policy, and records GPU/other-platform coverage as explicitly uncovered.",
+    "Current-source final QA-02 sweep: 13/13 runnable scenarios verified and 1 external human-value scenario explicitly skipped; all 14 evidence records validate against Draft 2020-12 schema with FormatChecker and share one worktree fingerprint. Evidence: docs/acceptance/results/qa02-current-tree-20261121-4/. This run occurred after the explicit inherited-system-site environment policy and same-preview E4 recovery were implemented."
+  ],
+  "validation": [
+    {
+      "command": "python3 -m py_compile scripts/verify_product_acceptance.py",
+      "result": "passed."
+    },
+    {
+      "command": "python3 scripts/verify_product_acceptance.py --list",
+      "result": "passed; after the latest integration, the runner lists six runnable scenarios and five explicitly blocked scenarios."
+    },
+    {
+      "command": "python3 scripts/verify_product_acceptance.py --case complex-model-workflow --case human-value-validation --case edit-persistence-and-migration --output-dir docs/acceptance/results/qa02-incremental-20261118",
+      "result": "complex-model-workflow passed in 71.770 seconds (exit 0); human-value-validation and edit-persistence-and-migration were recorded as skipped. Overall command returns 2 when selected cases are blocked, so a partial run cannot masquerade as a complete QA pass."
+    },
+    {
+      "command": "JSON Schema Draft 2020-12 validation with FormatChecker for docs/acceptance/results/qa02-incremental-20261118/*.json",
+      "result": "all three generated records validate against docs/acceptance/evidence.schema.json."
+    },
+    {
+      "command": "git diff --check",
+      "result": "passed."
+    },
+    {
+      "command": "python3 scripts/verify_product_acceptance.py --case all --output-dir docs/acceptance/results/qa02-incremental-20261120",
+      "result": "5 runnable scenarios passed: complex model, external-loop (including current human TTY loop/Layer/structure-plan paths), independent extension package, Provider extension, and offline environment setup. Six remaining scenarios were explicitly recorded as blocked/skipped with module or external-evidence reasons; the command completed with partial/incomplete status as designed."
+    },
+    {
+      "command": "cargo test --locked --quiet; cargo test --locked --test cli --quiet (after per-process PyTorch probe caching)",
+      "result": "Full workspace passed. The 57-test CLI binary passed in 106.82s after the cache change; the full-run CLI binary had taken 116.35s in a non-controlled baseline, so the difference is suggestive but not a comparable benchmark. Multiple end-to-end model/edit tests still crossed the 60s harness warning. A direct --test-threads=4 experiment remained active beyond two minutes and was interrupted without a result. See docs/test-performance.md for profiling conclusions and targeted-test policy."
+    },
+    {
+      "command": "python3 scripts/verify_product_acceptance.py --case project-artifact-reference-graph --python python3 --binary target/debug/m-model --output-dir docs/acceptance/results/qa02-incremental-20261120",
+      "result": "verified; real producer/consumer runs, typed identity resolution, consumer added after preview, fail-closed cleanup application. The acceptance record keeps variant/extension references and undeclared copies in uncovered scope."
+    },
+    {
+      "command": "python3 scripts/verify_product_acceptance.py --case supervisor-disconnect --case independent-export-restore --python python3 --binary target/debug/m-model --output-dir docs/acceptance/results/qa02-incremental-20261120",
+      "result": "verified: PTY HUP/viewer reconnect plus supervisor SIGKILL/unknown state/checkpoint resume; standalone restore after deleting the source project with sanitized Python paths, state API, tamper and missing bundle rejection. Limits are recorded per scenario."
+    },
+    {
+      "command": "python3 scripts/verify_product_acceptance.py --case all --python python3 --binary target/debug/m-model --output-dir docs/acceptance/results/qa02-incremental-20261120",
+      "result": "10 runnable scenarios verified after adding edit-persistence-and-migration: complex workflow, external loop, independent extension/provider packages, offline environment setup, project artifact graph, supervisor recovery, independent export restore, provider/transform conformance, and Layer CRUD/provider/checkpoint migration. Real-user value remains explicitly blocked."
+    },
+    {
+      "command": "python3 scripts/verify_product_acceptance.py --case edit-persistence-and-migration --python python3 --binary target/debug/m-model --output-dir docs/acceptance/results/qa02-incremental-20261120",
+      "result": "verified; real focused acceptance passed in 105.930 seconds and refreshed edit-persistence-and-migration.json."
+    },
+    {
+      "command": "cargo test --locked --test edit_codegen --test run_artifacts -- --nocapture; cargo clippy --all-targets --locked -- -D warnings; python3 scripts/check_architecture.py; python3 scripts/check_worker_architecture.py; python3 scripts/check_compatibility.py",
+      "result": "passed: readable generated assembly/output port 4/4, typed artifact graph 1/1, strict Clippy, Rust/worker architecture and compatibility contracts all pass."
+    },
+    {
+      "command": "python3 scripts/verify_extension_conformance_suite.py --binary target/debug/m-model --python python3",
+      "result": "passed: includes registered Layer state hook roundtrip and the external-loop cooperative-stop/timeout acceptance; component event/stop/timeout declarations remain outside that fixture and fail closed."
+    },
+    {
+      "command": "python3 scripts/verify_product_acceptance.py --case provider-conformance --python python3 --binary target/debug/m-model --output-dir docs/acceptance/results/qa02-incremental-20261120-extension-state",
+      "result": "verified exit 0; the acceptance JSON is authoritative for this run’s measured duration and source fingerprint. Covers Provider, transform, dataset/loss/metric, Layer state roundtrip, Trainer progress events and cooperative stop; generic Trainer timeout claims remain uncovered/fail closed."
+    },
+    {
+      "command": "python3 scripts/verify_product_acceptance.py --case all --python python3 --binary target/debug/m-model --output-dir docs/acceptance/results/qa02-incremental-20261120",
+      "result": "verified 10 runnable scenarios against the current source fingerprint. Provider-conformance includes confirmed user-task timeout, cooperative external-loop checkpoint at a step boundary, and Linux worker child cleanup. Real user value remains skipped by design; Trainer-owned deadlines, OS isolation, remote/GPU/platform and user-pairing evidence remain uncovered."
+    },
+    {
+      "command": "python3 scripts/verify_product_acceptance.py --case all --python python3 --binary target/debug/m-model --output-dir docs/acceptance/results/qa02-20261120-supervision-0.13.57",
+      "result": "passed partially as designed: all 10 runnable current-source scenarios verified; human-value-validation recorded skipped/blocked because it requires real target-user pairing. Overall runner exits 2 for this explicit blocker. All 11 JSON records validate against docs/acceptance/evidence.schema.json and share product_version 0.13.57 plus one worktree fingerprint."
+    },
+    {
+      "command": "python3 scripts/verify_product_acceptance.py --case all --python python3 --binary target/debug/m-model --output-dir docs/acceptance/results/qa02-20261120-final-cli16-0.13.57",
+      "result": "all 10 runnable scenarios passed; target-user validation is the one explicit skipped/blocked scenario. Runner exits 2 by design for that blocker. All 11 records pass Draft 2020-12 JSON Schema + FormatChecker and bind product 0.13.57 plus one source worktree fingerprint."
+    },
+    {
+      "command": "python3 scripts/verify_product_acceptance.py --case supervision-rules --python python3 --binary target/debug/m-model --output-dir docs/acceptance/results/qa02-20261120-supervision-index-0.13.57; Draft 2020-12 evidence schema + FormatChecker",
+      "result": "passed: supervision-rules exit 0 on repository PyTorch fixture; evidence validates with product 0.13.57 and current source fingerprint. Full S-supervision remains partial per uncovered_scope."
+    },
+    {
+      "command": "python3 scripts/verify_product_acceptance.py --case supervision-rules --python python3 --binary target/debug/m-model --output-dir docs/acceptance/results/qa02-20261120-supervision-verified-0.13.58/; Draft 2020-12 evidence schema + FormatChecker",
+      "result": "passed: current-batch stable-ID/sample-axis preview, successful managed report, sample-level require rejection before any completed step, target-shape mismatch rejection, and schema-validated provenance record. Multi-batch identity and user-declared ID authenticity remain uncovered."
+    },
+    {
+      "command": "python3 scripts/verify_product_acceptance.py --case supervision-rules --python python3 --binary target/debug/m-model --output-dir docs/acceptance/results/qa02-20261120-supervision-sample-localization-0.13.58; corrected rerun: docs/acceptance/results/qa02-20261120-supervision-verified-0.13.58",
+      "result": "Initial acceptance fixture incorrectly installed the intentionally rejecting rule before the successful-train assertion; the failed record is preserved under the first path. The fixture order was corrected; the final rerun passed the complete scenario and evidence schema. This is a harness correction, not a product runtime failure."
+    },
+    {
+      "command": "python3 scripts/verify_product_acceptance.py --case supervision-rules --python python3 --binary target/debug/m-model --output-dir docs/acceptance/results/qa02-20261120-supervision-multibatch-0.13.59; Draft202012Validator + FormatChecker",
+      "result": "passed on product 0.13.59; real CLI/worker reported 4 localized batches, 8 sample occurrences, 4 unique IDs and 2 unique violating IDs across checkpoint/resume with explicit sampler state reset. Checkpoint byte scan found no raw fixture IDs. Evidence validates with Draft202012Validator + FormatChecker; authenticity and dataset denominator remain uncovered."
+    },
+    {
+      "command": "python3 scripts/verify_product_acceptance.py --case supervision-rules --python python3 --binary target/debug/m-model --output-dir docs/acceptance/results/qa02-20261120-supervision-manual-marks-0.13.62; Draft202012Validator + FormatChecker",
+      "result": "passed on product 0.13.62; authentic PyTorch worker exercised manual marks, managed/manual/external paths, read-only preview, require rejection before optimizer update, named penalty, cross-batch deduplication and resume for both managed and external loops. External-loop retained user-owned optimizer/sampler state via declared hooks. ID authenticity, dataset denominator, label semantics and custom plugin protocol remain uncovered."
+    },
+    {
+      "command": "python3 scripts/verify_product_acceptance.py --case supervision-rules --python python3 --binary target/debug/m-model --output-dir docs/acceptance/results/qa02-20261120-supervision-custom-rules-0.13.63",
+      "result": "passed: custom validator structured summary/sample mask in preview, custom penalty detached preview and explicit named loss in a real managed try, pinned plugin source drift contract in integration coverage; source-bound record product 0.13.63. Overall S-supervision remains partial for authenticity, dataset denominator, task semantics and plugin isolation."
+    },
+    {
+      "command": "python3 scripts/verify_product_acceptance.py --case supervisor-disconnect --python python3 --binary target/debug/m-model --output-dir docs/acceptance/results/qa02-20261120-run02-final-0.13.63",
+      "result": "passed; current-source formal record and logs prove the Linux local-process/PTY scope. External SSH/network/host failure remains uncovered."
+    },
+    {
+      "command": "python3 scripts/verify_product_acceptance.py --case release-install --python python3 --output-dir docs/acceptance/results/qa02-20261121-preset-release-0.13.63",
+      "result": "passed: extracted Cargo package install executed m-model data presets resnet outside the checkout; existing complex training/resume/export/restore, evaluation preview/history, unavailable interpreter and SDK wheel checks also passed. Evidence is bound to product 0.13.63 and its recorded worktree fingerprint."
+    },
+    {
+      "command": "python3 scripts/check_worker_architecture.py",
+      "result": "passed: 82 Python worker modules; embedded asset coverage complete and domain imports follow the declared dependency direction."
+    },
+    {
+      "command": "python3 scripts/check_compatibility.py",
+      "result": "passed: Rust/Python protocol, API, state formats, operation registry and required features match."
+    },
+    {
+      "command": "python3 scripts/verify_product_acceptance.py --case complex-model-workflow --python python3 --binary target/debug/m-model --output-dir docs/acceptance/results/qa02-20261120-round2-complex-0.13.63",
+      "result": "passed in 32.426s; schema-valid evidence binds fingerprint 6859123acedfb9891dc5271605053f6d6ca2d89fde62822fb0cbaf7f35bf7a87. Covers multimodal/nested batch, named losses, dual optimizer, local contract repair, resume and export restore. User value, GPU/OOM and general provider/state migration remain uncovered."
+    },
+    {
+      "command": "python3 scripts/verify_product_acceptance.py --case edit-persistence-and-migration --python python3 --binary target/debug/m-model --output-dir docs/acceptance/results/qa02-20261120-round2-edit-migration-0.13.63",
+      "result": "passed in 109.759s; schema-valid evidence shares the complex workflow snapshot. Covers persistent Layer edits, undo/redo, Provider replay/compensation and parent-checkpoint child migration with alias/optimizer behavior; arbitrary forward-control semantics and tensor reshape/slice/merge/dtype transforms remain uncovered."
+    },
+    {
+      "command": "python3 scripts/verify_product_acceptance.py --case release-install --python python3 --output-dir docs/acceptance/results/qa02-20261120-round2-preset-release-no-torch-0.13.63",
+      "result": "passed in 60.159s; extracted package installed outside checkout. Preset search was run with an isolated Python venv verified to lack torch; existing train/resume/export/restore, evaluation history, interpreter diagnostics and optional SDK wheel checks passed. Schema-valid evidence records its own worktree fingerprint."
+    },
+    {
+      "command": "cargo test --locked --test extensions_trainer_conformance -- --test-threads=1; python3 scripts/check_worker_architecture.py; python3 scripts/check_compatibility.py; python3 -m py_compile python/model_maven_worker/train/external.py python/model_maven_worker/extensions/trainer_conformance.py python/model_maven_worker/__init__.py",
+      "result": "passed: Trainer finite deadline and ignored-boundary rejection 2/2; worker architecture, embedded assets, Rust/Python compatibility and Python syntax passed."
+    },
+    {
+      "command": "python3 scripts/verify_product_acceptance.py --case provider-conformance --python python3 --binary target/debug/m-model --output-dir docs/acceptance/results/qa02-20261120-trainer-deadline-0.13.63",
+      "result": "verified exit 0 in 144.657s; schema-valid current-source evidence at docs/acceptance/results/qa02-20261120-trainer-deadline-0.13.63/provider-conformance.json. Covers Trainer deadline step-boundary conformance plus registered component/Provider lifecycle workflows. Cooperative timeout cannot interrupt a blocked Python/CUDA call."
+    },
+    {
+      "command": "python3 scripts/verify_product_acceptance.py --case environment-runtime-probe --python python3 --binary target/debug/m-model --output-dir docs/acceptance/results/qa02-20261120-env-runtime-0.13.63; JSON Schema Draft 2020-12 + FormatChecker",
+      "result": "verified exit 0 in 1.529s; schema-valid record docs/acceptance/results/qa02-20261120-env-runtime-0.13.63/environment-runtime-probe.json proves PyTorch 2.15.0 CPU tensor arithmetic returned 5.0 in the explicitly selected interpreter, with auto_installed=false and auto_bound=false. GPU/ROCm/CUDA and other OS remain uncovered."
+    },
+    {
+      "command": "cargo test --locked --test extensions_component_state --test extensions_trainer_conformance --test model_evidence --test model_probe -- --nocapture; cargo clippy --locked --test model_evidence --test model_probe --test extensions_component_state --test extensions_trainer_conformance -- -D warnings",
+      "result": "passed: 10/10 current-source integration tests (Layer/Trainer conformance and model evidence/probe); strict Clippy passed. Model evidence covers changed-branch metadata revalidation, unaffected-branch metadata reuse and fail-closed dynamic/shared cases."
+    },
+    {
+      "command": "python3 scripts/verify_product_acceptance.py --case complex-model-workflow --case extension-package --case supervision-rules --python python3 --binary target/debug/m-model --output-dir docs/acceptance/results/qa02-20261121-delivery-sprint-0.13.63",
+      "result": "verified exit 0 for all three current-source scenarios: complex model workflow (31.827s), independent extension package (24.171s), semantic supervision rules (49.881s). Reports are provenance-bound JSON under the output directory. Linux x86_64 host; these fixtures ran CPU workloads, so GPU capability/performance remains unverified. Reports were produced sequentially and contain their own dirty-worktree provenance fingerprints."
+    },
+    {
+      "command": "python3 scripts/verify_product_acceptance.py --case complex-model-workflow --case external-loop --case supervision-rules --case extension-package --case provider-extension --case environment-offline-setup --case environment-runtime-probe --case project-artifact-reference-graph --case supervisor-disconnect --case independent-export-restore --case provider-conformance --case edit-persistence-and-migration --python python3 --binary target/debug/m-model --output-dir docs/acceptance/results/delivery-current-20261121-qa02",
+      "result": "passed: all 12 runnable current-source product-acceptance scenarios verified; each JSON record validates against docs/acceptance/evidence.schema.json and all 12 share one source/worktree fingerprint. This includes complex model train/repair/resume, manual supervision, extension/provider conformance, offline environment, runtime probe, artifact graph, supervisor disconnect, independent export/restore and edit migration. Real target-user evidence, GPU/scale/platform release validation and real SSH/network/host failure remain external."
+    },
+    {
+      "command": "python3 scripts/verify_product_acceptance.py --case all --python python3 --binary target/debug/m-model --output-dir docs/acceptance/results/qa02-current-tree-20261121-1; validate all records with evidence.schema.json + FormatChecker",
+      "result": "13/13 runnable scenarios verified with exit 0; human-value-validation is recorded as skipped/external. All 14 records pass schema validation. Execution took about 9m22s. Per-scenario worktree fingerprints vary (8486a384…, de5606e6…, c88259c3…) because documentation/evidence changed during execution; do not present this as one frozen-fingerprint batch. Full records/logs are linked in evidence."
+    },
+    {
+      "command": "python3 scripts/verify_product_acceptance.py --case all --python python3 --binary target/debug/m-model --output-dir docs/acceptance/results/qa02-current-tree-20261121-4",
+      "result": "passed: all 13 runnable QA-02 scenarios verified; the human-value-validation scenario was explicitly skipped because real target users are required. All 14 evidence records pass the evidence schema and have the same source/worktree fingerprint."
+    }
+  ],
+  "evidence": [
+    "docs/acceptance/results/qa02-incremental-20261118/complex-model-workflow.json",
+    "docs/acceptance/results/qa02-incremental-20261118/logs/complex-model-workflow.stdout.log",
+    "docs/acceptance/results/qa02-incremental-20261118/logs/complex-model-workflow.stderr.log",
+    "docs/acceptance/results/qa02-incremental-20261118/edit-persistence-and-migration.json",
+    "docs/acceptance/results/qa02-incremental-20261118/human-value-validation.json",
+    "docs/acceptance/results/qa02-incremental-20261120/complex-model-workflow.json",
+    "docs/acceptance/results/qa02-incremental-20261120/external-loop.json",
+    "docs/acceptance/results/qa02-incremental-20261120/extension-package.json",
+    "docs/acceptance/results/qa02-incremental-20261120/provider-extension.json",
+    "docs/acceptance/results/qa02-incremental-20261120/environment-offline-setup.json",
+    "docs/acceptance/results/qa02-incremental-20261120/edit-persistence-and-migration.json",
+    "docs/acceptance/results/qa02-incremental-20261120/provider-conformance.json",
+    "docs/acceptance/results/qa02-incremental-20261120/supervisor-disconnect.json",
+    "docs/acceptance/results/qa02-incremental-20261120/project-artifact-reference-graph.json",
+    "docs/acceptance/results/qa02-incremental-20261120/independent-export-restore.json",
+    "docs/acceptance/results/qa02-incremental-20261120/human-value-validation.json",
+    "src/adapters/python.rs",
+    "python/model_maven_worker/runtime/capabilities.py",
+    "src/cli.rs",
+    "docs/acceptance/results/qa02-20261120-supervision-0.13.57/complex-model-workflow.json",
+    "docs/acceptance/results/qa02-20261120-supervision-0.13.57/logs/complex-model-workflow.stdout.log",
+    "docs/acceptance/results/qa02-20261120-supervision-0.13.57/logs/complex-model-workflow.stderr.log",
+    "docs/acceptance/results/qa02-20261120-supervision-0.13.57/external-loop.json",
+    "docs/acceptance/results/qa02-20261120-supervision-0.13.57/logs/external-loop.stdout.log",
+    "docs/acceptance/results/qa02-20261120-supervision-0.13.57/logs/external-loop.stderr.log",
+    "docs/acceptance/results/qa02-20261120-supervision-0.13.57/extension-package.json",
+    "docs/acceptance/results/qa02-20261120-supervision-0.13.57/logs/extension-package.stdout.log",
+    "docs/acceptance/results/qa02-20261120-supervision-0.13.57/logs/extension-package.stderr.log",
+    "docs/acceptance/results/qa02-20261120-supervision-0.13.57/provider-extension.json",
+    "docs/acceptance/results/qa02-20261120-supervision-0.13.57/logs/provider-extension.stdout.log",
+    "docs/acceptance/results/qa02-20261120-supervision-0.13.57/logs/provider-extension.stderr.log",
+    "docs/acceptance/results/qa02-20261120-supervision-0.13.57/environment-offline-setup.json",
+    "docs/acceptance/results/qa02-20261120-supervision-0.13.57/logs/environment-offline-setup.stdout.log",
+    "docs/acceptance/results/qa02-20261120-supervision-0.13.57/logs/environment-offline-setup.stderr.log",
+    "docs/acceptance/results/qa02-20261120-supervision-0.13.57/project-artifact-reference-graph.json",
+    "docs/acceptance/results/qa02-20261120-supervision-0.13.57/logs/project-artifact-reference-graph.stdout.log",
+    "docs/acceptance/results/qa02-20261120-supervision-0.13.57/logs/project-artifact-reference-graph.stderr.log",
+    "docs/acceptance/results/qa02-20261120-supervision-0.13.57/supervisor-disconnect.json",
+    "docs/acceptance/results/qa02-20261120-supervision-0.13.57/logs/supervisor-disconnect.stdout.log",
+    "docs/acceptance/results/qa02-20261120-supervision-0.13.57/logs/supervisor-disconnect.stderr.log",
+    "docs/acceptance/results/qa02-20261120-supervision-0.13.57/independent-export-restore.json",
+    "docs/acceptance/results/qa02-20261120-supervision-0.13.57/logs/independent-export-restore.stdout.log",
+    "docs/acceptance/results/qa02-20261120-supervision-0.13.57/logs/independent-export-restore.stderr.log",
+    "docs/acceptance/results/qa02-20261120-supervision-0.13.57/provider-conformance.json",
+    "docs/acceptance/results/qa02-20261120-supervision-0.13.57/logs/provider-conformance.stdout.log",
+    "docs/acceptance/results/qa02-20261120-supervision-0.13.57/logs/provider-conformance.stderr.log",
+    "docs/acceptance/results/qa02-20261120-supervision-0.13.57/edit-persistence-and-migration.json",
+    "docs/acceptance/results/qa02-20261120-supervision-0.13.57/logs/edit-persistence-and-migration.stdout.log",
+    "docs/acceptance/results/qa02-20261120-supervision-0.13.57/logs/edit-persistence-and-migration.stderr.log",
+    "docs/acceptance/results/qa02-20261120-supervision-0.13.57/human-value-validation.json",
+    "docs/acceptance/results/qa02-20261120-final-cli16-0.13.57/complex-model-workflow.json",
+    "docs/acceptance/results/qa02-20261120-final-cli16-0.13.57/logs/complex-model-workflow.stdout.log",
+    "docs/acceptance/results/qa02-20261120-final-cli16-0.13.57/logs/complex-model-workflow.stderr.log",
+    "docs/acceptance/results/qa02-20261120-final-cli16-0.13.57/edit-persistence-and-migration.json",
+    "docs/acceptance/results/qa02-20261120-final-cli16-0.13.57/logs/edit-persistence-and-migration.stdout.log",
+    "docs/acceptance/results/qa02-20261120-final-cli16-0.13.57/logs/edit-persistence-and-migration.stderr.log",
+    "docs/acceptance/results/qa02-20261120-final-cli16-0.13.57/environment-offline-setup.json",
+    "docs/acceptance/results/qa02-20261120-final-cli16-0.13.57/logs/environment-offline-setup.stdout.log",
+    "docs/acceptance/results/qa02-20261120-final-cli16-0.13.57/logs/environment-offline-setup.stderr.log",
+    "docs/acceptance/results/qa02-20261120-final-cli16-0.13.57/extension-package.json",
+    "docs/acceptance/results/qa02-20261120-final-cli16-0.13.57/logs/extension-package.stdout.log",
+    "docs/acceptance/results/qa02-20261120-final-cli16-0.13.57/logs/extension-package.stderr.log",
+    "docs/acceptance/results/qa02-20261120-final-cli16-0.13.57/external-loop.json",
+    "docs/acceptance/results/qa02-20261120-final-cli16-0.13.57/logs/external-loop.stdout.log",
+    "docs/acceptance/results/qa02-20261120-final-cli16-0.13.57/logs/external-loop.stderr.log",
+    "docs/acceptance/results/qa02-20261120-final-cli16-0.13.57/human-value-validation.json",
+    "docs/acceptance/results/qa02-20261120-final-cli16-0.13.57/independent-export-restore.json",
+    "docs/acceptance/results/qa02-20261120-final-cli16-0.13.57/logs/independent-export-restore.stdout.log",
+    "docs/acceptance/results/qa02-20261120-final-cli16-0.13.57/logs/independent-export-restore.stderr.log",
+    "docs/acceptance/results/qa02-20261120-final-cli16-0.13.57/project-artifact-reference-graph.json",
+    "docs/acceptance/results/qa02-20261120-final-cli16-0.13.57/logs/project-artifact-reference-graph.stdout.log",
+    "docs/acceptance/results/qa02-20261120-final-cli16-0.13.57/logs/project-artifact-reference-graph.stderr.log",
+    "docs/acceptance/results/qa02-20261120-final-cli16-0.13.57/provider-conformance.json",
+    "docs/acceptance/results/qa02-20261120-final-cli16-0.13.57/logs/provider-conformance.stdout.log",
+    "docs/acceptance/results/qa02-20261120-final-cli16-0.13.57/logs/provider-conformance.stderr.log",
+    "docs/acceptance/results/qa02-20261120-final-cli16-0.13.57/provider-extension.json",
+    "docs/acceptance/results/qa02-20261120-final-cli16-0.13.57/logs/provider-extension.stdout.log",
+    "docs/acceptance/results/qa02-20261120-final-cli16-0.13.57/logs/provider-extension.stderr.log",
+    "docs/acceptance/results/qa02-20261120-final-cli16-0.13.57/supervisor-disconnect.json",
+    "docs/acceptance/results/qa02-20261120-final-cli16-0.13.57/logs/supervisor-disconnect.stdout.log",
+    "docs/acceptance/results/qa02-20261120-final-cli16-0.13.57/logs/supervisor-disconnect.stderr.log",
+    "docs/acceptance/results/qa02-20261121-preset-release-0.13.63/release-install.json",
+    "docs/acceptance/results/qa02-20261121-preset-release-0.13.63/logs/release-install.stdout.log",
+    "docs/acceptance/results/qa02-20261121-preset-release-0.13.63/logs/release-install.stderr.log",
+    "docs/acceptance/results/qa02-20261120-round2-complex-0.13.63/complex-model-workflow.json",
+    "docs/acceptance/results/qa02-20261120-round2-complex-0.13.63/logs/complex-model-workflow.stdout.log",
+    "docs/acceptance/results/qa02-20261120-round2-complex-0.13.63/logs/complex-model-workflow.stderr.log",
+    "docs/acceptance/results/qa02-20261120-round2-edit-migration-0.13.63/edit-persistence-and-migration.json",
+    "docs/acceptance/results/qa02-20261120-round2-edit-migration-0.13.63/logs/edit-persistence-and-migration.stdout.log",
+    "docs/acceptance/results/qa02-20261120-round2-edit-migration-0.13.63/logs/edit-persistence-and-migration.stderr.log",
+    "docs/acceptance/results/qa02-20261120-round2-preset-release-no-torch-0.13.63/release-install.json",
+    "docs/acceptance/results/qa02-20261120-round2-preset-release-no-torch-0.13.63/logs/release-install.stdout.log",
+    "docs/acceptance/results/qa02-20261120-round2-preset-release-no-torch-0.13.63/logs/release-install.stderr.log",
+    "docs/acceptance/results/qa02-20261121-delivery-sprint-0.13.63/complex-model-workflow.json",
+    "docs/acceptance/results/qa02-20261121-delivery-sprint-0.13.63/logs/complex-model-workflow.stdout.log",
+    "docs/acceptance/results/qa02-20261121-delivery-sprint-0.13.63/logs/complex-model-workflow.stderr.log",
+    "docs/acceptance/results/qa02-20261121-delivery-sprint-0.13.63/extension-package.json",
+    "docs/acceptance/results/qa02-20261121-delivery-sprint-0.13.63/logs/extension-package.stdout.log",
+    "docs/acceptance/results/qa02-20261121-delivery-sprint-0.13.63/logs/extension-package.stderr.log",
+    "docs/acceptance/results/qa02-20261121-delivery-sprint-0.13.63/supervision-rules.json",
+    "docs/acceptance/results/qa02-20261121-delivery-sprint-0.13.63/logs/supervision-rules.stdout.log",
+    "docs/acceptance/results/qa02-20261121-delivery-sprint-0.13.63/logs/supervision-rules.stderr.log",
+    "docs/acceptance/results/qa02-current-tree-20261121-1/complex-model-workflow.json",
+    "docs/acceptance/results/qa02-current-tree-20261121-1/edit-persistence-and-migration.json",
+    "docs/acceptance/results/qa02-current-tree-20261121-1/environment-offline-setup.json",
+    "docs/acceptance/results/qa02-current-tree-20261121-1/environment-runtime-probe.json",
+    "docs/acceptance/results/qa02-current-tree-20261121-1/extension-package.json",
+    "docs/acceptance/results/qa02-current-tree-20261121-1/external-loop.json",
+    "docs/acceptance/results/qa02-current-tree-20261121-1/human-value-validation.json",
+    "docs/acceptance/results/qa02-current-tree-20261121-1/independent-export-restore.json",
+    "docs/acceptance/results/qa02-current-tree-20261121-1/project-artifact-reference-graph.json",
+    "docs/acceptance/results/qa02-current-tree-20261121-1/provider-conformance.json",
+    "docs/acceptance/results/qa02-current-tree-20261121-1/provider-extension.json",
+    "docs/acceptance/results/qa02-current-tree-20261121-1/release-install.json",
+    "docs/acceptance/results/qa02-current-tree-20261121-1/supervision-rules.json",
+    "docs/acceptance/results/qa02-current-tree-20261121-1/supervisor-disconnect.json"
+  ],
+  "remaining": [
+    "本地可运行的 QA-02 场景均已通过。目标用户配对观察由 QA-04 负责；GPU/性能规模、其他平台及真实 SSH/主机/网络故障仍需要对应外部硬件/环境证据。"
+  ],
+  "integration_patch": [
+    "The acceptance runner invokes existing scenarios and declares their scope. The formal-train watchdog now requests a cooperative step-boundary checkpoint and then enforces process-group cleanup; this remains distinct from a trainer-owned deadline capability.",
+    "Coordinator should keep acceptancetodo.json in_progress until dependency workflows are complete, then rerun this runner with the final integrated candidate and review every skipped/uncovered record."
+  ],
+  "commit": null,
+  "audit_blockers": []
+}

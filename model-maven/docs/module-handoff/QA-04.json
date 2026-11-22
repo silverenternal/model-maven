@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "task_id": "QA-04",
+  "status": "waiting_for_external_evidence",
+  "baseline": "current coordinator worktree; product.json value_validation and CLI-20 observation protocol",
+  "branch": "current shared worktree",
+  "files_changed": [
+    "acceptancetodo.json",
+    "docs/acceptance/requirements.json",
+    "docs/module-handoff/QA-04.json",
+    "docs/value-validation/findings.md",
+    "docs/value-validation/protocol.md",
+    "docs/value-validation/records.schema.json"
+  ],
+  "implemented": [
+    "Added a paired-observation protocol scoped to complex PyTorch projects and first useful diagnostic feedback, with separate optional Layer/training follow-up.",
+    "Added a strict JSON Schema for anonymized participant records, including paired conditions, correctness/comprehension, elapsed-time measures, adaptation burden, negative outcomes, and explicit not-measured values.",
+    "Added an empty findings template that explicitly states that no participants or results exist.",
+    "Kept QA-04 open for actual participant observations; did not contact participants or create synthetic evidence.",
+    "Schema rejects observed records until participant consent is confirmed and anonymization review is complete; template-only records remain valid without either state."
+  ],
+  "validation": [
+    {
+      "command": "python3 JSON parse for acceptancetodo.json, requirements.json, records.schema.json, QA-04 handoff",
+      "result": "passed"
+    },
+    {
+      "command": "jsonschema.Draft202012Validator.check_schema; validate template-only and consented/anonymized observed records; reject observed record missing consent",
+      "result": "passed"
+    },
+    {
+      "command": "relative Markdown link target audit for value-validation/protocol.md and findings.md",
+      "result": "passed"
+    },
+    {
+      "command": "git diff --check",
+      "result": "passed"
+    }
+  ],
+  "integration_patch": [],
+  "remaining": [
+    "Recruit and authorize target ML engineers; conduct paired observations on real complex-model tasks using actual projects and commands.",
+    "Review and redact participant records, include negative findings, and make conclusions limited to observed evidence."
+  ],
+  "external_evidence_required": true
+}

@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "task_id": "DATA-02",
+  "status": "done",
+  "baseline": "da40a72 plus coordinator worktree changes already present",
+  "branch": "master (uncommitted coordinator worktree)",
+  "files_changed": [
+    "python/model_maven_worker/data/classification.py",
+    "python/model_maven_worker/data/sampling.py",
+    "src/adapters/worker_assets.rs",
+    "tests/data_sampling.rs",
+    "docs/contracts/module-interfaces.json",
+    "datatodo.json",
+    "product.json",
+    "all root *todo.json source document versions"
+  ],
+  "implementation": [
+    "Scans local class-folder datasets by relative path and content hash without decoding images; emits deterministic class mapping, sample IDs, counts, and a root-independent dataset fingerprint.",
+    "Creates deterministic per-class train/validation/test splits and stratified no-replacement subsets with versioned SHA-256 algorithms. Impossible small-class ratios are reported as unavailable; train sampling never borrows from another split.",
+    "Insufficient sample budgets retain the requested limit, cover every available class when possible, and report uncovered classes when not.",
+    "Selected-image verification decodes only requested samples, checks content has not changed since indexing, and reports all damaged relative paths without replacement.",
+    "Explicit exclusions produce a new fingerprinted manifest and never delete source files. Content, class, and manifest changes invalidate repeat compatibility with file-level evidence.",
+    "Embedded both new Python modules in the Rust worker asset package."
+  ],
+  "validation": [
+    {
+      "command": "cargo test --locked --test data_sampling --test data_adapters",
+      "result": "passed: 4 classification/sampling integration tests and 4 existing data adapter tests"
+    },
+    {
+      "command": "python3 -m py_compile python/model_maven_worker/data/classification.py python/model_maven_worker/data/sampling.py",
+      "result": "passed"
+    },
+    {
+      "command": "python3 scripts/check_worker_architecture.py",
+      "result": "passed: 57 worker modules, embedded asset coverage complete"
+    }
+  ],
+  "limitations": [
+    "This task provides the data indexing/split/sampling service foundation; it does not yet connect these manifests to the human-facing CLI workflow.",
+    "The built-in layout is local class-folder raster data. Image decoding requires Pillow; indexing and content hashing do not.",
+    "A full product-level user workflow still depends on transform, preview, preset, and CLI integration tasks."
+  ],
+  "integration_patch": "Product document advanced to 0.13.36; root task source versions were synchronized. C-data status now records the implemented class-folder protocol while preserving the distinction from generic Dataset adapters.",
+  "commit": null
+}

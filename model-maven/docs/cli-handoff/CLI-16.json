@@ -1,0 +1,167 @@
+{
+  "schema_version": 1,
+  "task_id": "CLI-16",
+  "status": "in_review",
+  "owner": "coordinator",
+  "baseline": "da40a7248e07de3bb91775359bcbbc6cdee747c4",
+  "branch": "master (shared coordinator worktree)",
+  "files_changed": [
+    "Cargo.lock",
+    "Cargo.toml",
+    "README.md",
+    "clitodo.json",
+    "docs/cli-handoff/CLI-16.json",
+    "src/application/run.rs",
+    "src/cli.rs",
+    "src/main.rs",
+    "src/presentation/completion.rs",
+    "src/presentation/service.rs",
+    "src/presentation/terminal.rs",
+    "src/presentation/workbench.rs",
+    "tests/cli_completion.rs",
+    "tests/data_preview.rs",
+    "docs/contracts/operations.json"
+  ],
+  "implementation": [
+    "Added --no-interactive and kept it active through TTY, workbench, and preview readiness paths.",
+    "m-model completions <bash|zsh|fish|powershell|elvish> emits dynamic shell registration using clap_complete 4.6.12 unstable-dynamic; it registers from the live public Clap tree before Python/environment initialization.",
+    "Component ID and exact-version candidates now read only the current project static manifest registry for component show/check/test/uninstall, Layer add/replace, and Assembly add/set. The completer does not import or execute project Python.",
+    "Hidden internal-run is parsed by a dedicated early parser and is absent from the public command tree.",
+    "Schema candidates now cover `component test --param`, registered Layer add/replace with `--component`, and component-backed Assembly add/set. Names and simple scalar enum/const values come only from the selected static manifest; explicit versions are exact, unversioned references use the highest registered SemVer. Completion is validated in the live Clap shell path and returns before Python runtime selection.",
+    "Schema candidates now also cover named root-model injections using --inject SLOT=component:ID@VERSION and --inject-param SLOT.NAME=JSON; non-component Python factories remain unsupported for static candidate discovery.",
+    "Schema-backed parameter completion now includes bounded whole-JSON candidates for explicit enum values of any supported JSON type, and composes nested required object fields only when each field has a declared enum/default. It does not guess values for arbitrary Python factories or synthesize partial JSON fragments.",
+    "Added live Clap-tree help/capability checks: every public subcommand and named option must have a human description; every operation_catalog current_cli path resolves against the actual command tree; catalog entries declare python_worker or rust_cli ownership; worker-owned entries must name a registered compatibility operation. Corrected inspect_component to the Rust-owned path rather than mislabeling it as a worker operation."
+  ],
+  "validation": [
+    {
+      "command": "cargo test --locked --test data_preview cli_preview_samples_project_batch_and_publishes_real_artifacts -- --exact --nocapture",
+      "result": "passed: PTY with --no-interactive and empty preview source returns without displaying the preview setup prompts"
+    },
+    {
+      "command": "cargo test --locked --bin m-model --quiet",
+      "result": "passed: 147 unit tests"
+    },
+    {
+      "command": "cargo test --locked --test data_preview -- --nocapture",
+      "result": "passed: 6 integration tests including real PTY proof that --no-interactive never prompts on a TTY"
+    },
+    {
+      "command": "target/debug/m-model --help",
+      "result": "passed: help documents --no-interactive and its missing-input behavior"
+    },
+    {
+      "command": "cargo fmt --all -- --check",
+      "result": "passed"
+    },
+    {
+      "command": "cargo test --locked --bin m-model presentation::completion::tests -- --nocapture",
+      "result": "passed: five shell scripts contain current public command/options; hidden internal-run absent; unsupported shell writes no output"
+    },
+    {
+      "command": "cargo test --locked --test cli_completion -- --nocapture",
+      "result": "passed 4/4: shell setup, dynamic IDs, hostile partial refusal, and live Bash Schema field/enum completion for component test, Layer add/replace, Assembly add/set, plus named component --inject-param; all run before Python selection."
+    },
+    {
+      "command": "Bash smoke: generate, bash -n, source, complete -p m-model",
+      "result": "passed"
+    },
+    {
+      "command": "Zsh smoke: generate, zsh -n, compinit -C, source, whence -w _m-model",
+      "result": "passed"
+    },
+    {
+      "command": "cargo check --locked --bin m-model",
+      "result": "passed"
+    },
+    {
+      "command": "cargo test --locked --quiet",
+      "result": "passed: full Rust workspace; captured exit code 0 after command-tree completion and internal-run parser changes"
+    },
+    {
+      "command": "cargo test --locked --test cli_completion -- --nocapture",
+      "result": "passed 4/4: shell setup, dynamic IDs, hostile partial refusal, and live Bash Schema field/enum completion for component test, Layer add/replace, Assembly add/set, plus named component --inject-param; all run before Python selection."
+    },
+    {
+      "command": "cargo test --locked --bin m-model presentation::completion::tests -- --nocapture",
+      "result": "passed: prefix filtering, exact-version mode, static manifest-only lookup, and unsupported-shell rejection."
+    },
+    {
+      "command": "Manual COMPLETE=bash runtime smoke with temporary component manifest",
+      "result": "passed: returned example/encoder and example/encoder@1.2.3 with no stderr."
+    },
+    {
+      "command": "cargo test --locked --quiet",
+      "result": "passed: full Rust workspace after current CLI and worker integrations."
+    },
+    {
+      "command": "cargo test --locked --bin m-model presentation::completion::tests -- --nocapture",
+      "result": "passed 5/5: static registry prefix/version lookup, whitespace and shell-metacharacter partials are treated as data, malformed metacharacter manifest fails closed without registry writes, shell setup generation and unsupported-shell rejection."
+    },
+    {
+      "command": "cargo test --locked --test cli_completion -- --nocapture",
+      "result": "passed 4/4: shell setup, dynamic IDs, hostile partial refusal, and live Bash Schema field/enum completion for component test, Layer add/replace, Assembly add/set, plus named component --inject-param; all run before Python selection."
+    },
+    {
+      "command": "cargo test --locked --bin m-model presentation::completion::tests -- --nocapture",
+      "result": "passed 6/6: shell setup, static ID/version filtering, hostile partial handling, Schema field/enum completion, and unsupported shell handling."
+    },
+    {
+      "command": "cargo test --locked --test cli_completion -- --nocapture",
+      "result": "passed 4/4: shell setup, dynamic IDs, hostile partial refusal, and live Bash Schema field/enum completion for component test, Layer add/replace, Assembly add/set, plus named component --inject-param; all run before Python selection."
+    },
+    {
+      "command": "cargo clippy --locked --bin m-model --test cli_completion -- -D warnings && cargo fmt --all && git diff --check",
+      "result": "passed."
+    },
+    {
+      "command": "cargo test --locked --test cli_completion dynamic_component_parameter_completion_uses_registered_schema_without_python -- --exact --nocapture",
+      "result": "passed: live Bash completion engine returns Schema field and enum candidates for all five registered-component entry points."
+    },
+    {
+      "command": "cargo test --locked --bin m-model presentation::completion::tests -- --nocapture; cargo test --locked --test cli_completion -- --nocapture; cargo clippy --locked --bin m-model --test cli_completion -- -D warnings -A clippy::large_enum_variant",
+      "result": "passed: completion unit tests 7/7 including nested required object composition, array/object JSON enums, boolean enum, and fail-closed prefix; CLI completion integration 4/4; strict Clippy passed with the pre-existing unrelated DataCommand large-enum warning explicitly allowed."
+    },
+    {
+      "command": "cargo test --locked --bin m-model presentation::completion::tests -- --nocapture; cargo test --locked --test cli_completion -- --nocapture; cargo clippy --locked --bin m-model --test cli_completion -- -D warnings -A clippy::large_enum_variant; cargo fmt --all -- --check; git diff --check -- src/presentation/completion.rs tests/cli_completion.rs",
+      "result": "passed: completion unit tests 7/7 and CLI dynamic completion integration 5/5, including a real Clap/Bash request suggesting a nested required JSON object without starting Python. Clippy passed with only the pre-existing unrelated DataCommand large-enum warning allowed; formatting and diff checks passed."
+    },
+    {
+      "command": "cargo test --locked --bin m-model public_help_contract_tests -- --nocapture; python3 scripts/check_compatibility.py; cargo fmt --all -- --check; git diff --check",
+      "result": "passed 2/2 live Clap/catalog parity tests. The test checks descriptions for every public subcommand and named option, resolves every operation_catalog current_cli path against Clap, and checks worker-owned routes against the compatibility registry. Compatibility, formatting and whitespace checks passed."
+    },
+    {
+      "command": "cargo clippy --locked --bin m-model -- -D warnings",
+      "result": "failed on pre-existing unrelated clippy::collapsible_match in src/application/augment.rs:141; the lint is outside CLI-16 changes."
+    },
+    {
+      "command": "cargo clippy --locked --bin m-model -- -D warnings -A clippy::large_enum_variant -A clippy::collapsible_match",
+      "result": "passed; only the documented unrelated workspace lint categories were allowed."
+    },
+    {
+      "command": "target/debug/m-model model inspect --help; target/debug/m-model model probe --help",
+      "result": "passed after rebuilding the current binary; leaf help is available for both operations. Command descriptions are checked from the live Clap tree in the unit test."
+    },
+    {
+      "command": "cargo test --locked --bin m-model public_help_contract_tests -- --nocapture; cargo clippy --locked --bin m-model -- -D warnings -A clippy::large_enum_variant -A clippy::collapsible_match; cargo build --locked; target/debug/m-model augment list --help; target/debug/m-model component add --help",
+      "result": "passed 2/2 parity tests, Clippy (allowing two unrelated existing lint categories), current binary build and live help rendering for schema-backed augmentation split and component type options. The strict Clippy run without exceptions is separately recorded as failing on the pre-existing augment.rs collapsible_match lint."
+    },
+    {
+      "command": "cargo build --locked --bin m-model; PATH=\"$PWD/target/debug:$PATH\" bash -c 'source <(COMPLETE=bash m-model); complete -p m-model'; PATH=\"$PWD/target/debug:$PATH\" zsh -fc 'autoload -Uz compinit; compinit -C; source <(COMPLETE=zsh m-model); whence -w _clap_dynamic_completer_m_model'; cargo test --locked --test cli_completion -- --nocapture",
+      "result": "passed on current tree: Bash registered m-model as _clap_complete_m_model; Zsh sourced the generated setup and defined _clap_dynamic_completer_m_model; CLI completion integration 5/5 passed."
+    }
+  ],
+  "integration_patch": [
+    "Cli.no_interactive is threaded into terminal::is_interactive and ApplicationUiServices readiness handling; run_command and no-command workbench startup both honor it.",
+    "The no-command interactive workbench startup also checks no_interactive, so explicitly non-interactive users receive normal help instead of entering the menu.",
+    "Hidden InternalRun was removed from the public Clap Command enum and parsed by a separate early internal-run parser; detached training supervision integration remains passing.",
+    "Shell completion generator runs before Python runtime selection and writes only the script to stdout; supported shell list is explicit and validated by Clap."
+  ],
+  "remaining": [
+    "Native Fish, PowerShell and Elvish loading tests remain unverified: command -v found only /usr/bin/bash and /usr/bin/zsh in this environment. Their setup text is covered by generator tests; Bash and Zsh have current-tree live shell smoke evidence."
+  ],
+  "commit": null,
+  "limitations": [
+    "Static completion does not execute arbitrary Python factories and does not guess unregistered model/batch parameters or free-form JSON fragments; candidates are bounded whole values from declared schema enum/defaults.",
+    "Operation parity is checked for every operation_catalog entry; utility commands remain Rust-owned/help-described and are not misrepresented as worker operations."
+  ]
+}

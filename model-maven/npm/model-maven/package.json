@@ -1,0 +1,21 @@
+{
+  "name": "model-maven-local-test",
+  "version": "0.1.0",
+  "description": "Model-Maven CLI and terminal workbench for PyTorch models",
+  "license": "UNLICENSED",
+  "private": true,
+  "engines": { "node": ">=18" },
+  "bin": {
+    "m-model": "bin/m-model.cjs",
+    "m-model-tui": "bin/m-model-tui.cjs"
+  },
+  "optionalDependencies": {
+    "@silverenternal/model-maven-linux-x64": "0.1.0",
+    "@silverenternal/model-maven-linux-arm64": "0.1.0",
+    "@silverenternal/model-maven-darwin-x64": "0.1.0",
+    "@silverenternal/model-maven-darwin-arm64": "0.1.0",
+    "@silverenternal/model-maven-win32-x64": "0.1.0",
+    "@silverenternal/model-maven-win32-arm64": "0.1.0"
+  },
+  "files": ["bin", "lib", "README.md"]
+}

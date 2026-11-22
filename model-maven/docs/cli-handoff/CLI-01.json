@@ -1,0 +1,66 @@
+{
+  "task_id": "CLI-01",
+  "status": "done",
+  "owner": "总协调人",
+  "base_commit": "7877de266e4f607fdfc7764f6a86180e475f3c38",
+  "files_changed": [
+    "src/main.rs",
+    "src/app.rs",
+    "src/ports.rs",
+    "src/adapters/python.rs",
+    "src/presentation/mod.rs",
+    "src/presentation/contracts.rs",
+    "src/presentation/service.rs",
+    "src/presentation/session.rs",
+    "src/presentation/terminal.rs",
+    "src/presentation/workbench.rs"
+  ],
+  "interface_state": {
+    "PageId": "implemented string ID",
+    "PageRegistry": "implemented; duplicate IDs rejected",
+    "NavigationResult": "implemented open/back/action/quit",
+    "SessionState": "implemented persistent input/page history",
+    "ActionDescriptor": "implemented availability and confirmation fields",
+    "FieldDescriptor": "implemented from schema; required/default/description preserved",
+    "UiServices": "implemented command execution, project defaults, component resolution, progress unknown default and cancel operation",
+    "UserInteraction": "implemented prompt and terminal capability port"
+  },
+  "integration_patch": {
+    "core_owned_files": [
+      "src/app.rs",
+      "src/ports.rs"
+    ],
+    "changes": [
+      "Application receives UserInteraction; terminal detection and stdin/stderr input moved out of app.rs.",
+      "PythonRuntimeControl lets UI switch the selected interpreter without depending on PythonBackend."
+    ],
+    "review_note": "CORE-01 should include these ports in the shared operation/service contract inventory; implementation is already wired and tested."
+  },
+  "validation": [
+    {
+      "command": "cargo fmt --check",
+      "result": "passed"
+    },
+    {
+      "command": "cargo check --locked",
+      "result": "passed without warnings"
+    },
+    {
+      "command": "cargo test --locked",
+      "result": "passed; 13 unit + 33 CLI integration tests; 0 failed"
+    },
+    {
+      "command": "script -qec m-model init with prompts",
+      "result": "passed; persisted defaults in a temporary project and exited 0"
+    },
+    {
+      "command": "script -qec m-model with no args, input 退出",
+      "result": "passed; interactive workbench rendered and exited 0"
+    },
+    {
+      "command": "non-TTY m-model and m-model --json without command",
+      "result": "passed; help exit 0 and structured COMMAND_REQUIRED exit 2"
+    }
+  ],
+  "completion": "CLI-01 acceptance criteria met: presentation separation, service bridge, recording mock support, unknown progress semantics, and direct/non-TTY/JSON behavior verified."
+}

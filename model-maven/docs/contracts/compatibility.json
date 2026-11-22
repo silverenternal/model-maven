@@ -1,0 +1,246 @@
+{
+  "schema_version": 1,
+  "policy": {
+    "worker_protocol": "Exact match is required. A mismatch returns PROTOCOL_ERROR before operation execution.",
+    "worker_api": "Optional request field; absent means v1. Unsupported versions return WORKER_API_UNSUPPORTED.",
+    "required_features": "Every required feature must be registered for the requested operation. Unknown or mismatched requirements return FEATURE_UNAVAILABLE before runtime imports.",
+    "operation_registry": "protocol.py owns the operation-to-feature registry. Dispatcher routes are checked against it, and doctor capability IDs are derived from its feature union plus explicitly registered host features.",
+    "state_formats": "State format versions are independent of the worker protocol. Unsupported versions are rejected; fields are never guessed or silently migrated.",
+    "capability_states": [
+      "supported",
+      "unsupported",
+      "conditional",
+      "unknown"
+    ],
+    "support_claim": "Only operations exercised by the current runtime and platform may be reported supported. Conditional and unknown capabilities include a reason."
+  },
+  "interfaces": [
+    {
+      "id": "worker_protocol",
+      "version": 1,
+      "owners": [
+        "Rust adapters",
+        "Python worker"
+      ],
+      "compatibility": "exact",
+      "evidence": "src/domain/capability.rs and python/model_maven_worker/protocol.py"
+    },
+    {
+      "id": "worker_api",
+      "version": 1,
+      "owners": [
+        "Rust application",
+        "Python worker"
+      ],
+      "compatibility": "request API version is explicit; omitted v1 remains accepted"
+    },
+    {
+      "id": "operation_contract",
+      "version": 1,
+      "owners": [
+        "Rust domain",
+        "CLI services"
+      ],
+      "compatibility": "unsupported contract versions are rejected by OperationPlan::validate"
+    },
+    {
+      "id": "component_manifest",
+      "version": 1,
+      "owners": [
+        "Rust component registry",
+        "Python metadata validator"
+      ],
+      "compatibility": "schema_version=1 and extension_api_version=1; static validation does not import component code"
+    },
+    {
+      "id": "layer_edit_provider",
+      "version": 2,
+      "owners": [
+        "Python extension conformance",
+        "Rust component registry"
+      ],
+      "compatibility": "API v1 callable remains accepted; API v2 adds a replayable describe/can_edit/plan/candidate/persist/rollback lifecycle. Provider conformance-suite version is independently pinned and must match."
+    }
+  ],
+  "state_formats": [
+    {
+      "id": "project_config",
+      "version": 1,
+      "owner": "FileProjectConfigStore",
+      "legacy_policy": "schema_version=1 is read without requiring new revision fields"
+    },
+    {
+      "id": "environment_lock",
+      "version": 1,
+      "owner": "Python environment service",
+      "legacy_policy": "unknown lock versions are rejected with an actionable diagnostic"
+    },
+    {
+      "id": "training_checkpoint",
+      "version": 1,
+      "owner": "Python training checkpoint service",
+      "legacy_policy": "unknown payload versions are rejected; optimizer/RNG/data state restore is explicit"
+    },
+    {
+      "id": "model_variant",
+      "version": 1,
+      "owner": "Rust variant repository and Python edit replay",
+      "legacy_policy": "unknown variant versions are rejected before edits are applied"
+    },
+    {
+      "id": "layer_edit_plan",
+      "version": 1,
+      "owner": "Rust application and Python edit domain",
+      "legacy_policy": "unsupported plan versions are rejected before mutation"
+    },
+    {
+      "id": "extension_manifest",
+      "version": 1,
+      "owner": "Rust and Python extension validators",
+      "legacy_policy": "unknown schema/API versions are rejected before component import or execution"
+    },
+    {
+      "id": "run_artifact_manifest",
+      "version": 2,
+      "owner": "Rust project-level artifact resolver and typed run-scoped producer/consumer declarations",
+      "legacy_policy": "v1 remains readable but cannot authorize project cleanup; active/unknown, incomplete, malformed, or dangling identities fail closed; release retains the catalog and marks removed members unavailable"
+    }
+  ],
+  "required_features": [
+    "data.classification_index",
+    "data.dataset_probe",
+    "data.preview",
+    "edit.assembly_codegen",
+    "environment.library_inventory",
+    "environment.library_probe",
+    "environment.setup",
+    "environment.wheelhouse",
+    "extensions.component_conformance",
+    "extensions.static_discovery",
+    "model.forward_probe",
+    "model.inspect",
+    "model.layer_edit",
+    "model.loss_probe",
+    "model.semantic_marks",
+    "training.checkpoint_resume",
+    "training.detached",
+    "training.evaluation",
+    "training.external_loop",
+    "training.managed_step",
+    "training.manual_step",
+    "training.supervision_apply",
+    "training.supervision_preview",
+    "training.weight_migration"
+  ],
+  "operations": {
+    "assembly_codegen": [
+      "edit.assembly_codegen"
+    ],
+    "assembly_codegen_verify": [
+      "edit.assembly_codegen",
+      "model.forward_probe",
+      "data.dataset_probe"
+    ],
+    "component_discover": [
+      "extensions.static_discovery"
+    ],
+    "component_install": [
+      "extensions.static_discovery"
+    ],
+    "component_test": [
+      "extensions.component_conformance"
+    ],
+    "component_uninstall": [
+      "extensions.static_discovery"
+    ],
+    "doctor": [],
+    "edit": [
+      "model.layer_edit"
+    ],
+    "environment_check": [],
+    "environment_library_inventory": [
+      "environment.library_inventory"
+    ],
+    "environment_library_probe": [
+      "environment.library_probe"
+    ],
+    "environment_lock": [],
+    "environment_setup": [
+      "environment.setup"
+    ],
+    "environment_snapshot": [],
+    "environment_wheelhouse_archive": [
+      "environment.wheelhouse"
+    ],
+    "environment_wheelhouse_check": [
+      "environment.wheelhouse"
+    ],
+    "environment_wheelhouse_replay": [
+      "environment.wheelhouse"
+    ],
+    "evaluate": [
+      "training.evaluation",
+      "training.checkpoint_resume"
+    ],
+    "extension_bundle_plan": [
+      "extensions.static_discovery"
+    ],
+    "inspect": [
+      "model.inspect"
+    ],
+    "layers": [
+      "model.inspect"
+    ],
+    "preview": [
+      "data.preview"
+    ],
+    "preset_catalog": [],
+    "probe": [
+      "model.forward_probe",
+      "data.dataset_probe"
+    ],
+    "semantic_mark": [
+      "model.forward_probe",
+      "data.dataset_probe",
+      "model.semantic_marks"
+    ],
+    "semantic_supervise": [
+      "model.forward_probe",
+      "data.dataset_probe",
+      "model.semantic_marks",
+      "training.supervision_preview"
+    ],
+    "train": [
+      "training.managed_step",
+      "training.manual_step",
+      "training.external_loop",
+      "training.checkpoint_resume",
+      "training.weight_migration",
+      "training.supervision_apply"
+    ],
+    "training_probe": [
+      "training.managed_step",
+      "training.manual_step",
+      "training.external_loop",
+      "training.checkpoint_resume",
+      "training.supervision_apply"
+    ],
+    "verify": [
+      "model.loss_probe"
+    ],
+    "data_index": [
+      "data.classification_index"
+    ],
+    "environment_configure": [
+      "environment.setup"
+    ]
+  },
+  "host_state_formats": [
+    {
+      "id": "run_record",
+      "version": 1,
+      "owner": "Rust FileRunStore",
+      "legacy_policy": "run.json must declare schema_version=1; unknown versions are refused for read, mutation, checkpoint access, and cleanup without rewriting the record."
+    }
+  ]
+}

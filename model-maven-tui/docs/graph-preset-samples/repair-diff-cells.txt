@@ -1,0 +1,29 @@
+Repair difference · same target
+net.head.in[0]
+Preview · not committed
+Before · recorded                                │ Candidate · preview
+┌─ model.encoder.out[0]                          │ ┌─ model.encoder.out[0]
+│                                                │ │
+└─▶ net.head.in[0]                               │ └─▶ net.head.in[0]
+Input …×32                                       │ Input …×48
+Variant baseline                                 │ Predicted reset net.head.weight
+n/p scroll · [/] pan · Tab · v · Esc
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,81 @@
+{
+  "schema_version": 1,
+  "task_id": "CLI-10",
+  "owner": "coordinator",
+  "status": "done",
+  "baseline": "da40a7248e07de3bb91775359bcbbc6cdee747c4",
+  "branch": "master (coordinator integration worktree)",
+  "files_changed": [
+    "src/presentation/pages/training.rs",
+    "src/presentation/pages/resume.rs",
+    "src/presentation/widgets/run_plan.rs",
+    "src/presentation/workbench.rs",
+    "tests/cli.rs",
+    "clitodo.json"
+  ],
+  "interface_changes": [
+    "训练计划通过页面部件呈现有效输入来源、预算、执行方式、覆盖、产物和未接入的显存估算；开始前要求用户明确输入 start。",
+    "续训来源列表展示名称、时间、状态、已完成/计划步数和 checkpoint 摘要；运行必须明确按序号或完整 ID 选择。",
+    "external-loop 说明由用户完整循环管理数据与更新，不要求独立 batch 或 loss。",
+    "managed-step 与 manual-step 在执行前以同一计划界面展示本次来源、预算和产物；manual-step 的具名优化器更新保留给用户代码管理。",
+    "续训必须显式选择候选运行；支持失败和较早成功记录同时存在的情况，不静默回退或自动选中。"
+  ],
+  "implementation": [
+    "工作台选择训练模式后只询问该模式需要的入口和参数；external-loop 不通过通用 model/batch 前置表单。",
+    "repeat 和 resume 都经过执行计划确认；resume 显式显示父记录、checkpoint、追加步数和自定义状态重置选择。",
+    "参数表单空行现在可结束参数输入；:cancel 保持取消整组参数的语义。"
+  ],
+  "validation": [
+    {
+      "command": "cargo fmt --all -- --check && git diff --check && cargo check --locked --quiet",
+      "result": "passed."
+    },
+    {
+      "command": "cargo test --locked --quiet",
+      "result": "passed: all 214 Rust unit and integration tests across binaries."
+    },
+    {
+      "command": "python3 scripts/check_worker_architecture.py",
+      "result": "passed: 63 worker modules, embedded asset coverage complete, imports follow domain direction."
+    },
+    {
+      "command": "python3 scripts/check_compatibility.py",
+      "result": "passed: Rust/Python protocol, API, state formats, and required features match."
+    },
+    {
+      "command": "python3 scripts/check_architecture.py",
+      "result": "passed: Rust architecture boundaries."
+    },
+    {
+      "command": "cargo test --locked --test cli --quiet workbench_managed_and_manual_step_ask_for_their_required_entries",
+      "result": "passed: PTY verifies managed/manual modes ask for model and batch; manual mode proceeds to the training-step entry, without asking for an external loop."
+    },
+    {
+      "command": "cargo test --locked --test cli --quiet workbench_managed_step_plan_runs_with_optimizer_defaults",
+      "result": "passed: PTY confirms and executes two managed steps with AdamW defaults; completion and checkpoint are persisted."
+    },
+    {
+      "command": "cargo test --locked --test cli --quiet workbench_manual_step_plan_runs_a_real_complex_model",
+      "result": "passed: PTY confirms and executes a two-step complex multimodal manual-step run; two named optimizer groups update and checkpoint is persisted."
+    },
+    {
+      "command": "cargo test --locked --test cli --quiet workbench_confirms_and_runs_a_real_external_loop_without_model_or_batch",
+      "result": "passed: PTY runs a two-step user loop without a model/batch entry; formal record and checkpoint are persisted."
+    },
+    {
+      "command": "cargo test --locked --test cli --quiet workbench_repeat_displays_the_selected_run_snapshot_before_start",
+      "result": "passed: PTY repeat is bound to the selected run snapshot, reports no overrides, and cancellation creates no additional run."
+    },
+    {
+      "command": "cargo test --locked --test cli --quiet workbench_resume_lists_and_requires_explicit_failed_run_and_reset_choice",
+      "result": "passed: PTY lists a failed run and an older successful run, requires explicit failed-run selection, displays checkpoint/parent/additional budget/reset choice, and cancellation creates no child run."
+    }
+  ],
+  "remaining": [],
+  "completion_evidence": [
+    "Linux PTY mode coverage and actual worker execution validate that the human training plan is connected through to persisted runs/checkpoints.",
+    "Repeat and resume flows preserve explicit source selection and do not create runs when the user cancels.",
+    "Full test suite and architecture/compatibility gates passed on the completed CLI-10 implementation."
+  ],
+  "blockers": []
+}

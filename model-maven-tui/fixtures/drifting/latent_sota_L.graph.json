@@ -1,0 +1,2704 @@
+{
+  "root": {
+    "name": "DitGen",
+    "kind": "Flax generator",
+    "line": 601,
+    "end": 631,
+    "scope": "generator",
+    "attributes": {}
+  },
+  "scopes": {
+    "generator": {
+      "nodes": [
+        {
+          "name": "latent_noise",
+          "kind": "Noise",
+          "line": 609,
+          "end": 609,
+          "scope": null,
+          "attributes": {}
+        },
+        {
+          "name": "conditioning",
+          "kind": "Conditioning",
+          "line": 620,
+          "end": 620,
+          "scope": "conditioning",
+          "attributes": {}
+        },
+        {
+          "name": "backbone",
+          "kind": "LightningDiT",
+          "line": 553,
+          "end": 573,
+          "scope": "backbone",
+          "attributes": {
+            "width": 1024,
+            "heads": 16
+          }
+        },
+        {
+          "name": "samples",
+          "kind": "Output",
+          "line": 628,
+          "end": 631,
+          "scope": null,
+          "attributes": {}
+        },
+        {
+          "name": "noise_labels",
+          "kind": "Noise label sampling",
+          "line": 617,
+          "end": 617,
+          "scope": null,
+          "attributes": {}
+        }
+      ],
+      "edges": [
+        {
+          "source": "latent_noise",
+          "target": "backbone",
+          "outlet": 0
+        },
+        {
+          "source": "conditioning",
+          "target": "backbone",
+          "outlet": 0
+        },
+        {
+          "source": "backbone",
+          "target": "samples",
+          "outlet": 0
+        },
+        {
+          "source": "noise_labels",
+          "target": "conditioning",
+          "outlet": 0
+        }
+      ],
+      "inputs": [],
+      "outputs": []
+    },
+    "conditioning": {
+      "nodes": [
+        {
+          "name": "class_embed",
+          "kind": "Embedding",
+          "line": 580,
+          "end": 580,
+          "scope": null,
+          "attributes": {}
+        },
+        {
+          "name": "cfg_embedder",
+          "kind": "TimestepEmbedder",
+          "line": 594,
+          "end": 594,
+          "scope": null,
+          "attributes": {}
+        },
+        {
+          "name": "cfg_norm",
+          "kind": "RMSNorm",
+          "line": 594,
+          "end": 594,
+          "scope": null,
+          "attributes": {}
+        },
+        {
+          "name": "merge",
+          "kind": "Add",
+          "line": 595,
+          "end": 595,
+          "scope": null,
+          "attributes": {}
+        },
+        {
+          "name": "noise_embeds",
+          "kind": "Noise conditioning",
+          "line": 585,
+          "end": 585,
+          "scope": "noise_embeds",
+          "attributes": {
+            "stack": 32
+          }
+        }
+      ],
+      "edges": [
+        {
+          "source": "class_embed",
+          "target": "noise_embeds",
+          "outlet": 0
+        },
+        {
+          "source": "noise_embeds",
+          "target": "merge",
+          "outlet": 0
+        },
+        {
+          "source": "cfg_embedder",
+          "target": "cfg_norm",
+          "outlet": 0
+        },
+        {
+          "source": "cfg_norm",
+          "target": "merge",
+          "outlet": 0
+        }
+      ],
+      "inputs": [
+        {
+          "slot": 0,
+          "node": "noise_embeds",
+          "port": 1
+        }
+      ],
+      "outputs": [
+        {
+          "slot": 0,
+          "node": "merge",
+          "port": 0
+        }
+      ]
+    },
+    "backbone": {
+      "nodes": [
+        {
+          "name": "patchify",
+          "kind": "Patch reshape",
+          "line": 386,
+          "end": 386,
+          "scope": null,
+          "attributes": {}
+        },
+        {
+          "name": "patch_projection",
+          "kind": "TorchLinear",
+          "line": 387,
+          "end": 387,
+          "scope": null,
+          "attributes": {
+            "width": 1024,
+            "output_features": 1024
+          }
+        },
+        {
+          "name": "position",
+          "kind": "Position embedding",
+          "line": 394,
+          "end": 394,
+          "scope": null,
+          "attributes": {
+            "input_features": 1024,
+            "output_features": 1024
+          }
+        },
+        {
+          "name": "blocks",
+          "kind": "DiT block stack",
+          "line": 418,
+          "end": 432,
+          "scope": "blocks",
+          "attributes": {
+            "stack": 24,
+            "width": 1024,
+            "input_features": 1024,
+            "output_features": 1024
+          }
+        },
+        {
+          "name": "final",
+          "kind": "FinalLayer",
+          "line": 437,
+          "end": 445,
+          "scope": "final",
+          "attributes": {}
+        },
+        {
+          "name": "unpatchify",
+          "kind": "Reshape",
+          "line": 452,
+          "end": 452,
+          "scope": null,
+          "attributes": {}
+        },
+        {
+          "name": "class_tokens",
+          "kind": "Condition tokens",
+          "line": 404,
+          "end": 404,
+          "scope": null,
+          "attributes": {
+            "stack": 16,
+            "output_features": 1024
+          }
+        },
+        {
+          "name": "prepend",
+          "kind": "Concatenate",
+          "line": 408,
+          "end": 408,
+          "scope": null,
+          "attributes": {
+            "input_features": 1024,
+            "output_features": 1024
+          }
+        }
+      ],
+      "edges": [
+        {
+          "source": "patchify",
+          "target": "patch_projection",
+          "outlet": 0
+        },
+        {
+          "source": "patch_projection",
+          "target": "position",
+          "outlet": 0
+        },
+        {
+          "source": "blocks",
+          "target": "final",
+          "outlet": 0
+        },
+        {
+          "source": "final",
+          "target": "unpatchify",
+          "outlet": 0
+        },
+        {
+          "source": "position",
+          "target": "prepend",
+          "outlet": 0
+        },
+        {
+          "source": "class_tokens",
+          "target": "prepend",
+          "outlet": 0
+        },
+        {
+          "source": "prepend",
+          "target": "blocks",
+          "outlet": 0
+        }
+      ],
+      "inputs": [
+        {
+          "slot": 0,
+          "node": "patchify",
+          "port": 0
+        },
+        {
+          "slot": 1,
+          "node": "blocks",
+          "port": 1
+        },
+        {
+          "slot": 1,
+          "node": "final",
+          "port": 1
+        },
+        {
+          "slot": 1,
+          "node": "class_tokens",
+          "port": 0
+        }
+      ],
+      "outputs": [
+        {
+          "slot": 0,
+          "node": "unpatchify",
+          "port": 0
+        }
+      ]
+    },
+    "blocks": {
+      "nodes": [
+        {
+          "name": "block_00",
+          "kind": "LightningDiTBlock",
+          "line": 419,
+          "end": 432,
+          "scope": "block",
+          "attributes": {
+            "width": 1024,
+            "heads": 16,
+            "input_features": 1024,
+            "output_features": 1024
+          }
+        },
+        {
+          "name": "block_01",
+          "kind": "LightningDiTBlock",
+          "line": 419,
+          "end": 432,
+          "scope": "block",
+          "attributes": {
+            "width": 1024,
+            "heads": 16,
+            "input_features": 1024,
+            "output_features": 1024
+          }
+        },
+        {
+          "name": "block_02",
+          "kind": "LightningDiTBlock",
+          "line": 419,
+          "end": 432,
+          "scope": "block",
+          "attributes": {
+            "width": 1024,
+            "heads": 16,
+            "input_features": 1024,
+            "output_features": 1024
+          }
+        },
+        {
+          "name": "block_03",
+          "kind": "LightningDiTBlock",
+          "line": 419,
+          "end": 432,
+          "scope": "block",
+          "attributes": {
+            "width": 1024,
+            "heads": 16,
+            "input_features": 1024,
+            "output_features": 1024
+          }
+        },
+        {
+          "name": "block_04",
+          "kind": "LightningDiTBlock",
+          "line": 419,
+          "end": 432,
+          "scope": "block",
+          "attributes": {
+            "width": 1024,
+            "heads": 16,
+            "input_features": 1024,
+            "output_features": 1024
+          }
+        },
+        {
+          "name": "block_05",
+          "kind": "LightningDiTBlock",
+          "line": 419,
+          "end": 432,
+          "scope": "block",
+          "attributes": {
+            "width": 1024,
+            "heads": 16,
+            "input_features": 1024,
+            "output_features": 1024
+          }
+        },
+        {
+          "name": "block_06",
+          "kind": "LightningDiTBlock",
+          "line": 419,
+          "end": 432,
+          "scope": "block",
+          "attributes": {
+            "width": 1024,
+            "heads": 16,
+            "input_features": 1024,
+            "output_features": 1024
+          }
+        },
+        {
+          "name": "block_07",
+          "kind": "LightningDiTBlock",
+          "line": 419,
+          "end": 432,
+          "scope": "block",
+          "attributes": {
+            "width": 1024,
+            "heads": 16,
+            "input_features": 1024,
+            "output_features": 1024
+          }
+        },
+        {
+          "name": "block_08",
+          "kind": "LightningDiTBlock",
+          "line": 419,
+          "end": 432,
+          "scope": "block",
+          "attributes": {
+            "width": 1024,
+            "heads": 16,
+            "input_features": 1024,
+            "output_features": 1024
+          }
+        },
+        {
+          "name": "block_09",
+          "kind": "LightningDiTBlock",
+          "line": 419,
+          "end": 432,
+          "scope": "block",
+          "attributes": {
+            "width": 1024,
+            "heads": 16,
+            "input_features": 1024,
+            "output_features": 1024
+          }
+        },
+        {
+          "name": "block_10",
+          "kind": "LightningDiTBlock",
+          "line": 419,
+          "end": 432,
+          "scope": "block",
+          "attributes": {
+            "width": 1024,
+            "heads": 16,
+            "input_features": 1024,
+            "output_features": 1024
+          }
+        },
+        {
+          "name": "block_11",
+          "kind": "LightningDiTBlock",
+          "line": 419,
+          "end": 432,
+          "scope": "block",
+          "attributes": {
+            "width": 1024,
+            "heads": 16,
+            "input_features": 1024,
+            "output_features": 1024
+          }
+        },
+        {
+          "name": "block_12",
+          "kind": "LightningDiTBlock",
+          "line": 419,
+          "end": 432,
+          "scope": "block",
+          "attributes": {
+            "width": 1024,
+            "heads": 16,
+            "input_features": 1024,
+            "output_features": 1024
+          }
+        },
+        {
+          "name": "block_13",
+          "kind": "LightningDiTBlock",
+          "line": 419,
+          "end": 432,
+          "scope": "block",
+          "attributes": {
+            "width": 1024,
+            "heads": 16,
+            "input_features": 1024,
+            "output_features": 1024
+          }
+        },
+        {
+          "name": "block_14",
+          "kind": "LightningDiTBlock",
+          "line": 419,
+          "end": 432,
+          "scope": "block",
+          "attributes": {
+            "width": 1024,
+            "heads": 16,
+            "input_features": 1024,
+            "output_features": 1024
+          }
+        },
+        {
+          "name": "block_15",
+          "kind": "LightningDiTBlock",
+          "line": 419,
+          "end": 432,
+          "scope": "block",
+          "attributes": {
+            "width": 1024,
+            "heads": 16,
+            "input_features": 1024,
+            "output_features": 1024
+          }
+        },
+        {
+          "name": "block_16",
+          "kind": "LightningDiTBlock",
+          "line": 419,
+          "end": 432,
+          "scope": "block",
+          "attributes": {
+            "width": 1024,
+            "heads": 16,
+            "input_features": 1024,
+            "output_features": 1024
+          }
+        },
+        {
+          "name": "block_17",
+          "kind": "LightningDiTBlock",
+          "line": 419,
+          "end": 432,
+          "scope": "block",
+          "attributes": {
+            "width": 1024,
+            "heads": 16,
+            "input_features": 1024,
+            "output_features": 1024
+          }
+        },
+        {
+          "name": "block_18",
+          "kind": "LightningDiTBlock",
+          "line": 419,
+          "end": 432,
+          "scope": "block",
+          "attributes": {
+            "width": 1024,
+            "heads": 16,
+            "input_features": 1024,
+            "output_features": 1024
+          }
+        },
+        {
+          "name": "block_19",
+          "kind": "LightningDiTBlock",
+          "line": 419,
+          "end": 432,
+          "scope": "block",
+          "attributes": {
+            "width": 1024,
+            "heads": 16,
+            "input_features": 1024,
+            "output_features": 1024
+          }
+        },
+        {
+          "name": "block_20",
+          "kind": "LightningDiTBlock",
+          "line": 419,
+          "end": 432,
+          "scope": "block",
+          "attributes": {
+            "width": 1024,
+            "heads": 16,
+            "input_features": 1024,
+            "output_features": 1024
+          }
+        },
+        {
+          "name": "block_21",
+          "kind": "LightningDiTBlock",
+          "line": 419,
+          "end": 432,
+          "scope": "block",
+          "attributes": {
+            "width": 1024,
+            "heads": 16,
+            "input_features": 1024,
+            "output_features": 1024
+          }
+        },
+        {
+          "name": "block_22",
+          "kind": "LightningDiTBlock",
+          "line": 419,
+          "end": 432,
+          "scope": "block",
+          "attributes": {
+            "width": 1024,
+            "heads": 16,
+            "input_features": 1024,
+            "output_features": 1024
+          }
+        },
+        {
+          "name": "block_23",
+          "kind": "LightningDiTBlock",
+          "line": 419,
+          "end": 432,
+          "scope": "block",
+          "attributes": {
+            "width": 1024,
+            "heads": 16,
+            "input_features": 1024,
+            "output_features": 1024
+          }
+        }
+      ],
+      "edges": [
+        {
+          "source": "block_00",
+          "target": "block_01",
+          "outlet": 0
+        },
+        {
+          "source": "block_01",
+          "target": "block_02",
+          "outlet": 0
+        },
+        {
+          "source": "block_02",
+          "target": "block_03",
+          "outlet": 0
+        },
+        {
+          "source": "block_03",
+          "target": "block_04",
+          "outlet": 0
+        },
+        {
+          "source": "block_04",
+          "target": "block_05",
+          "outlet": 0
+        },
+        {
+          "source": "block_05",
+          "target": "block_06",
+          "outlet": 0
+        },
+        {
+          "source": "block_06",
+          "target": "block_07",
+          "outlet": 0
+        },
+        {
+          "source": "block_07",
+          "target": "block_08",
+          "outlet": 0
+        },
+        {
+          "source": "block_08",
+          "target": "block_09",
+          "outlet": 0
+        },
+        {
+          "source": "block_09",
+          "target": "block_10",
+          "outlet": 0
+        },
+        {
+          "source": "block_10",
+          "target": "block_11",
+          "outlet": 0
+        },
+        {
+          "source": "block_11",
+          "target": "block_12",
+          "outlet": 0
+        },
+        {
+          "source": "block_12",
+          "target": "block_13",
+          "outlet": 0
+        },
+        {
+          "source": "block_13",
+          "target": "block_14",
+          "outlet": 0
+        },
+        {
+          "source": "block_14",
+          "target": "block_15",
+          "outlet": 0
+        },
+        {
+          "source": "block_15",
+          "target": "block_16",
+          "outlet": 0
+        },
+        {
+          "source": "block_16",
+          "target": "block_17",
+          "outlet": 0
+        },
+        {
+          "source": "block_17",
+          "target": "block_18",
+          "outlet": 0
+        },
+        {
+          "source": "block_18",
+          "target": "block_19",
+          "outlet": 0
+        },
+        {
+          "source": "block_19",
+          "target": "block_20",
+          "outlet": 0
+        },
+        {
+          "source": "block_20",
+          "target": "block_21",
+          "outlet": 0
+        },
+        {
+          "source": "block_21",
+          "target": "block_22",
+          "outlet": 0
+        },
+        {
+          "source": "block_22",
+          "target": "block_23",
+          "outlet": 0
+        }
+      ],
+      "inputs": [
+        {
+          "slot": 0,
+          "node": "block_00",
+          "port": 0
+        },
+        {
+          "slot": 1,
+          "node": "block_00",
+          "port": 1
+        },
+        {
+          "slot": 1,
+          "node": "block_01",
+          "port": 1
+        },
+        {
+          "slot": 1,
+          "node": "block_02",
+          "port": 1
+        },
+        {
+          "slot": 1,
+          "node": "block_03",
+          "port": 1
+        },
+        {
+          "slot": 1,
+          "node": "block_04",
+          "port": 1
+        },
+        {
+          "slot": 1,
+          "node": "block_05",
+          "port": 1
+        },
+        {
+          "slot": 1,
+          "node": "block_06",
+          "port": 1
+        },
+        {
+          "slot": 1,
+          "node": "block_07",
+          "port": 1
+        },
+        {
+          "slot": 1,
+          "node": "block_08",
+          "port": 1
+        },
+        {
+          "slot": 1,
+          "node": "block_09",
+          "port": 1
+        },
+        {
+          "slot": 1,
+          "node": "block_10",
+          "port": 1
+        },
+        {
+          "slot": 1,
+          "node": "block_11",
+          "port": 1
+        },
+        {
+          "slot": 1,
+          "node": "block_12",
+          "port": 1
+        },
+        {
+          "slot": 1,
+          "node": "block_13",
+          "port": 1
+        },
+        {
+          "slot": 1,
+          "node": "block_14",
+          "port": 1
+        },
+        {
+          "slot": 1,
+          "node": "block_15",
+          "port": 1
+        },
+        {
+          "slot": 1,
+          "node": "block_16",
+          "port": 1
+        },
+        {
+          "slot": 1,
+          "node": "block_17",
+          "port": 1
+        },
+        {
+          "slot": 1,
+          "node": "block_18",
+          "port": 1
+        },
+        {
+          "slot": 1,
+          "node": "block_19",
+          "port": 1
+        },
+        {
+          "slot": 1,
+          "node": "block_20",
+          "port": 1
+        },
+        {
+          "slot": 1,
+          "node": "block_21",
+          "port": 1
+        },
+        {
+          "slot": 1,
+          "node": "block_22",
+          "port": 1
+        },
+        {
+          "slot": 1,
+          "node": "block_23",
+          "port": 1
+        }
+      ],
+      "outputs": [
+        {
+          "slot": 0,
+          "node": "block_23",
+          "port": 0
+        }
+      ]
+    },
+    "block": {
+      "nodes": [
+        {
+          "name": "x",
+          "kind": "Tensor input",
+          "line": 245,
+          "end": 311,
+          "scope": null,
+          "attributes": {}
+        },
+        {
+          "name": "adaLN",
+          "kind": "Condition projection",
+          "line": 297,
+          "end": 297,
+          "scope": null,
+          "attributes": {}
+        },
+        {
+          "name": "norm1",
+          "kind": "RMSNorm",
+          "line": 299,
+          "end": 299,
+          "scope": null,
+          "attributes": {}
+        },
+        {
+          "name": "modulate_attn",
+          "kind": "Modulation",
+          "line": 300,
+          "end": 300,
+          "scope": null,
+          "attributes": {
+            "output_axes": [
+              [
+                "B",
+                "N",
+                1024
+              ]
+            ]
+          }
+        },
+        {
+          "name": "attention",
+          "kind": "Attention",
+          "line": 255,
+          "end": 265,
+          "scope": "attention",
+          "attributes": {
+            "width": 1024,
+            "heads": 16,
+            "input_axes": [
+              [
+                "B",
+                "N",
+                1024
+              ]
+            ],
+            "output_axes": [
+              [
+                "B",
+                "N",
+                1024
+              ]
+            ]
+          }
+        },
+        {
+          "name": "attention_residual",
+          "kind": "Residual add",
+          "line": 304,
+          "end": 304,
+          "scope": null,
+          "attributes": {}
+        },
+        {
+          "name": "norm2",
+          "kind": "RMSNorm",
+          "line": 306,
+          "end": 306,
+          "scope": null,
+          "attributes": {}
+        },
+        {
+          "name": "modulate_ffn",
+          "kind": "Modulation",
+          "line": 307,
+          "end": 307,
+          "scope": null,
+          "attributes": {}
+        },
+        {
+          "name": "ffn",
+          "kind": "SwiGLUFFN",
+          "line": 272,
+          "end": 272,
+          "scope": "swiglu",
+          "attributes": {}
+        },
+        {
+          "name": "ffn_residual",
+          "kind": "Residual add",
+          "line": 310,
+          "end": 310,
+          "scope": null,
+          "attributes": {}
+        }
+      ],
+      "edges": [
+        {
+          "source": "x",
+          "target": "norm1",
+          "outlet": 0
+        },
+        {
+          "source": "norm1",
+          "target": "modulate_attn",
+          "outlet": 0
+        },
+        {
+          "source": "adaLN",
+          "target": "modulate_attn",
+          "outlet": 0
+        },
+        {
+          "source": "adaLN",
+          "target": "modulate_attn",
+          "outlet": 1
+        },
+        {
+          "source": "modulate_attn",
+          "target": "attention",
+          "outlet": 0
+        },
+        {
+          "source": "x",
+          "target": "attention_residual",
+          "outlet": 0
+        },
+        {
+          "source": "attention",
+          "target": "attention_residual",
+          "outlet": 0
+        },
+        {
+          "source": "adaLN",
+          "target": "attention_residual",
+          "outlet": 2
+        },
+        {
+          "source": "attention_residual",
+          "target": "norm2",
+          "outlet": 0
+        },
+        {
+          "source": "norm2",
+          "target": "modulate_ffn",
+          "outlet": 0
+        },
+        {
+          "source": "adaLN",
+          "target": "modulate_ffn",
+          "outlet": 3
+        },
+        {
+          "source": "adaLN",
+          "target": "modulate_ffn",
+          "outlet": 4
+        },
+        {
+          "source": "modulate_ffn",
+          "target": "ffn",
+          "outlet": 0
+        },
+        {
+          "source": "attention_residual",
+          "target": "ffn_residual",
+          "outlet": 0
+        },
+        {
+          "source": "ffn",
+          "target": "ffn_residual",
+          "outlet": 0
+        },
+        {
+          "source": "adaLN",
+          "target": "ffn_residual",
+          "outlet": 5
+        }
+      ],
+      "inputs": [
+        {
+          "slot": 0,
+          "node": "x",
+          "port": 0
+        },
+        {
+          "slot": 1,
+          "node": "adaLN",
+          "port": 0
+        }
+      ],
+      "outputs": [
+        {
+          "slot": 0,
+          "node": "ffn_residual",
+          "port": 0
+        }
+      ]
+    },
+    "final": {
+      "nodes": [
+        {
+          "name": "norm",
+          "kind": "RMSNorm",
+          "line": 341,
+          "end": 341,
+          "scope": null,
+          "attributes": {}
+        },
+        {
+          "name": "adaLN",
+          "kind": "Condition projection",
+          "line": 339,
+          "end": 339,
+          "scope": null,
+          "attributes": {}
+        },
+        {
+          "name": "modulate",
+          "kind": "Modulation",
+          "line": 341,
+          "end": 341,
+          "scope": null,
+          "attributes": {}
+        },
+        {
+          "name": "pixels",
+          "kind": "TorchLinear",
+          "line": 342,
+          "end": 342,
+          "scope": null,
+          "attributes": {}
+        }
+      ],
+      "edges": [
+        {
+          "source": "norm",
+          "target": "modulate",
+          "outlet": 0
+        },
+        {
+          "source": "adaLN",
+          "target": "modulate",
+          "outlet": 0
+        },
+        {
+          "source": "adaLN",
+          "target": "modulate",
+          "outlet": 1
+        },
+        {
+          "source": "modulate",
+          "target": "pixels",
+          "outlet": 0
+        }
+      ],
+      "inputs": [
+        {
+          "slot": 0,
+          "node": "norm",
+          "port": 0
+        },
+        {
+          "slot": 1,
+          "node": "adaLN",
+          "port": 0
+        }
+      ],
+      "outputs": [
+        {
+          "slot": 0,
+          "node": "pixels",
+          "port": 0
+        }
+      ]
+    },
+    "noise_embeds": {
+      "nodes": [
+        {
+          "name": "coord_00",
+          "kind": "Noise coordinate",
+          "line": 585,
+          "end": 585,
+          "scope": "noise_coordinate",
+          "attributes": {}
+        },
+        {
+          "name": "coord_01",
+          "kind": "Noise coordinate",
+          "line": 585,
+          "end": 585,
+          "scope": "noise_coordinate",
+          "attributes": {}
+        },
+        {
+          "name": "coord_02",
+          "kind": "Noise coordinate",
+          "line": 585,
+          "end": 585,
+          "scope": "noise_coordinate",
+          "attributes": {}
+        },
+        {
+          "name": "coord_03",
+          "kind": "Noise coordinate",
+          "line": 585,
+          "end": 585,
+          "scope": "noise_coordinate",
+          "attributes": {}
+        },
+        {
+          "name": "coord_04",
+          "kind": "Noise coordinate",
+          "line": 585,
+          "end": 585,
+          "scope": "noise_coordinate",
+          "attributes": {}
+        },
+        {
+          "name": "coord_05",
+          "kind": "Noise coordinate",
+          "line": 585,
+          "end": 585,
+          "scope": "noise_coordinate",
+          "attributes": {}
+        },
+        {
+          "name": "coord_06",
+          "kind": "Noise coordinate",
+          "line": 585,
+          "end": 585,
+          "scope": "noise_coordinate",
+          "attributes": {}
+        },
+        {
+          "name": "coord_07",
+          "kind": "Noise coordinate",
+          "line": 585,
+          "end": 585,
+          "scope": "noise_coordinate",
+          "attributes": {}
+        },
+        {
+          "name": "coord_08",
+          "kind": "Noise coordinate",
+          "line": 585,
+          "end": 585,
+          "scope": "noise_coordinate",
+          "attributes": {}
+        },
+        {
+          "name": "coord_09",
+          "kind": "Noise coordinate",
+          "line": 585,
+          "end": 585,
+          "scope": "noise_coordinate",
+          "attributes": {}
+        },
+        {
+          "name": "coord_10",
+          "kind": "Noise coordinate",
+          "line": 585,
+          "end": 585,
+          "scope": "noise_coordinate",
+          "attributes": {}
+        },
+        {
+          "name": "coord_11",
+          "kind": "Noise coordinate",
+          "line": 585,
+          "end": 585,
+          "scope": "noise_coordinate",
+          "attributes": {}
+        },
+        {
+          "name": "coord_12",
+          "kind": "Noise coordinate",
+          "line": 585,
+          "end": 585,
+          "scope": "noise_coordinate",
+          "attributes": {}
+        },
+        {
+          "name": "coord_13",
+          "kind": "Noise coordinate",
+          "line": 585,
+          "end": 585,
+          "scope": "noise_coordinate",
+          "attributes": {}
+        },
+        {
+          "name": "coord_14",
+          "kind": "Noise coordinate",
+          "line": 585,
+          "end": 585,
+          "scope": "noise_coordinate",
+          "attributes": {}
+        },
+        {
+          "name": "coord_15",
+          "kind": "Noise coordinate",
+          "line": 585,
+          "end": 585,
+          "scope": "noise_coordinate",
+          "attributes": {}
+        },
+        {
+          "name": "coord_16",
+          "kind": "Noise coordinate",
+          "line": 585,
+          "end": 585,
+          "scope": "noise_coordinate",
+          "attributes": {}
+        },
+        {
+          "name": "coord_17",
+          "kind": "Noise coordinate",
+          "line": 585,
+          "end": 585,
+          "scope": "noise_coordinate",
+          "attributes": {}
+        },
+        {
+          "name": "coord_18",
+          "kind": "Noise coordinate",
+          "line": 585,
+          "end": 585,
+          "scope": "noise_coordinate",
+          "attributes": {}
+        },
+        {
+          "name": "coord_19",
+          "kind": "Noise coordinate",
+          "line": 585,
+          "end": 585,
+          "scope": "noise_coordinate",
+          "attributes": {}
+        },
+        {
+          "name": "coord_20",
+          "kind": "Noise coordinate",
+          "line": 585,
+          "end": 585,
+          "scope": "noise_coordinate",
+          "attributes": {}
+        },
+        {
+          "name": "coord_21",
+          "kind": "Noise coordinate",
+          "line": 585,
+          "end": 585,
+          "scope": "noise_coordinate",
+          "attributes": {}
+        },
+        {
+          "name": "coord_22",
+          "kind": "Noise coordinate",
+          "line": 585,
+          "end": 585,
+          "scope": "noise_coordinate",
+          "attributes": {}
+        },
+        {
+          "name": "coord_23",
+          "kind": "Noise coordinate",
+          "line": 585,
+          "end": 585,
+          "scope": "noise_coordinate",
+          "attributes": {}
+        },
+        {
+          "name": "coord_24",
+          "kind": "Noise coordinate",
+          "line": 585,
+          "end": 585,
+          "scope": "noise_coordinate",
+          "attributes": {}
+        },
+        {
+          "name": "coord_25",
+          "kind": "Noise coordinate",
+          "line": 585,
+          "end": 585,
+          "scope": "noise_coordinate",
+          "attributes": {}
+        },
+        {
+          "name": "coord_26",
+          "kind": "Noise coordinate",
+          "line": 585,
+          "end": 585,
+          "scope": "noise_coordinate",
+          "attributes": {}
+        },
+        {
+          "name": "coord_27",
+          "kind": "Noise coordinate",
+          "line": 585,
+          "end": 585,
+          "scope": "noise_coordinate",
+          "attributes": {}
+        },
+        {
+          "name": "coord_28",
+          "kind": "Noise coordinate",
+          "line": 585,
+          "end": 585,
+          "scope": "noise_coordinate",
+          "attributes": {}
+        },
+        {
+          "name": "coord_29",
+          "kind": "Noise coordinate",
+          "line": 585,
+          "end": 585,
+          "scope": "noise_coordinate",
+          "attributes": {}
+        },
+        {
+          "name": "coord_30",
+          "kind": "Noise coordinate",
+          "line": 585,
+          "end": 585,
+          "scope": "noise_coordinate",
+          "attributes": {}
+        },
+        {
+          "name": "coord_31",
+          "kind": "Noise coordinate",
+          "line": 585,
+          "end": 585,
+          "scope": "noise_coordinate",
+          "attributes": {}
+        }
+      ],
+      "edges": [
+        {
+          "source": "coord_00",
+          "target": "coord_01",
+          "outlet": 0
+        },
+        {
+          "source": "coord_01",
+          "target": "coord_02",
+          "outlet": 0
+        },
+        {
+          "source": "coord_02",
+          "target": "coord_03",
+          "outlet": 0
+        },
+        {
+          "source": "coord_03",
+          "target": "coord_04",
+          "outlet": 0
+        },
+        {
+          "source": "coord_04",
+          "target": "coord_05",
+          "outlet": 0
+        },
+        {
+          "source": "coord_05",
+          "target": "coord_06",
+          "outlet": 0
+        },
+        {
+          "source": "coord_06",
+          "target": "coord_07",
+          "outlet": 0
+        },
+        {
+          "source": "coord_07",
+          "target": "coord_08",
+          "outlet": 0
+        },
+        {
+          "source": "coord_08",
+          "target": "coord_09",
+          "outlet": 0
+        },
+        {
+          "source": "coord_09",
+          "target": "coord_10",
+          "outlet": 0
+        },
+        {
+          "source": "coord_10",
+          "target": "coord_11",
+          "outlet": 0
+        },
+        {
+          "source": "coord_11",
+          "target": "coord_12",
+          "outlet": 0
+        },
+        {
+          "source": "coord_12",
+          "target": "coord_13",
+          "outlet": 0
+        },
+        {
+          "source": "coord_13",
+          "target": "coord_14",
+          "outlet": 0
+        },
+        {
+          "source": "coord_14",
+          "target": "coord_15",
+          "outlet": 0
+        },
+        {
+          "source": "coord_15",
+          "target": "coord_16",
+          "outlet": 0
+        },
+        {
+          "source": "coord_16",
+          "target": "coord_17",
+          "outlet": 0
+        },
+        {
+          "source": "coord_17",
+          "target": "coord_18",
+          "outlet": 0
+        },
+        {
+          "source": "coord_18",
+          "target": "coord_19",
+          "outlet": 0
+        },
+        {
+          "source": "coord_19",
+          "target": "coord_20",
+          "outlet": 0
+        },
+        {
+          "source": "coord_20",
+          "target": "coord_21",
+          "outlet": 0
+        },
+        {
+          "source": "coord_21",
+          "target": "coord_22",
+          "outlet": 0
+        },
+        {
+          "source": "coord_22",
+          "target": "coord_23",
+          "outlet": 0
+        },
+        {
+          "source": "coord_23",
+          "target": "coord_24",
+          "outlet": 0
+        },
+        {
+          "source": "coord_24",
+          "target": "coord_25",
+          "outlet": 0
+        },
+        {
+          "source": "coord_25",
+          "target": "coord_26",
+          "outlet": 0
+        },
+        {
+          "source": "coord_26",
+          "target": "coord_27",
+          "outlet": 0
+        },
+        {
+          "source": "coord_27",
+          "target": "coord_28",
+          "outlet": 0
+        },
+        {
+          "source": "coord_28",
+          "target": "coord_29",
+          "outlet": 0
+        },
+        {
+          "source": "coord_29",
+          "target": "coord_30",
+          "outlet": 0
+        },
+        {
+          "source": "coord_30",
+          "target": "coord_31",
+          "outlet": 0
+        }
+      ],
+      "inputs": [
+        {
+          "slot": 0,
+          "node": "coord_00",
+          "port": 0
+        },
+        {
+          "slot": 1,
+          "node": "coord_00",
+          "port": 1
+        },
+        {
+          "slot": 1,
+          "node": "coord_01",
+          "port": 1
+        },
+        {
+          "slot": 1,
+          "node": "coord_02",
+          "port": 1
+        },
+        {
+          "slot": 1,
+          "node": "coord_03",
+          "port": 1
+        },
+        {
+          "slot": 1,
+          "node": "coord_04",
+          "port": 1
+        },
+        {
+          "slot": 1,
+          "node": "coord_05",
+          "port": 1
+        },
+        {
+          "slot": 1,
+          "node": "coord_06",
+          "port": 1
+        },
+        {
+          "slot": 1,
+          "node": "coord_07",
+          "port": 1
+        },
+        {
+          "slot": 1,
+          "node": "coord_08",
+          "port": 1
+        },
+        {
+          "slot": 1,
+          "node": "coord_09",
+          "port": 1
+        },
+        {
+          "slot": 1,
+          "node": "coord_10",
+          "port": 1
+        },
+        {
+          "slot": 1,
+          "node": "coord_11",
+          "port": 1
+        },
+        {
+          "slot": 1,
+          "node": "coord_12",
+          "port": 1
+        },
+        {
+          "slot": 1,
+          "node": "coord_13",
+          "port": 1
+        },
+        {
+          "slot": 1,
+          "node": "coord_14",
+          "port": 1
+        },
+        {
+          "slot": 1,
+          "node": "coord_15",
+          "port": 1
+        },
+        {
+          "slot": 1,
+          "node": "coord_16",
+          "port": 1
+        },
+        {
+          "slot": 1,
+          "node": "coord_17",
+          "port": 1
+        },
+        {
+          "slot": 1,
+          "node": "coord_18",
+          "port": 1
+        },
+        {
+          "slot": 1,
+          "node": "coord_19",
+          "port": 1
+        },
+        {
+          "slot": 1,
+          "node": "coord_20",
+          "port": 1
+        },
+        {
+          "slot": 1,
+          "node": "coord_21",
+          "port": 1
+        },
+        {
+          "slot": 1,
+          "node": "coord_22",
+          "port": 1
+        },
+        {
+          "slot": 1,
+          "node": "coord_23",
+          "port": 1
+        },
+        {
+          "slot": 1,
+          "node": "coord_24",
+          "port": 1
+        },
+        {
+          "slot": 1,
+          "node": "coord_25",
+          "port": 1
+        },
+        {
+          "slot": 1,
+          "node": "coord_26",
+          "port": 1
+        },
+        {
+          "slot": 1,
+          "node": "coord_27",
+          "port": 1
+        },
+        {
+          "slot": 1,
+          "node": "coord_28",
+          "port": 1
+        },
+        {
+          "slot": 1,
+          "node": "coord_29",
+          "port": 1
+        },
+        {
+          "slot": 1,
+          "node": "coord_30",
+          "port": 1
+        },
+        {
+          "slot": 1,
+          "node": "coord_31",
+          "port": 1
+        }
+      ],
+      "outputs": [
+        {
+          "slot": 0,
+          "node": "coord_31",
+          "port": 0
+        }
+      ]
+    },
+    "noise_coordinate": {
+      "nodes": [
+        {
+          "name": "label",
+          "kind": "Tensor slice",
+          "line": 585,
+          "end": 585,
+          "scope": null,
+          "attributes": {}
+        },
+        {
+          "name": "embedding",
+          "kind": "Embedding",
+          "line": 585,
+          "end": 585,
+          "scope": null,
+          "attributes": {}
+        },
+        {
+          "name": "add",
+          "kind": "Residual add",
+          "line": 585,
+          "end": 585,
+          "scope": null,
+          "attributes": {}
+        }
+      ],
+      "edges": [
+        {
+          "source": "label",
+          "target": "embedding",
+          "outlet": 0
+        },
+        {
+          "source": "embedding",
+          "target": "add",
+          "outlet": 0
+        }
+      ],
+      "inputs": [
+        {
+          "slot": 0,
+          "node": "add",
+          "port": 0
+        },
+        {
+          "slot": 1,
+          "node": "label",
+          "port": 0
+        }
+      ],
+      "outputs": [
+        {
+          "slot": 0,
+          "node": "add",
+          "port": 0
+        }
+      ]
+    },
+    "rope": {
+      "nodes": [
+        {
+          "name": "phase",
+          "kind": "Rotary phase",
+          "line": 123,
+          "end": 123,
+          "scope": null,
+          "attributes": {}
+        },
+        {
+          "name": "cos",
+          "kind": "Cosine",
+          "line": 125,
+          "end": 125,
+          "scope": null,
+          "attributes": {}
+        },
+        {
+          "name": "sin",
+          "kind": "Sine",
+          "line": 126,
+          "end": 126,
+          "scope": null,
+          "attributes": {}
+        },
+        {
+          "name": "q_rotated",
+          "kind": "Rotate Q",
+          "line": 131,
+          "end": 131,
+          "scope": null,
+          "attributes": {
+            "input_axes": [
+              [
+                "B",
+                "N",
+                16,
+                64
+              ]
+            ],
+            "output_axes": [
+              [
+                "B",
+                "N",
+                16,
+                64
+              ]
+            ]
+          }
+        },
+        {
+          "name": "k_rotated",
+          "kind": "Rotate K",
+          "line": 132,
+          "end": 132,
+          "scope": null,
+          "attributes": {
+            "input_axes": [
+              [
+                "B",
+                "N",
+                16,
+                64
+              ]
+            ],
+            "output_axes": [
+              [
+                "B",
+                "N",
+                16,
+                64
+              ]
+            ]
+          }
+        }
+      ],
+      "edges": [
+        {
+          "source": "phase",
+          "target": "cos",
+          "outlet": 0
+        },
+        {
+          "source": "phase",
+          "target": "sin",
+          "outlet": 0
+        },
+        {
+          "source": "cos",
+          "target": "q_rotated",
+          "outlet": 0
+        },
+        {
+          "source": "sin",
+          "target": "q_rotated",
+          "outlet": 0
+        },
+        {
+          "source": "cos",
+          "target": "k_rotated",
+          "outlet": 0
+        },
+        {
+          "source": "sin",
+          "target": "k_rotated",
+          "outlet": 0
+        }
+      ],
+      "inputs": [
+        {
+          "slot": 0,
+          "node": "q_rotated",
+          "port": 0
+        },
+        {
+          "slot": 1,
+          "node": "k_rotated",
+          "port": 0
+        }
+      ],
+      "outputs": [
+        {
+          "slot": 0,
+          "node": "q_rotated",
+          "port": 0
+        },
+        {
+          "slot": 1,
+          "node": "k_rotated",
+          "port": 0
+        }
+      ]
+    },
+    "head_axes": {
+      "nodes": [
+        {
+          "name": "q_heads",
+          "kind": "Transpose Q",
+          "line": 211,
+          "end": 211,
+          "scope": null,
+          "attributes": {
+            "input_axes": [
+              [
+                "B",
+                "N",
+                16,
+                64
+              ]
+            ],
+            "output_axes": [
+              [
+                "B",
+                16,
+                "N",
+                64
+              ]
+            ]
+          }
+        },
+        {
+          "name": "k_heads",
+          "kind": "Transpose K",
+          "line": 212,
+          "end": 212,
+          "scope": null,
+          "attributes": {
+            "input_axes": [
+              [
+                "B",
+                "N",
+                16,
+                64
+              ]
+            ],
+            "output_axes": [
+              [
+                "B",
+                16,
+                "N",
+                64
+              ]
+            ]
+          }
+        },
+        {
+          "name": "v_heads",
+          "kind": "Transpose V",
+          "line": 213,
+          "end": 213,
+          "scope": null,
+          "attributes": {
+            "input_axes": [
+              [
+                "B",
+                "N",
+                16,
+                64
+              ]
+            ],
+            "output_axes": [
+              [
+                "B",
+                16,
+                "N",
+                64
+              ]
+            ]
+          }
+        },
+        {
+          "name": "k_transposed",
+          "kind": "Swap K axes",
+          "line": 215,
+          "end": 215,
+          "scope": null,
+          "attributes": {
+            "input_axes": [
+              [
+                "B",
+                16,
+                "N",
+                64
+              ]
+            ],
+            "output_axes": [
+              [
+                "B",
+                16,
+                64,
+                "N"
+              ]
+            ]
+          }
+        }
+      ],
+      "edges": [
+        {
+          "source": "k_heads",
+          "target": "k_transposed",
+          "outlet": 0
+        }
+      ],
+      "inputs": [
+        {
+          "slot": 0,
+          "node": "q_heads",
+          "port": 0
+        },
+        {
+          "slot": 1,
+          "node": "k_heads",
+          "port": 0
+        },
+        {
+          "slot": 2,
+          "node": "v_heads",
+          "port": 0
+        }
+      ],
+      "outputs": [
+        {
+          "slot": 0,
+          "node": "q_heads",
+          "port": 0
+        },
+        {
+          "slot": 1,
+          "node": "k_transposed",
+          "port": 0
+        },
+        {
+          "slot": 2,
+          "node": "v_heads",
+          "port": 0
+        }
+      ]
+    },
+    "attention": {
+      "nodes": [
+        {
+          "name": "qkv",
+          "kind": "TorchLinear",
+          "line": 182,
+          "end": 182,
+          "scope": null,
+          "attributes": {
+            "width": 3072,
+            "input_axes": [
+              [
+                "B",
+                "N",
+                1024
+              ]
+            ],
+            "output_axes": [
+              [
+                "B",
+                "N",
+                3072
+              ]
+            ]
+          }
+        },
+        {
+          "name": "reshape_qkv",
+          "kind": "Reshape QKV",
+          "line": 183,
+          "end": 183,
+          "scope": null,
+          "attributes": {
+            "input_axes": [
+              [
+                "B",
+                "N",
+                3072
+              ]
+            ],
+            "output_axes": [
+              [
+                "B",
+                "N",
+                3,
+                16,
+                64
+              ]
+            ]
+          }
+        },
+        {
+          "name": "q",
+          "kind": "Tensor slice",
+          "line": 184,
+          "end": 184,
+          "scope": null,
+          "attributes": {
+            "input_axes": [
+              [
+                "B",
+                "N",
+                3,
+                16,
+                64
+              ]
+            ],
+            "output_axes": [
+              [
+                "B",
+                "N",
+                16,
+                64
+              ]
+            ]
+          }
+        },
+        {
+          "name": "k",
+          "kind": "Tensor slice",
+          "line": 184,
+          "end": 184,
+          "scope": null,
+          "attributes": {
+            "input_axes": [
+              [
+                "B",
+                "N",
+                3,
+                16,
+                64
+              ]
+            ],
+            "output_axes": [
+              [
+                "B",
+                "N",
+                16,
+                64
+              ]
+            ]
+          }
+        },
+        {
+          "name": "v",
+          "kind": "Tensor slice",
+          "line": 184,
+          "end": 184,
+          "scope": null,
+          "attributes": {
+            "input_axes": [
+              [
+                "B",
+                "N",
+                3,
+                16,
+                64
+              ]
+            ],
+            "output_axes": [
+              [
+                "B",
+                "N",
+                16,
+                64
+              ]
+            ]
+          }
+        },
+        {
+          "name": "q_norm",
+          "kind": "RMSNorm",
+          "line": 189,
+          "end": 189,
+          "scope": null,
+          "attributes": {
+            "input_axes": [
+              [
+                "B",
+                "N",
+                16,
+                64
+              ]
+            ],
+            "output_axes": [
+              [
+                "B",
+                "N",
+                16,
+                64
+              ]
+            ]
+          }
+        },
+        {
+          "name": "k_norm",
+          "kind": "RMSNorm",
+          "line": 190,
+          "end": 190,
+          "scope": null,
+          "attributes": {
+            "input_axes": [
+              [
+                "B",
+                "N",
+                16,
+                64
+              ]
+            ],
+            "output_axes": [
+              [
+                "B",
+                "N",
+                16,
+                64
+              ]
+            ]
+          }
+        },
+        {
+          "name": "rope",
+          "kind": "Rotary embedding",
+          "line": 197,
+          "end": 197,
+          "scope": "rope",
+          "attributes": {
+            "input_axes": [
+              [
+                "B",
+                "N",
+                16,
+                64
+              ],
+              [
+                "B",
+                "N",
+                16,
+                64
+              ]
+            ],
+            "output_axes": [
+              [
+                "B",
+                "N",
+                16,
+                64
+              ],
+              [
+                "B",
+                "N",
+                16,
+                64
+              ]
+            ]
+          }
+        },
+        {
+          "name": "head_axes",
+          "kind": "Attention axes",
+          "line": 211,
+          "end": 211,
+          "scope": "head_axes",
+          "attributes": {
+            "input_axes": [
+              [
+                "B",
+                "N",
+                16,
+                64
+              ],
+              [
+                "B",
+                "N",
+                16,
+                64
+              ],
+              [
+                "B",
+                "N",
+                16,
+                64
+              ]
+            ],
+            "output_axes": [
+              [
+                "B",
+                16,
+                "N",
+                64
+              ],
+              [
+                "B",
+                16,
+                64,
+                "N"
+              ],
+              [
+                "B",
+                16,
+                "N",
+                64
+              ]
+            ],
+            "input_lines": [
+              211,
+              212,
+              213
+            ],
+            "output_lines": [
+              211,
+              215,
+              213
+            ]
+          }
+        },
+        {
+          "name": "logits",
+          "kind": "QKᵀ matmul",
+          "line": 215,
+          "end": 215,
+          "scope": null,
+          "attributes": {
+            "input_axes": [
+              [
+                "B",
+                16,
+                "N",
+                64
+              ],
+              [
+                "B",
+                16,
+                64,
+                "N"
+              ]
+            ],
+            "output_axes": [
+              [
+                "B",
+                16,
+                "N",
+                "N"
+              ]
+            ]
+          }
+        },
+        {
+          "name": "softmax",
+          "kind": "Softmax",
+          "line": 216,
+          "end": 216,
+          "scope": null,
+          "attributes": {
+            "input_axes": [
+              [
+                "B",
+                16,
+                "N",
+                "N"
+              ]
+            ],
+            "output_axes": [
+              [
+                "B",
+                16,
+                "N",
+                "N"
+              ]
+            ]
+          }
+        },
+        {
+          "name": "weighted_values",
+          "kind": "Attention × V",
+          "line": 222,
+          "end": 222,
+          "scope": null,
+          "attributes": {
+            "input_axes": [
+              [
+                "B",
+                16,
+                "N",
+                "N"
+              ],
+              [
+                "B",
+                16,
+                "N",
+                64
+              ]
+            ],
+            "output_axes": [
+              [
+                "B",
+                16,
+                "N",
+                64
+              ]
+            ]
+          }
+        },
+        {
+          "name": "merge_heads",
+          "kind": "Merge heads",
+          "line": 223,
+          "end": 223,
+          "scope": null,
+          "attributes": {
+            "input_axes": [
+              [
+                "B",
+                16,
+                "N",
+                64
+              ]
+            ],
+            "output_axes": [
+              [
+                "B",
+                "N",
+                1024
+              ]
+            ]
+          }
+        },
+        {
+          "name": "projection",
+          "kind": "TorchLinear",
+          "line": 224,
+          "end": 224,
+          "scope": null,
+          "attributes": {
+            "width": 1024,
+            "input_axes": [
+              [
+                "B",
+                "N",
+                1024
+              ]
+            ],
+            "output_axes": [
+              [
+                "B",
+                "N",
+                1024
+              ]
+            ]
+          }
+        }
+      ],
+      "edges": [
+        {
+          "source": "qkv",
+          "target": "reshape_qkv",
+          "outlet": 0
+        },
+        {
+          "source": "reshape_qkv",
+          "target": "q",
+          "outlet": 0
+        },
+        {
+          "source": "reshape_qkv",
+          "target": "k",
+          "outlet": 0
+        },
+        {
+          "source": "reshape_qkv",
+          "target": "v",
+          "outlet": 0
+        },
+        {
+          "source": "q",
+          "target": "q_norm",
+          "outlet": 0
+        },
+        {
+          "source": "k",
+          "target": "k_norm",
+          "outlet": 0
+        },
+        {
+          "source": "q_norm",
+          "target": "rope",
+          "outlet": 0
+        },
+        {
+          "source": "k_norm",
+          "target": "rope",
+          "outlet": 0
+        },
+        {
+          "source": "rope",
+          "target": "head_axes",
+          "outlet": 0
+        },
+        {
+          "source": "rope",
+          "target": "head_axes",
+          "outlet": 1
+        },
+        {
+          "source": "v",
+          "target": "head_axes",
+          "outlet": 0
+        },
+        {
+          "source": "head_axes",
+          "target": "logits",
+          "outlet": 0
+        },
+        {
+          "source": "head_axes",
+          "target": "logits",
+          "outlet": 1
+        },
+        {
+          "source": "logits",
+          "target": "softmax",
+          "outlet": 0
+        },
+        {
+          "source": "softmax",
+          "target": "weighted_values",
+          "outlet": 0
+        },
+        {
+          "source": "head_axes",
+          "target": "weighted_values",
+          "outlet": 2
+        },
+        {
+          "source": "weighted_values",
+          "target": "merge_heads",
+          "outlet": 0
+        },
+        {
+          "source": "merge_heads",
+          "target": "projection",
+          "outlet": 0
+        }
+      ],
+      "inputs": [
+        {
+          "slot": 0,
+          "node": "qkv",
+          "port": 0
+        }
+      ],
+      "outputs": [
+        {
+          "slot": 0,
+          "node": "projection",
+          "port": 0
+        }
+      ]
+    },
+    "swiglu": {
+      "nodes": [
+        {
+          "name": "gate",
+          "kind": "TorchLinear",
+          "line": 144,
+          "end": 144,
+          "scope": null,
+          "attributes": {}
+        },
+        {
+          "name": "up",
+          "kind": "TorchLinear",
+          "line": 145,
+          "end": 145,
+          "scope": null,
+          "attributes": {}
+        },
+        {
+          "name": "silu",
+          "kind": "SiLU",
+          "line": 146,
+          "end": 146,
+          "scope": null,
+          "attributes": {}
+        },
+        {
+          "name": "multiply",
+          "kind": "Multiply",
+          "line": 146,
+          "end": 146,
+          "scope": null,
+          "attributes": {}
+        },
+        {
+          "name": "down",
+          "kind": "TorchLinear",
+          "line": 147,
+          "end": 147,
+          "scope": null,
+          "attributes": {
+            "width": 1024
+          }
+        }
+      ],
+      "edges": [
+        {
+          "source": "gate",
+          "target": "silu",
+          "outlet": 0
+        },
+        {
+          "source": "silu",
+          "target": "multiply",
+          "outlet": 0
+        },
+        {
+          "source": "up",
+          "target": "multiply",
+          "outlet": 0
+        },
+        {
+          "source": "multiply",
+          "target": "down",
+          "outlet": 0
+        }
+      ],
+      "inputs": [
+        {
+          "slot": 0,
+          "node": "gate",
+          "port": 0
+        },
+        {
+          "slot": 0,
+          "node": "up",
+          "port": 0
+        }
+      ],
+      "outputs": [
+        {
+          "slot": 0,
+          "node": "down",
+          "port": 0
+        }
+      ]
+    }
+  }
+}

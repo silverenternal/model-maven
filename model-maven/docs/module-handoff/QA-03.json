@@ -1,0 +1,166 @@
+{
+  "schema_version": 1,
+  "task_id": "QA-03",
+  "status": "in_review",
+  "baseline": "product.json 0.13.63; Linux x86_64, Python 3.14.10; shared coordinator worktree",
+  "branch": "master (uncommitted shared worktree)",
+  "files_changed": [
+    ".github/workflows/ci.yml",
+    ".github/workflows/release.yml",
+    "CHANGELOG.md",
+    "docs/release/compatibility.md",
+    "docs/release/third-party-review.md",
+    "docs/release/upgrade-and-rollback.md",
+    "docs/module-handoff/QA-03.json",
+    "scripts/verify_release_install.py",
+    "scripts/verify_complex_acceptance.py",
+    "src/adapters/python.rs",
+    "src/cli.rs",
+    "python/model_maven_worker/runtime/capabilities.py",
+    "tests/cli.rs",
+    "acceptancetodo.json",
+    "tests/test_capabilities.py",
+    "README.md",
+    "docs/cli-guide.md",
+    "docs/model-contracts.md",
+    "docs/acceptance/requirements.json",
+    "scripts/verify_product_acceptance.py",
+    "docs/cli-handoff/CLI-23.json",
+    "docs/module-handoff/TRAIN-05.json",
+    "docs/acceptance/results/qa02-20261120-release-local-0.13.63/release-install.json",
+    "docs/acceptance/results/qa02-20261120-release-local-0.13.63/logs/release-install.stdout.log",
+    "docs/acceptance/results/qa02-20261120-release-local-0.13.63/logs/release-install.stderr.log",
+    "docs/acceptance/results/qa02-20261120-final-local-0.13.63/release-install.json",
+    "docs/acceptance/results/qa02-20261120-final-local-0.13.63/logs/release-install.stdout.log",
+    "docs/acceptance/results/qa02-20261120-final-local-0.13.63/logs/release-install.stderr.log",
+    "src/application/data_preview.rs",
+    "src/presentation/terminal.rs",
+    "python/model_maven_worker/__init__.py",
+    "python/model_maven_worker/protocol.py",
+    "docs/contracts/compatibility.json",
+    "tests/data_presets.rs",
+    "product.json",
+    "docs/acceptance/results/delivery-current-20261121/release-install.json"
+  ],
+  "implementation": [
+    "Added CI for formatting, the Rust test suite, Clippy, worker architecture, compatibility contracts, and a package-install smoke check on Ubuntu 24.04 x86_64 with Rust 1.85 and Python 3.12.",
+    "Added a manually dispatched review-artifact workflow. It requires its supplied version label to match Cargo.toml and uploads a 30-day Linux x86_64 bundle plus SHA-256; it does not publish a public release or package.",
+    "The bundle contains the native m-model binary, README/changelog/release notes, and the optional model-maven-sdk wheel. The Rust binary embeds worker source; Python/PyTorch remain separately installed runtime dependencies.",
+    "Added an install verifier that cargo-packages the crate, installs from the extracted crate in a temporary prefix, runs the installed binary outside the checkout, checks package version/command surface, launches the embedded Python worker through doctor JSON, and builds/installs the SDK wheel into a fresh offline venv. The SDK is copied into the verifier temporary directory before wheel construction so pip metadata generation cannot mutate the user worktree.",
+    "Added pre-release compatibility, upgrade/rollback, and an unresolved third-party/licensing decision checklist. No project license or legal conclusion was invented.",
+    "Extended the extracted Cargo-install smoke to launch verify_complex_acceptance.py through the installed binary, so the actual packaged CLI/embedded worker performs the complex forward/contract repair, staged training and export/restore workflow outside the checkout. The selected Python is configurable with --python and must provide PyTorch.",
+    "Updated doctor’s legacy implemented/not_implemented summary to reflect the now-shipped registered transform/dataset/loss/metric/trainer fixture suites and Layer state roundtrip, while explicitly listing Trainer timeout conformance and arbitrary-input/OS isolation as not implemented.",
+    "The extracted-install smoke now also launches doctor with an isolated empty PATH and no virtualenv/Conda selectors, proving the installed CLI returns PYTHON_UNAVAILABLE when no interpreter is discoverable through PATH.",
+    "The extracted-install smoke now trains a small model, runs an evaluator that reports an explicit bounded sample preview, reads the evaluation run through runs show, and checks the same typed preview was persisted. The offline SDK wheel smoke imports Evaluator and EvaluatorContext as well as ComponentManifest.",
+    "Formal training timeout now asks the external loop to stop at its next reported step boundary and waits up to 10 seconds for a checkpoint; the installed CLI help documents this grace window. Registered Trainer-owned timeout capability remains unimplemented.",
+    "Doctor capability summary now reports checkpointed cross-batch sample/violation ID deduplication as implemented, while retaining user-ID authenticity and dataset-wide coverage denominator/label semantics as explicit limits. Release-install smoke asserts that installed doctor does not regress to the stale unimplemented claim."
+  ],
+  "validation": [
+    {
+      "command": "python3 scripts/verify_release_install.py (rerun against current shared worktree)",
+      "result": "passed: Cargo packaged 412 files and installed the extracted crate from a temporary prefix; installed m-model 0.1.0 ran outside the checkout; doctor returned status=success with worker protocol v1 and reported current environment.library_probe/training.weight_migration capabilities; optional SDK wheel was installed into a fresh venv using --no-index."
+    },
+    {
+      "command": "python3 -m py_compile scripts/verify_release_install.py",
+      "result": "passed"
+    },
+    {
+      "command": "cargo fmt --all -- --check",
+      "result": "passed"
+    },
+    {
+      "command": "git diff --check -- .github/workflows/ci.yml .github/workflows/release.yml CHANGELOG.md docs/release scripts/verify_release_install.py",
+      "result": "passed"
+    },
+    {
+      "command": "python3 scripts/verify_release_install.py --python python3",
+      "result": "passed: Cargo packaged 435 files and installed the extracted crate outside the checkout; installed doctor reported the corrected component/trainer capability matrix; nonexistent explicit Python returned PYTHON_UNAVAILABLE; verify_complex_acceptance.py ran against the installed binary and passed real probe, repair, staged training, resume equivalence, export and restore; optional SDK wheel installed in a fresh offline venv."
+    },
+    {
+      "command": "python3 scripts/verify_release_install.py --python python3",
+      "result": "passed: extracted Cargo package contained 435 files and installed outside checkout; installed help documents the 10-second formal-training checkpoint grace; doctor reports the corrected component and timeout matrix; explicit missing interpreter and isolated empty PATH returned PYTHON_UNAVAILABLE; installed binary passed complex probe/repair/train/resume/export/restore and train/evaluate/preview/runs-show; offline SDK wheel imported Evaluator/EvaluatorContext."
+    },
+    {
+      "command": "PYTHONPATH=python python3 -m unittest tests.test_capabilities && python3 scripts/verify_release_install.py --python python3",
+      "result": "passed: the doctor unit test confirms implemented versus remaining scope; clean Cargo package/install ran outside checkout; installed doctor reports cross-batch deduplication as implemented while retaining identity-authenticity and denominator limits; complex model train/resume/export/restore, evaluation preview/history, empty-PATH handling, and offline SDK wheel install passed."
+    },
+    {
+      "command": "PYTHONPATH=python python3 -m unittest tests.test_capabilities && python3 scripts/verify_release_install.py --python python3",
+      "result": "passed after external-loop supervision capability update: cargo package 529 files, release install from extracted crate ran outside checkout; installed doctor advertises cross-batch and opt-in external-loop supervision while retaining remaining limits; installed binary passed complex train/resume/export/restore, evaluator preview/run-history, missing-Python handling and offline SDK wheel import."
+    },
+    {
+      "command": "python3 scripts/verify_release_install.py --python python3 (final rerun after external-loop optimizer hook cleanup)",
+      "result": "passed: Cargo packaged 529 files, installed the extracted crate in a temporary prefix and ran outside checkout; doctor advertises external-loop supervision and checkpointed cross-batch coverage while preserving authenticity/denominator/plugin limitations; installed binary passed the complex model train/resume/export/restore workflow, evaluator preview persistence, empty-PATH Python diagnostics, and offline SDK wheel install/import."
+    },
+    {
+      "command": "python3 scripts/verify_release_install.py --python python3",
+      "result": "passed on current shared source: cargo package archived 544 files, installed into a temporary prefix and ran outside checkout; installed doctor/empty-PATH diagnostics, installed complex-model train/resume/export/restore, evaluation preview persistence, and SDK wheel offline install/import passed. Linux x86_64 local evidence only; no remote CI/platform or licensing claim."
+    },
+    {
+      "command": "python3 scripts/verify_product_acceptance.py --case release-install --python python3 --binary target/debug/m-model --output-dir docs/acceptance/results/qa02-20261120-final-local-0.13.63",
+      "result": "passed: provenance-bound current-source record at docs/acceptance/results/qa02-20261120-final-local-0.13.63/release-install.json plus captured logs. Verifies clean extracted Cargo install outside checkout, doctor/runtime diagnostics, complex train/resume/export/restore, evaluation preview history and offline SDK wheel import. Remote CI, non-Linux/GPU and licensing decisions remain external."
+    },
+    {
+      "command": "python3 scripts/verify_product_acceptance.py --case release-install --python python3 --output-dir docs/acceptance/results/qa02-20261121-preset-release-0.13.63",
+      "result": "passed in 58.638s. The extracted and installed CLI searched ResNet18 via m-model data presets resnet outside the checkout; current train/resume/export/restore, evaluation preview/history, interpreter diagnostics and SDK wheel checks also passed. Evidence is limited to local Linux x86_64 and does not close remote CI, other platforms/GPU or licensing."
+    },
+    {
+      "command": "python3 scripts/verify_product_acceptance.py --case release-install --python python3 --output-dir docs/acceptance/results/qa02-20261120-round2-preset-release-no-torch-0.13.63",
+      "result": "passed in 60.159s. Extracted/installed CLI searched the preset catalog using a clean venv with no torch; complex training/resume/export/restore, evaluation preview/history and optional SDK wheel checks also passed. Local Linux scope only."
+    },
+    {
+      "command": "python3 scripts/verify_product_acceptance.py --case release-install --python python3 --output-dir docs/acceptance/results/qa02-20261121-release-current-0.13.63",
+      "result": "passed in 63.176s against the current dirty worktree fingerprint da40a7248e07de3bb91775359bcbbc6cdee747c4;worktree=dirty:bd61eb99135506c9e6f9121e100df81ba85f45229a39b66a6ef08c00dd6614b2. Extracted Cargo package installed and ran outside checkout; embedded worker diagnostics, preset search, complex model train/resume/export/restore, evaluation preview history and offline SDK wheel checks passed. Linux x86_64 local evidence only; remote CI, other platforms, accelerator support and licensing remain open."
+    },
+    {
+      "command": "python3 scripts/verify_product_acceptance.py --case release-install --python python3 --output-dir docs/acceptance/results/qa02-20261121-release-conformance-final-0.13.63",
+      "result": "passed in 60.083s after the Layer conformance fix. Current Cargo package installed and ran outside checkout; embedded worker, preset search, complex train/resume/export/restore, evaluation preview history and offline SDK wheel checks passed. Evidence remains Linux x86_64 only; remote CI, GPU/other platforms and maintainer licensing are open."
+    },
+    {
+      "command": "python3 scripts/verify_product_acceptance.py --case release-install --python python3 --binary target/debug/m-model --output-dir docs/acceptance/results/qa02-20261121-delivery-sprint-0.13.63",
+      "result": "verified exit 0 in 58.778s: current extracted Cargo package installed and exercised outside checkout; provenance-bound report release-install.json. Linux x86_64 host; this fixture ran CPU workloads, so GPU capability/performance is unverified; remote CI, other platforms, accelerator support and maintainer licensing remain external. Reports were produced sequentially and carry individual dirty-worktree provenance fingerprints."
+    },
+    {
+      "command": "python3 scripts/verify_product_acceptance.py --case release-install --python python3 --binary target/debug/m-model --output-dir docs/acceptance/results/delivery-current-20261121",
+      "result": "verified on the current dirty worktree fingerprint: extracted Cargo package installed and ran outside the checkout; installed CLI/embedded worker passed doctor and interpreter diagnostics, preset search without project configuration, complex train/resume/export/restore, evaluation preview/history, and offline SDK wheel install/import. Linux x86_64/Python 3.14.10/PyTorch 2.15.0 only; remote CI, other platforms, accelerator validation and legal review remain open."
+    },
+    {
+      "command": "python3 scripts/verify_release_install.py --python python3; python3 scripts/verify_product_acceptance.py --case release-install --python python3 --output-dir docs/acceptance/results/qa03-current-20261121",
+      "result": "verified, exit 0, 59.711s, current worktree fingerprint de5606e64fd1f0fb4e3c13d5dcb5f88992bb3ee872296cb02a79781479079099. Extracted Cargo package installed and ran outside checkout; doctor/empty PATH, preset search without torch, complex train/resume/export/restore, evaluation preview/history, and offline SDK wheel install passed. Linux x86_64 only."
+    },
+    {
+      "command": "python3 scripts/verify_product_acceptance.py --case release-install --python python3 --binary target/debug/m-model --output-dir docs/acceptance/results/qa03-delivery-rerun-20261121",
+      "result": "verified exit 0 in 59.923s on current worktree fingerprint da40a7248e07de3bb91775359bcbbc6cdee747c4;worktree=dirty:3bba8c2f6fcbc93ffdd9fd9e686511da5197d250b1c209b8ef54d6337a41a5fd. Extracted Cargo package installed and ran outside checkout; doctor/interpreter diagnostics, preset search without torch, complex train/resume/export/restore, evaluator preview persistence, and offline SDK wheel install/import passed. Host detected AMD Radeon RX 7800 XT, but fixture does not validate accelerator execution/performance. GitHub hosted CI, other platforms, and legal review remain open."
+    }
+  ],
+  "integration_patch": "No runtime integration patch. The CI and manual workflow are newly added. The parent/coordinator owns acceptancetodo.json status changes under that file's execution contract.",
+  "limitations": [
+    "GitHub-hosted CI and the workflow_dispatch artifact were not run from this local workspace; no remote CI result is claimed.",
+    "Only Ubuntu 24.04 Linux x86_64 is targeted. Other Linux distributions, macOS, Windows, ARM and GPU/accelerator runtime support are not certified.",
+    "The SDK was independently wheel-installed offline; its package is optional and separate from the CLI binary.",
+    "Explicitly unavailable Python and an isolated PATH with no discoverable interpreter are tested; this does not prove behavior on every host image or platform.",
+    "Cargo still warns that license, license-file, documentation, homepage and repository metadata are missing. Public publication remains blocked on maintainer licensing/redistribution decisions and third-party inventory review.",
+    "Remote CI/review-artifact workflow, non-Linux platforms and GPU/accelerator support remain unverified. Cargo still reports missing license/license-file/homepage/documentation/repository metadata; public release awaits maintainer license and redistribution decisions plus third-party inventory review."
+  ],
+  "commit": null,
+  "evidence": [
+    "docs/acceptance/results/qa02-20261121-release-current-0.13.63/release-install.json",
+    "docs/acceptance/results/qa02-20261121-release-current-0.13.63/logs/release-install.stdout.log",
+    "docs/acceptance/results/qa02-20261121-release-current-0.13.63/logs/release-install.stderr.log",
+    "docs/acceptance/results/qa02-20261120-round2-preset-release-no-torch-0.13.63/release-install.json",
+    "docs/acceptance/results/qa02-20261120-round2-preset-release-no-torch-0.13.63/logs/release-install.stdout.log",
+    "docs/acceptance/results/qa02-20261120-round2-preset-release-no-torch-0.13.63/logs/release-install.stderr.log",
+    "docs/acceptance/results/qa02-20261121-release-conformance-final-0.13.63/release-install.json",
+    "docs/acceptance/results/qa02-20261121-release-conformance-final-0.13.63/logs/release-install.stdout.log",
+    "docs/acceptance/results/qa02-20261121-release-conformance-final-0.13.63/logs/release-install.stderr.log",
+    "docs/acceptance/results/qa02-20261121-delivery-sprint-0.13.63/release-install.json",
+    "docs/acceptance/results/qa02-20261121-delivery-sprint-0.13.63/logs/release-install.stdout.log",
+    "docs/acceptance/results/qa02-20261121-delivery-sprint-0.13.63/logs/release-install.stderr.log",
+    "docs/acceptance/results/qa03-current-20261121/release-install.json",
+    "docs/acceptance/results/qa03-current-20261121/logs/release-install.stdout.log",
+    "docs/acceptance/results/qa03-current-20261121/logs/release-install.stderr.log",
+    "docs/acceptance/results/qa03-delivery-rerun-20261121/release-install.json",
+    "docs/acceptance/results/qa03-delivery-rerun-20261121/logs/release-install.stdout.log",
+    "docs/acceptance/results/qa03-delivery-rerun-20261121/logs/release-install.stderr.log"
+  ]
+}

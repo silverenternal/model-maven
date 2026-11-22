@@ -1,0 +1,75 @@
+{
+  "schema_version": 1,
+  "task_id": "RUN-04",
+  "status": "done",
+  "baseline": "0.13.48 coordinator worktree; RUN-01 complete",
+  "branch": "master (uncommitted coordinator worktree)",
+  "files_changed": [
+    "src/domain/comparison.rs",
+    "src/domain.rs",
+    "src/application/train.rs",
+    "src/application/run_query.rs",
+    "src/cli.rs",
+    "src/presentation/terminal.rs",
+    "tests/cli.rs",
+    "runtodo.json",
+    "product.json",
+    "docs/acceptance/requirements.json",
+    "all root *todo.json source document versions"
+  ],
+  "interface_changes": [
+    "新增只读 CLI：m-model runs compare <left> <right>。JSON 输出包含 protocol、dimensions、summary 和 read_only/causal_attribution 标记；普通终端逐项显示相同/有差异/信息不足。",
+    "latest 统一按 started_at_ms 解析；runs list 的状态分组排序不再影响 runs show、try --repeat latest 或 train --resume latest 的最近语义。"
+  ],
+  "implementation": [
+    "对照运行输入、源码清单、数据/采样、预算、设备、权重和指标；每个维度逐项标记 same/changed/unknown。",
+    "协议/指标/设备/权重缺失时显式显示 unknown；旧运行记录仍可比较。",
+    "比较只读，不启动 worker、不重新训练、不声称观测差异的因果来源。",
+    "普通终端不泄漏完整配置值；完整字段详情通过 --json 查看。"
+  ],
+  "validation": [
+    {
+      "command": "cargo test --locked --quiet",
+      "result": "passed: complete Rust workspace suite, 86 unit tests, 43 CLI tests, and all integration test binaries."
+    },
+    {
+      "command": "cargo test --locked --bin m-model comparison::tests -- --nocapture",
+      "result": "passed: 3 tests for latest timestamp semantics, protocol mismatch, missing metrics, and unknown evidence."
+    },
+    {
+      "command": "cargo test --locked --test cli run_comparison_uses_persisted_evidence_and_latest_means_newest_timestamp -- --nocapture",
+      "result": "passed: JSON and human CLI comparison from persisted records, changed source/data/metrics, unknown inputs/weights, and newest failed run selection."
+    },
+    {
+      "command": "cargo run --locked --quiet -- runs compare --help",
+      "result": "passed: command exposes two required run IDs and read-only comparison help."
+    },
+    {
+      "command": "cargo fmt --all -- --check",
+      "result": "passed."
+    },
+    {
+      "command": "python3 scripts/check_architecture.py",
+      "result": "passed."
+    },
+    {
+      "command": "python3 scripts/check_worker_architecture.py",
+      "result": "passed: 63 worker modules and embedded asset coverage."
+    },
+    {
+      "command": "python3 scripts/check_compatibility.py",
+      "result": "passed: Rust/Python protocol, API, state formats and required features match."
+    },
+    {
+      "command": "git diff --check",
+      "result": "passed."
+    }
+  ],
+  "limitations": [
+    "比较只报告持久化运行证据；旧记录和训练器未上报的设备、权重或指标标记为 unknown。",
+    "CLI-12 的交互式结果浏览和筛选仍未完成。",
+    "比较不证明设置差异造成指标变化，也不替代同条件实验设计。"
+  ],
+  "integration_patch": "Product command contract and acceptance ledger CMD-runs now include read-only comparison; source document versions synchronized to 0.13.48.",
+  "commit": null
+}

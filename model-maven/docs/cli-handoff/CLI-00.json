@@ -1,0 +1,56 @@
+{
+  "task_id": "CLI-00",
+  "status": "done",
+  "owner": "总协调人",
+  "baseline_commit": "594941db9a0db20c2360bfdcff2477fffed5744f",
+  "branch": "master",
+  "worktree_clean_after_baseline": true,
+  "baseline_scope": "60 项文件：Rust/Python 源码、测试、示例、脚本、README、product.json、所有并行任务表。",
+  "environment": {
+    "rustc": "1.99.1 (58cf8f9c3 2026-10-13)",
+    "python": "3.14.10",
+    "pytorch": "2.15.0"
+  },
+  "validation": [
+    {
+      "command": "cargo check --locked",
+      "result": "passed"
+    },
+    {
+      "command": "cargo test --locked",
+      "result": "passed; 8 unit tests + 33 CLI integration tests; 0 failed; 52.31s integration tests"
+    },
+    {
+      "command": "cargo run --locked -- --help",
+      "result": "passed; lists try/init/train/model/layer/assembly/runs/component/env/variant/export/doctor"
+    },
+    {
+      "command": "cargo run --locked -- assembly --help",
+      "result": "passed; show/add/set/remove"
+    },
+    {
+      "command": "cargo run --locked -- init --help",
+      "result": "passed"
+    },
+    {
+      "command": "cargo run --locked -- layer --help",
+      "result": "passed; list/show/add/set/replace/remove/apply/custom/undo/redo"
+    }
+  ],
+  "workbench": {
+    "entry": "src/main.rs::main; no subcommand enters interactive() only when stdin and stderr are TTY.",
+    "assembly_menu": "choice 33 displays assembly and dispatches add/set/remove.",
+    "manual_pty_walkthrough": "not performed; CLI-01/acceptance should capture actual prompt behavior."
+  },
+  "assembly_status": {
+    "implemented": "project default root factory seam show/add/set/remove; candidate construction and optional representative-batch forward probe; dry-run and TTY confirmation.",
+    "limitation": "does not rewrite internal Python graph topology or generate replacement model source; existing variant snapshot is separate.",
+    "evidence": "cargo test --locked and assembly help; no fresh external project smoke sequence run as part of CLI-00."
+  },
+  "known_followups": [
+    "Replace the 33-item flat workbench with task navigation and pages per CLI-02.",
+    "Manually exercise TTY behavior under a real pseudo-terminal and record the user-facing flow.",
+    "Do not claim Python graph topology editing or generated model source; see product.json."
+  ],
+  "prior_cargo_session": "The previously mentioned session 44540 no longer exists. A fresh cargo test --locked was run and completed successfully; no stale result was reused."
+}

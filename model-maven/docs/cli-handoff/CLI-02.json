@@ -1,0 +1,50 @@
+{
+  "task_id": "CLI-02",
+  "status": "done",
+  "owner": "总协调人",
+  "base_commit": "7877de266e4f607fdfc7764f6a86180e475f3c38",
+  "files_changed": [
+    "src/presentation/pages/home.rs",
+    "src/presentation/pages/navigation.rs",
+    "src/presentation/pages/mod.rs",
+    "src/presentation/widgets/action_list.rs",
+    "src/presentation/widgets/mod.rs",
+    "src/presentation/workbench.rs",
+    "src/presentation/contracts.rs",
+    "src/presentation/session.rs",
+    "src/presentation/mod.rs"
+  ],
+  "implementation": [
+    "工作台首页显示项目、模型入口/来源、批次、当前变体、活动运行摘要与建议下一步。",
+    "入口按模型、编辑、试跑训练、组件、环境能力、产物清理分类；原有动作复用现有 Command 和 UiServices。",
+    "当前页可输入序号、动作名称或关键词；多个候选明确列出，不自动猜测；名称 back/返回回首页，退出结束会话。",
+    "会话页栈保留模型/批次/变体，不因返回导航重填。"
+  ],
+  "validation": [
+    {
+      "command": "cargo fmt --check",
+      "result": "passed"
+    },
+    {
+      "command": "cargo check --locked",
+      "result": "passed"
+    },
+    {
+      "command": "cargo test --locked",
+      "result": "passed; 13 unit + 33 CLI integration tests; 0 failed"
+    },
+    {
+      "command": "script -qec m-model, input 模型与 Layer/back/退出",
+      "result": "passed; category navigation and home context rendered"
+    }
+  ],
+  "known_gaps": [
+    "H1 页面组织和“下一步”文案仍是候选方案，尚无真实用户理解测试。",
+    "训练进度的实时事件、会话草稿恢复和键盘快捷键由后续 CLI tasks 实现。",
+    "动作可用性基于当前命令入口；更细的能力过滤要与各领域服务 capability 响应接通。"
+  ],
+  "remaining": [
+    "实时训练进度、用户理解研究及与后续表单/诊断页面联调由对应任务负责，不阻塞首页导航任务。"
+  ],
+  "completion": "首页项目概览、按任务分组导航、动作名称/关键词选择、消歧、返回和上下文保留已实现；全量 Rust/CLI 测试及 PTY 菜单导航通过。"
+}

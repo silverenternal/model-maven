@@ -1,0 +1,30 @@
+Tab Details · ? Controls · M Port matrix · T Mouse on           [-][+][<][>][^][v][R][E][1][2]{3}[4]
+100% · exploded slices 1/2 · OFFLINE · observed tensor flow v1  |  1–4/4 · CELLS  ·  CAM 045°/+35°
+────────────────────────────────────────────────────────────────────────────────────────────────────
+  ╭─ model.encoder[0] → net.head[0]
+  ╰─ 2×48 → …×32  ·  shape mismatch
+                                             ⢀⣀⠠⣴▓⣤⣀                             ⣴▓⣦⣄
+                                      ⣀⡠⠤⠒⠊⠉⠉⠁ ⢀▓▓▓⡛⠁                            ⣤▓▓▓⠋
+              ⢤▓▓⣤⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣤⣴⠚⠉         ⢀⣬▓▓⠟⠃                            ⣨▓▓▓⠓
+              ⢠▓▓▓⡋   ⠉⠉⠑⠒⠢⠤⣀⡠⠴⠒⠁  ⠈⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠛▓▓⠂                            ⠈⠙▓▓⠓
+              ⢠▓▓▓⠛ ⢀⣀⣀⡤⠤⠖⠒⠉ ⠉  ⠐⣤⠂
+               ⠉⠻▓⠟⠉⠁           ⠈ ⠁  ⠤⣄⣀       ⠐merge                           adapter
+                                        ⠉⠑⠒⠢⠤⠤⢀⠔⠁██⠈⠢⡀s3
+             encoder                           ⠑⢄██⢠⠊ s2
+                                                 ⠑⠔⠁⠁ s1
+                                                head
+
+────────────────────────────────────────────────────────────────────────────────────────────────────
+› model.encoder[0] → net.head[0]
+  2×48 → …×32  ·  shape mismatch
+
+Space · Toggle motion   │   / Search · x slices · × mismatch · dashed unknown · H tree · 1 3D · 2 F…
+L Layout off · T Mouse on · W Wires · 2× click focus · Drag canvas rotates · +/- Zoom · Edit mode: …
+w Cycle · W Wire list · u Source · d Destination
+────────────────────────────────────────────────────────────────────────────────────────────────────
+Offline sample · Failed · Graph
+model.head #2 · demo.py:12 · a Axes
+Observed 2×48 · Expected …×32
+changing-batch-01 · trace captured
+observed
+? · ↑↓ calls · e Preview · Tab graph · q quit · i Call evidence · s Settings · m Welcome

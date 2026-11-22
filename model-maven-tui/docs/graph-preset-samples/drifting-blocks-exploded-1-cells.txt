@@ -1,0 +1,36 @@
+EXPLODE x1  /  MODEL-MAVEN STRUCTURE                                                [-][+][<][>][^][v][R][E][1][2]{3}[4]
+100% · exploded slices 1/2 · 5–8/24  |  SOURCE · static Drifting graph · CELLS  ·  CAM 045°/+35°
+────────────────────────────────────────────────────────────────────────────────────────────────────
+
+
+                                                          ⢀⣀⡆
+                                                         ⠘⠻▓▓▓⠄
+                                                         ⠐▓▓▓▓⡄
+                                                         ⠐▓▓▓⣥⡀
+                                                           ⠈⠙⠉
+                                                           ⢐⡇
+                                                        block_04
+                                                         ⠠▓▓▓⣋⠁
+                                                         ⠠⣴▓▓⡛⠁
+                                                          ⠈⠙⠻⠟⠁
+                                                           ⠠⡇
+                                                        block_05
+                                                         ⢀⣬▓▓⠟⠃
+                                                         ⢀⣩▓▓▓⠂
+                                                          ⠙⠻▓▓⠂
+                                                           ⢀⡇
+                                                         ⢀⣠⢀⢄
+                                                        block_06
+                                                        ⠐⢅⢛███⢀⠕s2
+                                                         ⠈⠑⢄⢀⠔⠁ s1
+                                                            ⠁⠁
+                                                           ⠠⡇
+                                                        block_07
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+› DitGen.backbone.blocks.block_07   ·   LightningDiTBlock
+  models/generator.py:419–432
+  Parameter count unknown · width: 1024  ·  heads: 16  ·  IN …×1024  →  OUT …×1024
+Space · Toggle motion   │   / Search · x slices · × mismatch · dashed unknown · H tree · 1 3D · 2 Flow · 3 x1 · 4 x2
+PgUp / PgDn or [ ]  Pages
+L Layout off · T Mouse on · v detail · W Wires · Edit mode: drag module · Drag canvas rotates · Enter expand · w/u/d tr…

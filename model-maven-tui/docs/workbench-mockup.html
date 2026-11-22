@@ -1,0 +1,209 @@
+<div id="maven-terminal" aria-label="Model-Maven 终端工作台设计稿">
+  <header class="mm-bar">
+    <div><strong>m-model</strong><span class="mm-dim"> / </span><span>multimodal</span></div>
+    <span class="mm-dim">设计稿 · 示例项目</span>
+  </header>
+  <div class="mm-shell">
+    <nav class="mm-nav" aria-label="工作台页面">
+      <button type="button" data-screen="home" aria-current="page">⌂ <span>工作台</span></button>
+      <button type="button" data-screen="probe">↳ <span>前向诊断</span></button>
+    </nav>
+    <main class="mm-content">
+      <section id="mm-home">
+        <p class="mm-label">当前项目</p>
+        <h2>多模态模型</h2>
+        <dl class="mm-facts">
+          <dt>模型</dt><dd><code>contract_repair:build_model</code></dd>
+          <dt>样本</dt><dd><code>data:changing_batch</code></dd>
+          <dt>结构</dt><dd>原始模型</dd>
+        </dl>
+        <div class="mm-result">
+          <p class="mm-label">最近一次前向</p>
+          <p><span class="mm-fail">×</span> <strong>视频投影层输入维度不匹配</strong></p>
+          <p class="mm-dim">实际输入 <span class="mm-value">48</span> 维 · 该层要求 <span class="mm-value">32</span> 维</p>
+          <button class="mm-main-action" type="button" data-screen="probe"><kbd>↵</kbd> 查看诊断</button>
+        </div>
+      </section>
+      <section id="mm-probe" hidden>
+        <p class="mm-label">模型 / 前向诊断</p>
+        <h2><span class="mm-fail">×</span> 视频投影层输入维度不匹配</h2>
+        <p class="mm-context"><code>data:changing_batch</code> · 原始模型</p>
+        <div class="mm-evidence">
+          <div><span class="mm-dim">实际输入</span><strong><code>[2, 48]</code></strong></div>
+          <div><span class="mm-dim">该层要求</span><strong><code>[*, 32]</code></strong></div>
+        </div>
+        <dl class="mm-facts">
+          <dt>失败模块</dt><dd><code>model.fusion.video_projection</code></dd>
+          <dt>调用位置</dt><dd><code>contract_repair.py:33</code></dd>
+        </dl>
+        <p class="mm-coverage">本批次在此处中断，下游调用尚未观测。</p>
+        <button class="mm-main-action" type="button" data-screen="edit"><kbd>↵</kbd> 预览变体修改</button>
+      </section>
+      <section id="mm-edit" hidden>
+        <p class="mm-label">模型 / 前向诊断 / 修改预览</p>
+        <h2>调整视频投影层</h2>
+        <p class="mm-context"><code>model.fusion.video_projection</code></p>
+        <div class="mm-evidence">
+          <div><span class="mm-dim">修改前</span><strong><code>in_features = 32</code></strong></div>
+          <div><span class="mm-dim">拟修改为</span><strong class="mm-accent"><code>in_features = 48</code></strong></div>
+        </div>
+        <dl class="mm-facts">
+          <dt>保存目标</dt><dd>变体 <code>working</code>，源文件保持原样</dd>
+          <dt>权重影响</dt><dd><code>weight</code> 重新初始化，<code>bias</code> 保留</dd>
+          <dt>验证样本</dt><dd><code>data:changing_batch</code></dd>
+          <dt>当前状态</dt><dd>待验证 · 尚未提交</dd>
+        </dl>
+      </section>
+    </main>
+  </div>
+  <footer class="mm-footer">
+    <span id="mm-hint">工作台</span>
+    <button type="button" id="mm-back" hidden><kbd>Esc</kbd> 返回</button>
+  </footer>
+</div>
+<style>
+  #maven-terminal {
+    --mm-bg: light-dark(#f4f7f6, #121918);
+    --mm-chrome: light-dark(#e8eeeb, #1a2321);
+    --mm-text: light-dark(#1a2621, #dce7e1);
+    --mm-secondary: light-dark(#465d53, #9ab0a5);
+    --mm-rule: light-dark(#cbd8d0, #354741);
+    --mm-accent: light-dark(#06634c, #8ce0ba);
+    --mm-active: light-dark(#d5e9df, #273d34);
+    --mm-error: light-dark(#9d332f, #ffa497);
+    background: var(--mm-bg);
+    color: var(--mm-text);
+    border: 1px solid var(--mm-rule);
+    font-family: ui-monospace, 'SFMono-Regular', 'Cascadia Mono', 'Noto Sans Mono CJK SC', monospace;
+    font-size: 14px;
+    line-height: 1.55;
+  }
+  #maven-terminal [hidden] { display: none !important; }
+  #maven-terminal strong { font-weight: 700; }
+  #maven-terminal p, #maven-terminal h2, #maven-terminal dl { margin: 0; }
+  #maven-terminal .mm-bar, #maven-terminal .mm-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: .45em 1em;
+    padding: .65em 1.05em;
+    background: var(--mm-chrome);
+  }
+  #maven-terminal .mm-bar { border-bottom: 1px solid var(--mm-rule); }
+  #maven-terminal .mm-bar strong, #maven-terminal .mm-accent { color: var(--mm-accent); }
+  #maven-terminal .mm-shell { display: grid; grid-template-columns: 10.3em minmax(0, 1fr); }
+  #maven-terminal .mm-nav {
+    padding: 1em .6em;
+    border-right: 1px solid var(--mm-rule);
+  }
+  #maven-terminal button {
+    color: inherit;
+    background: transparent;
+    border: 1px solid transparent;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+  #maven-terminal .mm-nav button { display: block; width: 100%; padding: .45em .55em; }
+  #maven-terminal .mm-nav button[aria-current] {
+    color: var(--mm-accent);
+    background: var(--mm-active);
+    border-left-color: currentColor;
+    font-weight: 700;
+  }
+  #maven-terminal .mm-content { min-height: 24em; padding: 1.15em 1.55em; min-width: 0; }
+  #maven-terminal h2 { font-size: 1.27em; line-height: 1.45; margin: .3em 0 .54em; }
+  #maven-terminal .mm-label, #maven-terminal .mm-context, #maven-terminal .mm-dim,
+  #maven-terminal .mm-facts dt, #maven-terminal .mm-coverage { color: var(--mm-secondary); }
+  #maven-terminal .mm-fail { color: var(--mm-error); font-weight: 700; }
+  #maven-terminal .mm-value { color: var(--mm-text); }
+  #maven-terminal code { font: inherit; overflow-wrap: anywhere; }
+  #maven-terminal .mm-facts {
+    display: grid;
+    grid-template-columns: max-content minmax(0, 1fr);
+    gap: .22em 1.25em;
+    margin: .95em 0;
+  }
+  #maven-terminal dd { margin: 0; min-width: 0; }
+  #maven-terminal .mm-result { padding-top: .8em; margin-top: 1.25em; border-top: 1px solid var(--mm-rule); }
+  #maven-terminal .mm-result .mm-label { margin-bottom: .38em; }
+  #maven-terminal .mm-result strong { font-size: 1.12em; }
+  #maven-terminal .mm-evidence {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .5em 2.5em;
+    padding: .6em 0;
+    margin-top: .8em;
+    border-block: 1px solid var(--mm-rule);
+  }
+  #maven-terminal .mm-evidence strong { display: block; font-size: 1.25em; }
+  #maven-terminal .mm-main-action {
+    margin-top: 1em;
+    padding: .35em .7em;
+    background: var(--mm-active);
+    color: var(--mm-accent);
+    font-weight: 700;
+  }
+  #maven-terminal kbd { font: inherit; margin-right: .3em; }
+  #maven-terminal .mm-footer { min-height: 2em; border-top: 1px solid var(--mm-rule); }
+  #maven-terminal .mm-footer button { color: var(--mm-accent); }
+  @media (max-width: 575px) {
+    #maven-terminal .mm-shell { grid-template-columns: minmax(0, 1fr); }
+    #maven-terminal .mm-content { min-height: 0; padding: 1em; }
+    #maven-terminal .mm-nav {
+      display: flex;
+      gap: .35em;
+      padding: .45em .6em;
+      border-right: 0;
+      border-bottom: 1px solid var(--mm-rule);
+    }
+    #maven-terminal .mm-nav button { width: auto; }
+  }
+  @media (pointer: coarse) {
+    #maven-terminal button { min-height: 44px; }
+  }
+</style>
+<script>
+  (() => {
+    const root = document.getElementById('maven-terminal');
+    const screens = {
+      home: root.querySelector('#mm-home'),
+      probe: root.querySelector('#mm-probe'),
+      edit: root.querySelector('#mm-edit'),
+    };
+    const labels = { home: '工作台', probe: '前向诊断', edit: '修改预览' };
+    const back = root.querySelector('#mm-back');
+    const hint = root.querySelector('#mm-hint');
+    const nav = [...root.querySelectorAll('.mm-nav [data-screen]')];
+    let current = 'home';
+
+    function show(next, moveFocus = true) {
+      current = next;
+      for (const [page, section] of Object.entries(screens)) section.hidden = page !== next;
+      for (const link of nav) {
+        if (link.dataset.screen === (next === 'edit' ? 'probe' : next)) link.setAttribute('aria-current', 'page');
+        else link.removeAttribute('aria-current');
+      }
+      back.hidden = next === 'home';
+      hint.textContent = labels[next];
+      if (moveFocus) (screens[next].querySelector('.mm-main-action') || back).focus();
+    }
+
+    function goBack() {
+      if (current !== 'home') show(current === 'edit' ? 'probe' : 'home');
+    }
+
+    for (const button of root.querySelectorAll('[data-screen]')) {
+      button.addEventListener('click', () => show(button.dataset.screen));
+    }
+    back.addEventListener('click', goBack);
+    root.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape' && current !== 'home') {
+        event.preventDefault();
+        goBack();
+      }
+    });
+    show('home', false);
+  })();
+</script>

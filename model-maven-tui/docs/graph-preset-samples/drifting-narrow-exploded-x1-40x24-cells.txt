@@ -1,0 +1,24 @@
+EXPLODE x1  /  …[-][+][<][>][^][v][R][E]
+100% · exploded slices 1/2 · 4–5/5  |  …
+────────────────────────────────────────
+
+
+                   ⣀⡀
+                 ⢀⠔⠊⠈⠢⡀
+                 ⠑⢄██⢠⠊
+                   ⠑⠔⠁
+                backbone
+                  ⢙▓▓⠖
+                  ⣉▓▓⠗
+                   ⠙⠻⠃
+
+                 samples
+
+
+────────────────────────────────────────
+› DitGen.backbone   ·   LightningDiT
+  models/generator.py:553–573
+  Parameter count unknown · width: 1024
+Space · 1 3D · 2 2D · 3 x1 · 4 x2
+PgUp / PgDn or [ ]  Pages
+L Layout off · T Mouse on · v detail · …

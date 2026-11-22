@@ -1,0 +1,23 @@
+[package]
+name = "model-maven"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+description = "Human-first model development CLI for native PyTorch projects"
+license = "MIT"
+readme = "README.md"
+
+[[bin]]
+name = "m-model"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4.5", features = ["derive"] }
+clap_complete = { version = "4.6.12", features = ["unstable-dynamic"] }
+fs2 = "0.4"
+libc = "0.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+semver = "1"
+sha2 = "0.10"
+tempfile = "3"

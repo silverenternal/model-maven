@@ -1,0 +1,115 @@
+{
+  "task_id": "CORE-05",
+  "owner": "总协调人",
+  "baseline": "c6ab0b9",
+  "branch": "master",
+  "status": "done",
+  "files_changed": [
+    "src/adapters/python.rs",
+    "src/domain.rs",
+    "src/domain/capability.rs",
+    "python/model_maven_worker/__init__.py",
+    "python/model_maven_worker/protocol.py",
+    "python/model_maven_worker/runtime/capabilities.py",
+    "docs/contracts/compatibility.json",
+    "scripts/check_architecture.py",
+    "scripts/check_compatibility.py",
+    "tests/architecture_checks.rs",
+    "tests/cli.rs",
+    "tests/protocol_versions.rs",
+    "python/model_maven_worker/environment.py",
+    "python/model_maven_worker/train/checkpoint.py",
+    "src/adapters/project_config.rs",
+    "src/application/config.rs",
+    "src/application/run_inputs.rs",
+    "tests/core_inputs.rs",
+    "src/adapters/runs.rs",
+    "src/presentation/terminal.rs"
+  ],
+  "implemented": [
+    "Centralized Rust worker protocol/API version constants and made Rust worker requests carry an explicit worker_api_version while preserving protocol v1 request payload compatibility.",
+    "Added worker-side checks for protocol/API versions, duplicate or malformed required features, unknown required features, and unsupported state format versions. Rejections include structured codes and recovery hints before operation dispatch.",
+    "Published the worker protocol/API versions, state format versions, and required feature declarations in doctor output and docs/contracts/compatibility.json.",
+    "Added typed runtime capability descriptors to doctor output, including PyTorch and platform conditions while retaining the legacy implemented/not_implemented arrays.",
+    "Rust validates doctor capability IDs, version metadata, state format entries, and reasons for non-supported states before returning the report.",
+    "Added a Rust architecture boundary checker and a compatibility manifest consistency checker, with fixture tests proving boundary violations are rejected.",
+    "Bound required worker features and known state formats to actual Rust operation requests: model inspect/probe/loss/edit, training mode/checkpoint resume, extension inspection/conformance, environment-lock check, and supplied model variants. Caller-declared requirements are merged without repairing malformed or duplicate inputs.",
+    "Moved worker operation-to-feature declarations into a single registry used by request validation and doctor; unregistered operations and features not associated with the requested operation fail before runtime imports.",
+    "Derived doctor capability IDs from the operation registry plus the explicit host supervision feature, then applied PyTorch/platform availability conditions and per-feature providers. Compatibility checks compare the operation registry with real dispatch routes and the JSON contract.",
+    "Bound edit plans, model variants, checkpoints, extension manifests, environment-lock checks and operation features to the versions required on Rust-to-worker requests.",
+    "Added actionable rejection for unknown project-config, environment-lock and checkpoint versions. The project-config CLI test confirms an unsupported file is not overwritten.",
+    "Added exact schema_version=1 enforcement for run.json across listing, showing, mutation, cleanup and checkpoint access. Unknown run records remain untouched and include a compatible-version recovery action.",
+    "Added a Rust-owned run_record state format to the compatibility matrix and checked the documented version against the FileRunStore constant.",
+    "Human doctor output now summarizes Python/PyTorch, worker protocol/API and the same registered capability descriptors returned by --json; unknown future IDs remain visible with a readable fallback label."
+  ],
+  "validation": [
+    {
+      "command": "cargo fmt --all -- --check; git diff --check; python3 -m py_compile python/model_maven_worker/__init__.py python/model_maven_worker/protocol.py python/model_maven_worker/runtime/capabilities.py scripts/check_architecture.py scripts/check_compatibility.py; python3 scripts/check_architecture.py; python3 scripts/check_worker_architecture.py; python3 scripts/check_compatibility.py; cargo check --locked",
+      "result": "passed",
+      "scope": "Formatting, diff hygiene, Python syntax, Rust/Python architecture boundaries, worker package direction and 47 embedded assets, compatibility version/feature/state manifest consistency, and Rust compilation."
+    },
+    {
+      "command": "cargo test --locked",
+      "result": "passed",
+      "scope": "60 Rust unit tests, 37 CLI integration tests, 1 core input test, 4 data adapter tests, 3 extension metadata tests, 1 model discovery test, 3 architecture/compatibility tests, and 3 worker protocol tests."
+    },
+    {
+      "command": "cargo test --locked --test cli doctor_reports_real_runtime_capabilities_as_json -- --nocapture",
+      "result": "passed",
+      "scope": "Real doctor CLI response validates worker protocol/API metadata and reports forward-probe and detached-training capability state against the active PyTorch/platform runtime."
+    },
+    {
+      "command": "cargo build --release --locked; run target/release/m-model doctor --json from a temporary directory outside the checkout",
+      "result": "passed",
+      "scope": "Release binary returned valid JSON, protocol/API v1, 13 capability entries, success status, and empty stderr outside the source tree."
+    },
+    {
+      "command": "cargo test --locked",
+      "result": "passed",
+      "scope": "63 Rust unit tests, 37 CLI integration tests, 1 core input test, 4 data adapter tests, 3 extension metadata tests, 1 model discovery test, 3 architecture/compatibility tests, and 3 worker protocol tests."
+    },
+    {
+      "command": "cargo build --release --locked; run release m-model init and model inspect against a temporary Python model outside the checkout",
+      "result": "passed",
+      "scope": "Release binary initialized an isolated project and inspected a real torch.nn.Sequential model; both JSON reports succeeded."
+    },
+    {
+      "command": "cargo test --locked",
+      "result": "passed",
+      "scope": "63 unit + 37 CLI + 2 core-input + 4 data-adapter + 3 extension-metadata + 1 model-discovery + 3 architecture/compatibility + 6 protocol/capability tests (119 total)."
+    },
+    {
+      "command": "cargo build --release --locked; run release doctor, init and model inspect against an isolated Python model outside the checkout",
+      "result": "passed",
+      "scope": "Release doctor reported 13 capability descriptors derived from 17 registered operations; isolated project init and real Sequential model inspection succeeded."
+    },
+    {
+      "command": "cargo fmt --all -- --check; git diff --check; python3 -m py_compile worker and compatibility files; python3 scripts/check_architecture.py; python3 scripts/check_worker_architecture.py; python3 scripts/check_compatibility.py",
+      "result": "passed",
+      "scope": "Formatting, diff hygiene, Python syntax, Rust/worker dependency boundaries, complete embedded worker assets, and operation/feature/state compatibility consistency."
+    },
+    {
+      "command": "cargo test --locked",
+      "result": "passed",
+      "scope": "65 unit + 38 CLI + 2 core-input + 4 data-adapter + 3 extension-metadata + 1 model-discovery + 3 architecture/compatibility + 6 protocol/capability tests (122 total)."
+    },
+    {
+      "command": "cargo build --release --locked; run release doctor in human and JSON modes, then init and model inspect in an isolated project outside the checkout",
+      "result": "passed",
+      "scope": "Human doctor showed a readable capability summary; JSON doctor reported 13 capabilities and 17 operations; isolated project init and real Sequential inspection succeeded."
+    },
+    {
+      "command": "cargo fmt --all -- --check; git diff --check; python3 -m py_compile worker and compatibility files; python3 scripts/check_architecture.py; python3 scripts/check_worker_architecture.py; python3 scripts/check_compatibility.py",
+      "result": "passed",
+      "scope": "Formatting, diff hygiene, Python syntax, architecture direction, 47 embedded worker modules, Python dispatch/feature registry, Rust run metadata version and compatibility manifest."
+    }
+  ],
+  "remaining": [],
+  "external_dependencies": [],
+  "integration_notes": [
+    "The worker operation registry is the source for feature validation and doctor capability IDs; an AST consistency check fails when it diverges from actual dispatch routes.",
+    "Runtime conditions determine supported versus unsupported states; non-supported entries require an explanation, and Rust validates the doctor catalog before returning it.",
+    "Generic component discovery, installation and conformance reuse the existing component commands/page. This implementation added no component-specific terminal menu entries.",
+    "Unknown project config, environment lock, checkpoint, extension, variant, edit-plan or run metadata versions fail explicitly; project config and run metadata remain unchanged on rejection."
+  ]
+}

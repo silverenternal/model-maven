@@ -1,0 +1,963 @@
+{
+  "schema_version": "1.0.0",
+  "document": "CLI terminal interaction acceptance matrix",
+  "product_revision": "0.13.63",
+  "generated_at": "2026-11-21",
+  "status": "tracking_only",
+  "status_policy": {
+    "tracking_only": "本矩阵只追踪覆盖，不能表示产品完整、发布通过或商业价值已证明。",
+    "automated_smoke_covered": "对应仓库自动化行为有可执行证据；不代替真实用户、硬件和干净安装证据。",
+    "candidate_automation_only": "存在候选脚本/测试，需重新运行并核对范围后才可记录验证。",
+    "open": "发布门仍未闭合，除非要求级证据台账显式记录 verified。"
+  },
+  "framework_gates": [
+    {
+      "id": "V0",
+      "source_path": "/quality_and_acceptance/core_validation_gates/V0",
+      "requirement": "已有模型与批次即可获得实际前向证据，零训练接入且无必需持久工程文件；真实用户成本单独记录。",
+      "required_evidence": "最小示例语法/执行测试与真实项目适配文件、代码量、首次诊断时间。",
+      "implementation_status_snapshot": "external_evidence_required",
+      "release_verification_status": "open",
+      "automation_boundary": "仓库自动化只能覆盖可重复的命令/服务行为；真实用户成本、理解与满意度必须另行记录。"
+    },
+    {
+      "id": "V1",
+      "source_path": "/quality_and_acceptance/core_validation_gates/V1",
+      "requirement": "先完成局部错误发现/修复，再逐步接自定义步骤。不得把全套训练登记当第一次收益前提，复杂能力验收继续保留。",
+      "required_evidence": "原方法对照、前向/调用报告、修复和后续步骤记录。",
+      "implementation_status_snapshot": "external_evidence_required",
+      "release_verification_status": "open",
+      "automation_boundary": "仓库自动化只能覆盖可重复的命令/服务行为；真实用户成本、理解与满意度必须另行记录。"
+    },
+    {
+      "id": "V2",
+      "source_path": "/quality_and_acceptance/core_validation_gates/V2",
+      "requirement": "每项操作只要求其必要输入；结构控制来源、共享调用与当前预览明确，参数覆盖不歧义。",
+      "required_evidence": "前置条件矩阵、连续编辑、同模块多次调用和可用性核对。",
+      "implementation_status_snapshot": "external_evidence_required",
+      "release_verification_status": "open",
+      "automation_boundary": "仓库自动化只能覆盖可重复的命令/服务行为；真实用户成本、理解与满意度必须另行记录。"
+    },
+    {
+      "id": "V3",
+      "source_path": "/quality_and_acceptance/core_validation_gates/V3",
+      "requirement": "在原生 Sequential/ModuleList/ModuleDict 上实际完成 Layer 查/增/改/删与持久变体，且本地自定义组件替换不改核心。失败计划不发布，重载可复现。",
+      "required_evidence": "前后网络、候选检查、变体描述、重载结果、撤销与独立扩展改动清单。",
+      "implementation_status_snapshot": "external_evidence_required",
+      "release_verification_status": "open",
+      "automation_boundary": "仓库自动化只能覆盖可重复的命令/服务行为；真实用户成本、理解与满意度必须另行记录。"
+    }
+  ],
+  "release_gates": [
+    {
+      "id": "A0",
+      "source_path": "/quality_and_acceptance/release_gates/A0",
+      "requirement": "预设和已有代码路径都可上手；代码先用根模型与批次完成前向，逐步补训练能力，完整循环无需虚假独立数据字段。",
+      "required_evidence": "首次完整过程、准备计划、取消恢复及首次见图时间；本地/SSH 分开记录。",
+      "implementation_status_snapshot": "implemented",
+      "release_verification_status": "open",
+      "automation_boundary": "仓库自动化只能覆盖可重复的命令/服务行为；真实用户成本、理解与满意度必须另行记录。"
+    },
+    {
+      "id": "A1",
+      "source_path": "/quality_and_acceptance/release_gates/A1",
+      "requirement": "预设作为回归路径保持编辑、字段帮助、采样、批量预览与对照正确；这些规则不被当作所有 custom 任务的固定数据/损失格式。",
+      "required_evidence": "终端、网格、对照、输入快照与标识核验。",
+      "implementation_status_snapshot": "implemented",
+      "release_verification_status": "open",
+      "automation_boundary": "仓库自动化只能覆盖可重复的命令/服务行为；真实用户成本、理解与满意度必须另行记录。"
+    },
+    {
+      "id": "A2",
+      "source_path": "/quality_and_acceptance/release_gates/A2",
+      "requirement": "后台生存、代码/配置一致性和续训按所选适配器能力兑现；自定义具名优化器与阶段状态有可核验恢复，未知状态不得静默假定兼容。",
+      "required_evidence": "进程、事件、状态继承、父子记录及附加前后进度。",
+      "implementation_status_snapshot": "implemented",
+      "release_verification_status": "open",
+      "automation_boundary": "仓库自动化只能覆盖可重复的命令/服务行为；真实用户成本、理解与满意度必须另行记录。"
+    },
+    {
+      "id": "A3",
+      "source_path": "/quality_and_acceptance/release_gates/A3",
+      "requirement": "五类故障有可执行选择，重试保留正确现场；所有长阶段有进展或响应状态及可见取消结果。",
+      "required_evidence": "每类故障至少一个注入任务；检查未静默删除、丢状态或写假成功。",
+      "implementation_status_snapshot": "implemented",
+      "release_verification_status": "open",
+      "automation_boundary": "仓库自动化只能覆盖可重复的命令/服务行为；真实用户成本、理解与满意度必须另行记录。"
+    },
+    {
+      "id": "A4",
+      "source_path": "/quality_and_acceptance/release_gates/A4",
+      "requirement": "发布前验证并固定中断策略；用户可预测任务是否继续，并能找到真正停止入口。",
+      "required_evidence": "各页面操作前预测、操作后核验及误停止/误认为停止记录。",
+      "implementation_status_snapshot": "implemented",
+      "release_verification_status": "open",
+      "automation_boundary": "仓库自动化只能覆盖可重复的命令/服务行为；真实用户成本、理解与满意度必须另行记录。"
+    },
+    {
+      "id": "A5",
+      "source_path": "/quality_and_acceptance/release_gates/A5",
+      "requirement": "接口、帮助/解析和实际能力一致；导出带用户代码及必要支持，无 CLI/worker 仍可运行，未打包外部资源如实列出。D0 不冒充 D1 后台能力。 操作前置条件独立于训练完整性；临时入口、TTY 选择和非交互默认路径一致。 源码只读保证指未请求编辑；明确 Layer source 请求按事务写入并保留可回滚证据。",
+      "required_evidence": "黑盒 CLI、JSON、目标解析和独立环境运行记录。",
+      "implementation_status_snapshot": "implemented",
+      "release_verification_status": "open",
+      "automation_boundary": "仓库自动化只能覆盖可重复的命令/服务行为；真实用户成本、理解与满意度必须另行记录。"
+    },
+    {
+      "id": "A6",
+      "source_path": "/quality_and_acceptance/release_gates/A6",
+      "requirement": "复杂自定义任务的接入、局部排错和试跑相对原流程有可解释价值；记录新增代码量、受限能力和被迫离开工具情况。",
+      "required_evidence": "value_validation 的多用户配对记录、条件及失败/不适用项。",
+      "implementation_status_snapshot": "external_evidence_required",
+      "release_verification_status": "open",
+      "automation_boundary": "仓库自动化只能覆盖可重复的命令/服务行为；真实用户成本、理解与满意度必须另行记录。"
+    },
+    {
+      "id": "A7",
+      "source_path": "/quality_and_acceptance/release_gates/A7",
+      "requirement": "产物默认保护且手动清理先预览；显式指定的已结束、无引用、未保留 run 可解除 best/latest 保护并释放权重。摘要保留，续训能力丢失明确提示；活动/unknown、实际引用和外部用户文件始终受保护。",
+      "required_evidence": "普通清理与显式权重释放两类计划、空间报告、清理后状态及执行前目标变化测试。",
+      "implementation_status_snapshot": "implemented",
+      "release_verification_status": "open",
+      "automation_boundary": "仓库自动化只能覆盖可重复的命令/服务行为；真实用户成本、理解与满意度必须另行记录。"
+    },
+    {
+      "id": "A8",
+      "source_path": "/quality_and_acceptance/release_gates/A8",
+      "requirement": "完整通过 complex_model_acceptance：多模态/嵌套批次、动态长度、真实用户 forward、共享参数、三个 Loss、两个优化器、阶段冻结、局部修复和恢复。 共享模块调用与代码/装配控制来源必须单独核验，不只检查参数总数。",
+      "required_evidence": "可执行验收工程、实际分支/步骤记录、梯度/优化器检查、源代码未覆盖及导出恢复测试。",
+      "implementation_status_snapshot": "external_evidence_required",
+      "release_verification_status": "open",
+      "automation_boundary": "仓库自动化只能覆盖可重复的命令/服务行为；真实用户成本、理解与满意度必须另行记录。"
+    },
+    {
+      "id": "A9",
+      "source_path": "/quality_and_acceptance/release_gates/A9",
+      "requirement": "完整自有循环的薄适配能通过人类 CLI 与协议调用运行并上报已接入事件；缺少保存恢复钩子时默认拒绝续训，用户明确接受状态重置后才继续；能力报告不得把 loop 上报伪装成独立验证的 forward/backward/optimizer 或整模型 VERIFIED。",
+      "required_evidence": "scripts/verify_external_loop.py 覆盖 loop 执行/预算、步骤与指标报告、有状态续训、无状态钩子时拒绝恢复及显式重置；examples/external_loop.py 给出真实 callable state_dict/load_state_dict 集成样例。脚本还验证 Linux 后台协作停止及 checkpoint 保留，并通过 Linux PTY 检查工作台不追问独立批次；GPU/沙箱和真实用户价值研究仍待验收。",
+      "implementation_status_snapshot": "implemented",
+      "release_verification_status": "open",
+      "automation_boundary": "仓库自动化只能覆盖可重复的命令/服务行为；真实用户成本、理解与满意度必须另行记录。"
+    },
+    {
+      "id": "A10",
+      "source_path": "/quality_and_acceptance/release_gates/A10",
+      "requirement": "通过模型/批次无训练配置、external-loop 无独立数据、代码/装配边界以及逐调用取证的正反例；不将缺少无关段作为全工程阻塞。",
+      "required_evidence": "逐操作就绪结果、两种结构来源示例、多批次/分支调用、别名去重、截断和旧选择失效测试。",
+      "implementation_status_snapshot": "implemented",
+      "release_verification_status": "open",
+      "automation_boundary": "仓库自动化只能覆盖可重复的命令/服务行为；真实用户成本、理解与满意度必须另行记录。"
+    },
+    {
+      "id": "A11",
+      "source_path": "/quality_and_acceptance/release_gates/A11",
+      "requirement": "独立包/目录扩展按公开协议交付，Schema 自动进入 UI/补全/帮助，符合性套件和 API/状态兼容规则有真实记录，新增组件不改核心/CLI/工作台。",
+      "required_evidence": "核心 diff 为零、扩展包/锁文件、协议握手与版本负例、组件测试与使用记录。 tests/cli.rs 覆盖 SemVer 范围回溯、传递依赖、可选依赖、缺失/循环错误，以及 variant 锁定和依赖清单漂移拒绝；已有可选 model-maven-sdk 0.1 alpha 与独立示例；扩展状态格式迁移及通用符合性仍未验收，Python 环境求解仍由 m-model env 负责。",
+      "implementation_status_snapshot": "external_evidence_required",
+      "release_verification_status": "open",
+      "automation_boundary": "仓库自动化只能覆盖可重复的命令/服务行为；真实用户成本、理解与满意度必须另行记录。"
+    },
+    {
+      "id": "A12",
+      "source_path": "/quality_and_acceptance/release_gates/A12",
+      "requirement": "Layer CRUD、成组编辑、source/assembly/variant 目标、共享/接缝、权重迁移、失败恢复与冲突撤销按实际能力兑现；不能只在内存变更。",
+      "required_evidence": "原生/自定义 Layer、顺序/共享/分支夹具，源码补丁/日志、候选失败、重载/导出与新 run 状态测试；tests/cli.rs 验证参数化无状态自定义 nn.Module 源码 set、TTY 可改字段提示及带参数模块缺少迁移处理器时明确受限。 scripts/verify_external_loop.py 验证 TTY 工作台按 Layer 类型搜索并查看构造位置与可编辑字段；",
+      "implementation_status_snapshot": "external_evidence_required",
+      "release_verification_status": "open",
+      "automation_boundary": "仓库自动化只能覆盖可重复的命令/服务行为；真实用户成本、理解与满意度必须另行记录。"
+    },
+    {
+      "id": "A13",
+      "source_path": "/quality_and_acceptance/release_gates/A13",
+      "requirement": "模块依赖方向、按需 context 和编辑端口无终端/框架反向耦合；首版一个 crate 的逻辑边界同样可检查。",
+      "required_evidence": "架构依赖检查、录制/回放端口替身和无私有 API 的独立提供者。",
+      "implementation_status_snapshot": "implemented",
+      "release_verification_status": "open",
+      "automation_boundary": "仓库自动化只能覆盖可重复的命令/服务行为；真实用户成本、理解与满意度必须另行记录。"
+    }
+  ],
+  "human_workflows": [
+    {
+      "id": "existing-python-model-first-probe",
+      "scenario_refs": [
+        "S4"
+      ],
+      "gate_refs": [
+        "V0",
+        "V1",
+        "V2",
+        "A0",
+        "A5",
+        "A10"
+      ],
+      "cli_task_refs": [
+        "CLI-04",
+        "CLI-06"
+      ],
+      "automated_evidence_paths": [
+        "tests/cli_onboarding_ui.rs",
+        "tests/cli.rs",
+        "scripts/verify_cli_interaction.py"
+      ],
+      "current_status": "automated_smoke_covered",
+      "known_gaps": [
+        "真实项目适配成本与首次有效反馈时间需要用户观察。"
+      ],
+      "fixture_type": "真实 m-model 二进制 + 仓库临时 Python fixture",
+      "ui_evidence": [
+        "tests/cli_onboarding_ui.rs (PTY prompt flow)",
+        "scripts/verify_cli_interaction.py (TTY transcript)"
+      ],
+      "service_evidence": [
+        "tests/cli.rs (JSON inspect/probe)",
+        "scripts/verify_cli_interaction.py (JSON reports)"
+      ],
+      "external_evidence_required": [
+        "已有自定义项目接入耗时、首次诊断前新增入口/代码量、用户是否能理解调用报告。"
+      ]
+    },
+    {
+      "id": "classification-preset-onboarding",
+      "scenario_refs": [
+        "S0"
+      ],
+      "gate_refs": [
+        "A0",
+        "A1"
+      ],
+      "cli_task_refs": [
+        "CLI-04"
+      ],
+      "automated_evidence_paths": [
+        "tests/cli_onboarding_ui.rs",
+        "tests/data_presets.rs"
+      ],
+      "current_status": "automated_end_to_end_covered",
+      "known_gaps": [
+        "首次真实样本预览网格及环境准备/取消恢复的完整 S0 流程仍需集成。"
+      ],
+      "fixture_type": "真实 m-model 二进制 + 临时本地图像类别目录",
+      "ui_evidence": [
+        "tests/cli_onboarding_ui.rs (PTY confirm/cancel/conflict flow)"
+      ],
+      "service_evidence": [
+        "tests/data_presets.rs (embedded preset)",
+        "tests/cli_onboarding_ui.rs (real image probe and managed try)"
+      ],
+      "external_evidence_required": [
+        "用户能否理解类别目录约定、预设生成文件和下一步训练入口；首次真实预览用时。"
+      ]
+    },
+    {
+      "id": "complex-custom-model-debug-and-edit",
+      "scenario_refs": [
+        "S3",
+        "S4",
+        "S5"
+      ],
+      "gate_refs": [
+        "V1",
+        "V2",
+        "V3",
+        "A6",
+        "A8",
+        "A10",
+        "A12"
+      ],
+      "cli_task_refs": [
+        "CLI-05",
+        "CLI-06",
+        "CLI-07",
+        "CLI-08"
+      ],
+      "automated_evidence_paths": [
+        "tests/cli.rs",
+        "scripts/verify_complex_acceptance.py",
+        "tests/model_probe.rs",
+        "tests/edit_assembly.rs"
+      ],
+      "current_status": "candidate_automation_only",
+      "known_gaps": [
+        "复杂真实用户对照、手工适配量、结构编辑后权重影响理解需外部观察。"
+      ],
+      "fixture_type": "真实 m-model 二进制 + complex_acceptance fixture; script execution must be recaptured per release candidate",
+      "ui_evidence": [
+        "tests/cli_assembly_ui.rs",
+        "tests/cli_components_ui.rs",
+        "scripts/verify_cli_interaction.py (current generic TTY smoke only)"
+      ],
+      "service_evidence": [
+        "scripts/verify_complex_acceptance.py",
+        "tests/model_probe.rs",
+        "tests/edit_assembly.rs"
+      ],
+      "external_evidence_required": [
+        "真实复杂模型用户对照、手工适配量、局部修复效率及编辑后权重影响理解。"
+      ]
+    },
+    {
+      "id": "run-recovery-and-resume",
+      "scenario_refs": [
+        "S2"
+      ],
+      "gate_refs": [
+        "A2",
+        "A3",
+        "A4",
+        "A7"
+      ],
+      "cli_task_refs": [
+        "CLI-10",
+        "CLI-11",
+        "CLI-13"
+      ],
+      "automated_evidence_paths": [
+        "tests/run_supervision.rs",
+        "tests/train_resume.rs",
+        "tests/run_artifacts.rs"
+      ],
+      "current_status": "candidate_automation_only",
+      "known_gaps": [
+        "真实用户对取消、后台停止和恢复语义的理解需外部观察。"
+      ],
+      "fixture_type": "真实 worker/subprocess execution with controlled short-lived fixtures",
+      "ui_evidence": [
+        "tests/cli.rs (command and menu paths)",
+        "tests/run_supervision.rs"
+      ],
+      "service_evidence": [
+        "tests/train_resume.rs",
+        "tests/run_artifacts.rs",
+        "tests/run_supervision.rs"
+      ],
+      "external_evidence_required": [
+        "用户对取消、后台停止、产物保护和恢复语义的理解及误操作情况。"
+      ]
+    },
+    {
+      "id": "extension-authoring-and-install",
+      "scenario_refs": [
+        "S6"
+      ],
+      "gate_refs": [
+        "V3",
+        "A11",
+        "A13"
+      ],
+      "cli_task_refs": [
+        "CLI-09"
+      ],
+      "automated_evidence_paths": [
+        "tests/cli_components_ui.rs",
+        "tests/extensions_lifecycle.rs",
+        "scripts/verify_extension_conformance.py"
+      ],
+      "current_status": "candidate_automation_only",
+      "known_gaps": [
+        "独立扩展作者完整流程和核心源码零改动证据仍待验收。"
+      ],
+      "fixture_type": "独立示例扩展包 + CLI integration fixtures",
+      "ui_evidence": [
+        "tests/cli_components_ui.rs",
+        "tests/cli.rs (component command flows)"
+      ],
+      "service_evidence": [
+        "tests/extensions_lifecycle.rs",
+        "scripts/verify_extension_conformance.py"
+      ],
+      "external_evidence_required": [
+        "独立扩展作者完成发现/安装/验证/卸载的观察，以及核心源码未改证据。"
+      ]
+    }
+  ],
+  "cli_tasks": [
+    {
+      "id": "CLI-04",
+      "title": "首次打开和已有 Python 项目接入向导",
+      "status_snapshot": "in_review",
+      "product_refs": [],
+      "handoff_file": "docs/cli-handoff/CLI-04.json",
+      "automated_evidence_paths": [
+        "docs/cli-handoff/CLI-04.json",
+        "cargo test --locked --test cli_onboarding_ui -- --test-threads=1: 10 PTY tests passed, including Tiny CNN real-image probe plus one-step managed trial, cancellation, existing-file conflict, and symlink protection.",
+        "cargo test --locked --test data_presets -- --test-threads=1: 5 built-in preset regression tests passed.",
+        "docs/acceptance/results/cli-interaction-20261121-current/report.json",
+        "docs/acceptance/results/cli-interaction-20261121-current/transcript.txt",
+        "tests/cli_resnet18_onboarding.rs: real TTY ResNet18 onboarding, forward and managed loss/backward."
+      ]
+    },
+    {
+      "id": "CLI-12",
+      "title": "两次试跑的差异与对照页面",
+      "status_snapshot": "in_review",
+      "product_refs": [],
+      "handoff_file": "docs/cli-handoff/CLI-12.json",
+      "automated_evidence_paths": [
+        "runs 页面动作“对照两次试跑”列出最近训练步骤试跑，支持列表序号或完整 ID 选择；无/仅一次记录时解释首次基线状态。",
+        "对照详情展示字段级输入差异、指标数值与数值差，并将缺少的配置/测量明确标记为信息不足；不把缺失指标显示成 0。",
+        "详情后的重试只提交所选 run ID 作为 repeat 源，命令不携带当前会话草稿或显式覆盖。",
+        "cargo test --locked --test cli run_comparison_uses_persisted_evidence_and_latest_means_newest_timestamp -- --exact --nocapture: persisted evidence, human output, and PTY comparison/retry path passed; stable sample-set identity remains an explicit backend gap.",
+        "Managed/manual/external run records persist opt-in per-step sample-ID digests; comparison displays changed/unknown and identifies evidence as user-reported. CLI-21 integration and external value validation remain open.",
+        "2026-11-19: managed/manual/external per-step sample identity evidence passed targeted integration; comparison shows changed or unknown and marks the source as user-reported. CLI-21 integration and external value validation remain open."
+      ]
+    },
+    {
+      "id": "CLI-13",
+      "title": "环境、导出、占用和清理页面",
+      "status_snapshot": "in_review",
+      "product_refs": [],
+      "handoff_file": "docs/cli-handoff/CLI-13.json",
+      "automated_evidence_paths": [
+        "scripts/verify_cli13_clean_cancel.py + docs/acceptance/results/cli13-clean-cancel-20261121/report.json: actual PTY cleanup cancel and stale-plan rejection preserve run files.",
+        "python3 scripts/verify_environment_setup.py --binary target/debug/m-model --python python3: offline-wheelhouse first-time venv setup through workbench PTY, session interpreter selection and reuse.",
+        "cargo test --locked --test cli export_training_run_copies_verified_sources_and_restores_weights -- --exact --nocapture: real trained-run PTY export success; conflict cancellation preserves a user sentinel; exact OVERWRITE confirmation moves the sentinel into the reported backup before replacement.",
+        "Human usability evidence remains open."
+      ]
+    },
+    {
+      "id": "CLI-14",
+      "title": "批次与图像预览页面及结果新鲜度",
+      "status_snapshot": "in_progress",
+      "product_refs": [],
+      "handoff_file": "docs/cli-handoff/CLI-14.json",
+      "automated_evidence_paths": [
+        "docs/cli-handoff/CLI-14.json",
+        "cargo test --locked --bin m-model preview -- --nocapture: 8 preview renderer/state/delivery unit tests passed.",
+        "cargo test --locked --test data_preview -- --nocapture: 6 backend/CLI integration tests passed, including real PNG/HTML generation, latest-generation publication and the interactive TTY form.",
+        "Renderer failure integration verifies the last published artifact is returned only for the still-current failed generation and shown in the terminal as stale, preserving access without calling it current.",
+        "Interactive preview PTY covers source selection, invalid parameter correction, NAME=JSON factory parameters, split/sample/fingerprint/renderer/delivery fields, real worker invocation and human result rendering; cancellation leaves the published request generation unchanged.",
+        "Non-JSON command path verifies cache/freshness label, scope, HTML path and no auto-open claim.",
+        "cargo test --locked --quiet: complete Rust workspace passed after Workbench form integration.",
+        "cargo check --locked; cargo fmt --all -- --check: passed.",
+        "PTY recovery test covers empty split correction, invalid retry choice handling, retaining/editing failed preview settings, and successful republish after correcting the factory entrypoint.",
+        "cargo test --locked --test data_preview cli_preview_samples_project_batch_and_publishes_real_artifacts -- --exact --nocapture: passed after adding preview retry correction flow.",
+        "cargo test --locked --test data_preview -- --nocapture: all 6 integration tests passed after retry-flow change.",
+        "PTY verifies preview delivery with DISPLAY unset, paths containing spaces and non-default SSH port 2244; a missing SSH host is rejected before worker launch without changing the current generation.",
+        "cargo test --locked --test data_preview cli_preview_samples_project_batch_and_publishes_real_artifacts -- --exact --nocapture: passed with real CLI recovery and remote-delivery edge coverage.",
+        "cargo test --locked --test data_preview -- --nocapture: all 6 integration tests passed, including structured JSON parse error on missing SSH options, with no preview worker/generation side effect.",
+        "target/debug/m-model --json --help: exit 0 and normal help text preserved.",
+        "cargo test --locked --quiet: full Rust workspace passed with exit code 0 after the CLI-14 and --json argument-error updates.",
+        "tests/cli_preview_generation.rs: real concurrent generation race keeps superseded output historical and blocks trial shortcut."
+      ]
+    },
+    {
+      "id": "CLI-15",
+      "title": "统一错误恢复页、等待反馈与取消交互",
+      "status_snapshot": "in_review",
+      "product_refs": [],
+      "handoff_file": "docs/cli-handoff/CLI-15.json",
+      "automated_evidence_paths": [
+        "CLI-15 page increment: diagnostic tests passed 6/6; recovery action tests 2/2; progress tests 2/2. Recovery details preserve structured action reasons, E1-E5 fallback suggestions are marked unknown/confirmation-required when no backend action exists, duplicate generic fallback is avoided, and overflow detail actions continue numbering from 4.",
+        "cargo fmt --all -- --check and targeted-file git diff --check passed for CLI-15 page/widgets.",
+        "CLI-15 E3 real PyTorch/Pillow PTY proves explicit damaged-image exclusion, no source mutation, content-bound classification batch filtering, repair/reverify/clear and JSON no-side-effect behavior: tests/cli_onboarding_ui.rs::damaged_class_images_can_be_explicitly_excluded_and_are_not_deleted; tests/test_data_index.py (2/2).",
+        "CLI-15 E4 dependency recovery PTY and E5 checkpoint-write recovery PTY: tests/cli_onboarding_ui.rs::environment_dependency_failure_routes_to_confirmed_project_setup and ::checkpoint_write_failure_opens_storage_and_safe_cleanup_preview.",
+        "CLI-15 storage filesystem capacity: real tempfile filesystem probe 1/1 and storage renderer 4/4; full current workbench PTY 18/18.",
+        "Strict all-target Clippy, worker architecture (85 modules), Rust/Python compatibility, JSON parse, cargo fmt and git diff --check passed for this iteration.",
+        "CLI-15 E1/E2 real background preview recovery PTY: tests/cli_recovery_data.rs covers CLASS_DATASET_ROOT_INVALID and DATA_SPLIT_EMPTY; edit settings, retry real classification batch, and persist succeeded state (2/2).",
+        "cargo test --locked --quiet: all Rust unit and integration targets passed after the documented data_index CLI path was aligned with Clap help.",
+        "docs/acceptance/results/cli15-incremental-20261121/complex-model-workflow.json",
+        "CLI-15 E5 recovery-through-retraining real PTY: tests/cli_recovery_storage.rs::checkpoint_failure_can_be_cleaned_then_retrained_in_the_same_project; confirmed fixed cleanup then real managed retrain with run/checkpoint/filesystem preservation assertions (1/1).",
+        "CLI-15 E4 actual missing-wheel recovery PTY: tests/environment_system_site.rs::e4_environment_recovery_installs_missing_wheel_and_retries_same_preview; local hash-locked wheel setup into opt-in venv, real inherited PyTorch, same request signature, published generation 2 (part of 3/3 environment_system_site tests).",
+        "CLI-15 cross-project recovery PTY: tests/cli_recovery_project.rs proves project-A preview retry remains bound to A after switching to B; B has no preview state or mixed-model trial.",
+        "tests/cli_recovery_data.rs, tests/cli_recovery_storage.rs, tests/environment_system_site.rs, tests/cli_recovery_project.rs: real E1-E5 and project recovery paths."
+      ]
+    },
+    {
+      "id": "CLI-16",
+      "title": "命令帮助、非交互开关与补全",
+      "status_snapshot": "in_review",
+      "product_refs": [],
+      "handoff_file": "docs/cli-handoff/CLI-16.json",
+      "automated_evidence_paths": [
+        "CLI-16 completion increment: completion unit tests 5/5 and real-binary cli_completion tests 3/3 passed. Hostile inputs containing spaces, semicolons and command-substitution syntax remain inert data; invalid manifests fail closed, candidates are not echoed, and completion does not mutate the component registry.",
+        "Strict Clippy, cargo fmt --all -- --check, handoff JSON validation and targeted diff checks passed for CLI-16.",
+        "src/cli.rs::public_help_contract_tests",
+        "docs/contracts/operations.json#/operation_catalog",
+        "docs/cli-handoff/CLI-16.json"
+      ]
+    },
+    {
+      "id": "CLI-17",
+      "title": "草稿、会话恢复和配置来源摘要",
+      "status_snapshot": "done",
+      "product_refs": [],
+      "handoff_file": "docs/cli-handoff/CLI-17.json",
+      "automated_evidence_paths": [
+        "docs/cli-handoff/CLI-17.json",
+        "cargo check --locked: passed",
+        "cargo test --locked --bin m-model session_store -- --nocapture: 5 tests passed",
+        "cargo test --locked --bin m-model session_restore -- --nocapture: 2 tests passed",
+        "cargo test --locked --test cli_onboarding_ui -- --test-threads=1: 7 PTY tests passed",
+        "cargo test --locked --quiet: full Rust workspace passed (121 unit tests, 54 CLI tests, all integration targets).",
+        "cargo fmt --all -- --check; git diff --check; Rust/worker architecture and compatibility checks passed.",
+        "cargo test --locked --bin m-model run_source_summary -- --nocapture: 1 test passed.",
+        "cargo test --locked --test cli managed_training_probe_persists_run_evidence_but_keeps_weights_ephemeral -- --exact --nocapture: passed; human repeat detail shows the saved-run source and its original command-line source.",
+        "cargo fmt --all -- --check && git diff --check: passed.",
+        "cargo test --locked --bin m-model run_source_summary -- --nocapture: passed.",
+        "cargo test --locked --test cli managed_training_probe_persists_run_evidence_but_keeps_weights_ephemeral -- --exact --nocapture: passed; repeat history renders saved-run and upstream command-line provenance.",
+        "Workbench configuration PTY and direct-command provenance PTY passed in full workspace run.",
+        "cargo test --locked --bin m-model form_draft -- --nocapture: 2 tests passed.",
+        "cargo test --locked --bin m-model persistent_form_values -- --nocapture: recursive sensitive-field exclusion passed.",
+        "cargo test --locked --test cli_components_ui interrupted_component_schema_form_can_be_restored_and_explicitly_cancelled -- --exact --nocapture: passed cross-process restore, completion, and explicit cancel/delete PTY flow.",
+        "cargo test --locked --quiet: full workspace passed (125 unit tests, 54 CLI tests, all integration targets).",
+        "git diff --check; Rust/worker architecture and compatibility checks passed.",
+        "cargo test --locked --bin m-model form_draft -- --nocapture: draft storage/revision/sensitive-key tests passed.",
+        "cargo test --locked --bin m-model persistent_form_values -- --nocapture: recursive secret filtering passed.",
+        "cargo test --locked --test cli_components_ui interrupted_component_schema_form_can_be_restored_and_explicitly_cancelled -- --exact --nocapture: passed cross-process restore, form completion, and :cancel cleanup.",
+        "cargo test --locked --quiet: full workspace passed (125 unit tests, 54 CLI tests, all integration targets).",
+        "Rust/worker architecture checks, compatibility check, fmt, diff, and JSON checks passed; UI session files are git-ignored.",
+        "Schema 表单草稿支持显式恢复/丢弃/返回，按字段持久保存并校验项目/Schema revision；敏感值、自由文本与 any 默认不持久化，有限枚举或 x-model-maven-draft-safe=true 字符串可保存。",
+        "cargo test --locked --quiet: current full workspace passed (125 unit tests, 54 CLI tests and all integration targets).",
+        "PTY flow verifies partial form interruption, cross-process restore, successful completion, and explicit :cancel cleanup.",
+        "cargo test --locked --bin m-model page_selection -- --nocapture: page draft project-binding, invalid ID, round-trip and symlink checks passed.",
+        "cargo test --locked --test cli_onboarding_ui workbench_page_selection_can_be_resumed_or_discarded_after_restart -- --exact --nocapture: page restore/discard PTY passed; no operation replay.",
+        "cargo test --locked --test cli_components_ui -- --test-threads=1: 5 tests passed after adapting the helper to discard stored navigation before scripted sessions.",
+        "cargo test --locked --quiet: full workspace passed (128 unit tests, 54 CLI tests, all integration targets).",
+        "cargo test --locked --bin m-model dynamic_parameter_draft -- --nocapture: 3 tests passed for safe-value filtering, context identity and persistence filtering.",
+        "cargo test --locked --bin m-model draft_fingerprint -- --nocapture: 3 tests passed for local entrypoints, batch source, transitive imports and unrelated-file exclusion.",
+        "cargo test --locked --test cli_onboarding_ui onboarding_restore_requires_revalidation_after_transitive_local_model_source_changes -- --exact --nocapture: PTY passed; imported helper edits trigger explicit recheck.",
+        "cargo test --locked --quiet: full workspace passed after transitive-import fingerprint changes; 23 test targets and 264 tests, zero failures.",
+        "cargo fmt --all -- --check; git diff --check; Rust/worker architecture, compatibility checks passed."
+      ]
+    },
+    {
+      "id": "CLI-18",
+      "title": "窄终端、纯文本和终端兼容",
+      "status_snapshot": "in_review",
+      "product_refs": [],
+      "handoff_file": "docs/cli-handoff/CLI-18.json",
+      "automated_evidence_paths": [
+        "cargo test --locked --test cli_terminal_layout -- --nocapture: 14 tests; includes live 40→120 column PTY resize, redirected help/error stdout/stderr separation, no ANSI under redirection/NO_COLOR/TERM=dumb, 12-record run-list pagination, and 46-row model-tree/46-call forward-browser next/previous/back PTY navigation.",
+        "cargo test --locked --quiet: full workspace suite passed after PTY scripts were updated for the shared-layer menu item.",
+        "Human workflow redirection, pagination across all long-list pages, and 40-column user-level validation remain open."
+      ]
+    },
+    {
+      "id": "CLI-21",
+      "title": "页面集成、真实流程验收与能力同步",
+      "status_snapshot": "in_progress",
+      "product_refs": [],
+      "automated_evidence_paths": [
+        "scripts/verify_cli_interaction.py",
+        "docs/acceptance/results/cli-interaction-20261121-current/report.json",
+        "docs/acceptance/results/cli-interaction-20261121-current/transcript.txt",
+        "Project switch is now a human-reachable workbench action; tests/cli_recovery_project.rs exercises it from project A to B during background recovery.",
+        "tests/cli_custom_model_journey.rs: single real PTY journey combines existing custom-model onboarding, failed forward diagnosis, Layer repair, data preview, managed training, checkpoint evaluation/sample browsing, two-run comparison and export; source remains unchanged."
+      ],
+      "handoff_file": "docs/cli-handoff/CLI-21.json"
+    },
+    {
+      "id": "CLI-22",
+      "title": "评估结果概览与样本/预测浏览",
+      "status_snapshot": "in_review",
+      "product_refs": [],
+      "handoff_file": "docs/cli-handoff/CLI-22.json",
+      "automated_evidence_paths": [
+        "cargo test --locked --test train_evaluation -- --nocapture: PyTorch-backed evaluator contract passed; opt-in previews are bounded, typed JSON records and reject unsolicited, duplicate, non-finite, and over-limit data.",
+        "cargo test --locked --test cli evaluation_command_uses_checkpoint_custom_metrics_and_persists_provenance -- --exact --nocapture: real CLI training/evaluation stores typed previews in runs show history while preserving task-owned metrics and source provenance.",
+        "PYTHONPATH=python/model_maven_sdk/src python3 -m pytest -q python/model_maven_sdk/tests: 6 tests and 6 subtests passed; SDK exports Evaluator and EvaluatorContext.",
+        "cargo fmt --check; cargo clippy --locked --test train_evaluation --test cli -- -D warnings; Python py_compile; git diff --check: passed."
+      ]
+    },
+    {
+      "id": "CLI-23",
+      "title": "语义标记与监督约束的命令交互闭环",
+      "status_snapshot": "done",
+      "product_refs": [
+        "behavior_contracts/S-supervision"
+      ],
+      "handoff_file": "docs/cli-handoff/CLI-23.json",
+      "automated_evidence_paths": []
+    }
+  ],
+  "global_evidence_gaps": [
+    "仓库内自动化不等于真实用户可用性证据。",
+    "性能、硬件显存与发布包干净环境需要目标设备/环境记录。",
+    "本表保留旧 CLI 流程和任务编号，用 docs/acceptance/requirements.json 核对历史验收范围。当前整合任务和发布门槛见 todo.json。"
+  ],
+  "archived_cli_tasks": [
+    {
+      "id": "CLI-00",
+      "title": "建立可交接的源码基线与 CLI 现状记录",
+      "status_snapshot": "done",
+      "product_refs": [
+        "/project_meta/repository_baseline",
+        "/quality_and_acceptance/release_gates/A5"
+      ],
+      "handoff_file": "docs/cli-handoff/CLI-00.json",
+      "automated_evidence_paths": [
+        {
+          "kind": "git-baseline",
+          "commit": "594941db9a0db20c2360bfdcff2477fffed5744f",
+          "result": "所有项目文件纳入首个提交；提交后工作树干净。"
+        },
+        {
+          "kind": "command",
+          "command": "cargo check --locked",
+          "result": "passed"
+        },
+        {
+          "kind": "command",
+          "command": "cargo test --locked",
+          "result": "passed: 8 unit + 33 CLI integration tests; 0 failed"
+        },
+        {
+          "kind": "command",
+          "command": "cargo run --locked -- --help; assembly --help; init --help; layer --help",
+          "result": "passed; current command surfaces captured in CLI-00 handoff."
+        },
+        {
+          "kind": "runtime",
+          "rust": "rustc 1.99.1",
+          "python": "3.14.10",
+          "pytorch": "2.15.0"
+        }
+      ]
+    },
+    {
+      "id": "CLI-01",
+      "title": "拆分终端呈现并冻结页面与服务接口",
+      "status_snapshot": "done",
+      "product_refs": [
+        "/modular_architecture",
+        "/behavior_contracts/N-navigation",
+        "/cli_interaction_design/specification_source"
+      ],
+      "handoff_file": "docs/cli-handoff/CLI-01.json",
+      "automated_evidence_paths": [
+        {
+          "kind": "implementation",
+          "files": [
+            "src/presentation/contracts.rs",
+            "src/presentation/session.rs",
+            "src/presentation/service.rs",
+            "src/presentation/terminal.rs",
+            "src/presentation/workbench.rs",
+            "src/ports.rs",
+            "src/app.rs",
+            "src/adapters/python.rs",
+            "src/main.rs"
+          ],
+          "result": "main.rs 保留 composition root；terminal/workbench/contracts/session/service 独立。页面经 UiServices/Command/Report 运行；输入经 UserInteraction port 注入；Python interpreter selection 经 capability port。Application 不再直接检查 TTY 或读写终端。"
+        },
+        {
+          "kind": "command",
+          "command": "cargo fmt --check",
+          "result": "passed"
+        },
+        {
+          "kind": "command",
+          "command": "cargo check --locked",
+          "result": "passed without warnings"
+        },
+        {
+          "kind": "command",
+          "command": "cargo test --locked",
+          "result": "passed: 13 unit + 33 CLI integration tests; 0 failed"
+        },
+        {
+          "kind": "runtime",
+          "command": "script -qec m-model init with model, blank batch and blank injection responses",
+          "result": "passed; project config written in a temporary project and process exited 0"
+        },
+        {
+          "kind": "runtime",
+          "command": "script -qec m-model with no args, input 退出",
+          "result": "passed; workbench rendered and exited 0"
+        },
+        {
+          "kind": "runtime",
+          "command": "m-model without TTY and no subcommand; m-model --json without subcommand",
+          "result": "passed; plain help exit 0; JSON COMMAND_REQUIRED exit 2"
+        }
+      ]
+    },
+    {
+      "id": "CLI-02",
+      "title": "首页与任务导航：替换 33 项平铺菜单",
+      "status_snapshot": "done",
+      "product_refs": [
+        "/behavior_contracts/N-navigation",
+        "/behavior_contracts/O-onboarding",
+        "/interaction_hypotheses/H1"
+      ],
+      "handoff_file": "docs/cli-handoff/CLI-02.json",
+      "automated_evidence_paths": [
+        {
+          "kind": "implementation",
+          "files": [
+            "src/presentation/pages/home.rs",
+            "src/presentation/pages/navigation.rs",
+            "src/presentation/widgets/action_list.rs",
+            "src/presentation/workbench.rs",
+            "src/presentation/contracts.rs",
+            "src/presentation/session.rs"
+          ],
+          "result": "33 项平铺菜单改为首页/模型/编辑/训练/组件/环境/产物分类；序号、名称、关键词选择，模糊结果不猜，支持 back/退出；首页展示项目、模型来源、批次、变体、活动运行与下一步。"
+        },
+        {
+          "kind": "command",
+          "command": "cargo test --locked",
+          "result": "passed: 13 unit + 33 CLI integration tests; 0 failed"
+        },
+        {
+          "kind": "command",
+          "command": "cargo check --locked; cargo fmt --check; git diff --check",
+          "result": "passed"
+        },
+        {
+          "kind": "runtime",
+          "command": "script -qec m-model, input 模型与 Layer/back/退出",
+          "result": "passed; home to model category, back to home, clean exit"
+        },
+        {
+          "kind": "completion",
+          "result": "首页分组导航已实现并通过全量 Rust/CLI 测试与 PTY 返回导航走查；当前未实现的实时运行进度、复杂页面和真实用户理解测试由后续任务负责，不阻塞本任务范围。"
+        }
+      ]
+    },
+    {
+      "id": "CLI-03",
+      "title": "统一 Schema 参数表单与就地帮助",
+      "status_snapshot": "done",
+      "product_refs": [
+        "/behavior_contracts/P-parameters",
+        "/behavior_contracts/E-extensions",
+        "/quality_and_acceptance/release_gates/A11"
+      ],
+      "handoff_file": "docs/cli-handoff/CLI-03.json",
+      "automated_evidence_paths": [
+        {
+          "kind": "implementation",
+          "files": [
+            "src/presentation/forms/mod.rs",
+            "src/presentation/forms/schema.rs",
+            "src/presentation/forms/fields.rs",
+            "src/presentation/widgets/field_help.rs",
+            "src/presentation/contracts.rs",
+            "src/presentation/terminal.rs",
+            "src/presentation/workbench.rs",
+            "src/ports.rs",
+            "src/presentation/service.rs"
+          ],
+          "result": "共用字段表单已接入注册组件、Provider、内置 Layer、训练预算/AdamW 参数、自由参数和装配参数；工作台终端 I/O 统一经 UserInteraction。"
+        },
+        {
+          "kind": "command",
+          "command": "cargo fmt --check && git diff --check && cargo check --locked && cargo test --locked",
+          "result": "passed; 17 unit + 33 CLI integration tests; 0 failed."
+        },
+        {
+          "kind": "runtime",
+          "command": "PTY 临时 Sequential 项目：添加 Linear，输入有效参数；在 out_features 用 :back 返回并将 in_features 从 2 改为 3，再完成添加。",
+          "result": "passed; 返回后显示来源=当前配置并保留旧值；候选成功校验并持久化到 working variant。"
+        },
+        {
+          "kind": "runtime",
+          "command": "PTY 临时 Sequential 项目：添加 Linear，给 in_features 输入 not-an-int 后改为 4，在 out_features 输入 :cancel。",
+          "result": "passed; 错误字段重试，取消后没有创建 working variant 文件。"
+        }
+      ]
+    },
+    {
+      "id": "CLI-05",
+      "title": "模型树与 Layer 搜索、详情、来源页面",
+      "status_snapshot": "done",
+      "product_refs": [
+        "/behavior_contracts/M-layer-edit/discovery",
+        "/behavior_contracts/X-custom/structure_authority",
+        "/prototype_scenarios/S4",
+        "/prototype_scenarios/S5"
+      ],
+      "handoff_file": "docs/cli-handoff/CLI-05.json",
+      "automated_evidence_paths": [
+        {
+          "kind": "implementation",
+          "files": [
+            "src/presentation/pages/model_tree.rs",
+            "src/presentation/pages/layer_detail.rs",
+            "src/presentation/widgets/model_tree.rs",
+            "src/presentation/workbench.rs"
+          ],
+          "result": "新增分页、搜索、折叠模型树与只读详情；detail 消费一次 layers 报告和当前匹配的 probe cache。"
+        },
+        {
+          "kind": "command",
+          "command": "cargo fmt --check && git diff --check && cargo check --locked && cargo test --locked",
+          "result": "passed; 27 unit + 33 CLI integration tests; 0 failed."
+        },
+        {
+          "kind": "runtime",
+          "command": "PTY 临时 ModuleDict 模型，终端宽 40 列，搜索完整长路径并打开详情",
+          "result": "passed; 完整路径可搜索/显示，目标源码位置和权限信息出现。"
+        },
+        {
+          "kind": "runtime",
+          "command": "PTY 临时模型：运行前向探测，再搜索 Layer 详情并刷新树",
+          "result": "passed; 每个 Layer 显示匹配调用次数与张量 shape；详情展开未启动 worker；仅显式 probe 和 refresh 各执行一次，刷新清除旧选择。"
+        }
+      ]
+    },
+    {
+      "id": "CLI-06",
+      "title": "前向调用页面与局部诊断浏览",
+      "status_snapshot": "done",
+      "product_refs": [
+        "/behavior_contracts/G-validation",
+        "/prototype_scenarios/S3",
+        "/prototype_scenarios/S4"
+      ],
+      "handoff_file": "docs/cli-handoff/CLI-06.json",
+      "automated_evidence_paths": [
+        {
+          "kind": "start",
+          "baseline": "7bf294e",
+          "result": "现有 Probe 报告已采集每次调用输入输出、共享实例路径、父调用、截断和失败位置；当前终端只输出扁平摘要，缺逐调用选择、端口树交互和失败后可恢复流程。"
+        },
+        {
+          "kind": "implementation",
+          "commit": "9aa059e",
+          "result": "Probe 浏览已接入工作台真实动作；支持共享模块逐次调用、嵌套输入输出端口、覆盖范围和截断提示、项目源码上下文、调整批次与重试。"
+        },
+        {
+          "kind": "command",
+          "command": "cargo fmt --check && git diff --check && cargo check --locked && cargo test --locked",
+          "result": "passed: 34 unit + 33 CLI integration tests; 0 failed"
+        },
+        {
+          "kind": "pty",
+          "scenario": "共享 Linear 模块两次输入 [2,4]/[3,4]；分别打开调用并展开嵌套 Tensor",
+          "result": "passed: 两次调用分别显示对应 shape；浏览期间模型工厂计数保持 1。"
+        },
+        {
+          "kind": "pty",
+          "scenario": "维度错误后查看项目源码；再更换为有效批次并重试",
+          "result": "passed: 明确显示失败和最后模块/源码行；更换批次后保留模型入口，并成功显示 [3,4] 输入。"
+        }
+      ]
+    },
+    {
+      "id": "CLI-07",
+      "title": "Layer 增删改查与成组编辑对话",
+      "status_snapshot": "done",
+      "product_refs": [
+        "/behavior_contracts/M-layer-edit",
+        "/layer_edit_acceptance",
+        "/prototype_scenarios/S5"
+      ],
+      "handoff_file": "docs/cli-handoff/CLI-07.json",
+      "automated_evidence_paths": [
+        "Linux PTY 验证 working variant 内插入 Dropout、使用当前 Layer Schema 修改 p、删除并新进程重载；模型与批次入口各只询问一次。",
+        "Layer 参数修改从裸键值表改为按目标模块类型/当前参数生成 Patch 表单，空字段保留现值，仅提交改变的字段。",
+        "成组变体参数计划的 Linux PTY 流程验证：单独修改 encoder.proj.out_features=16 时前向检查失败且草稿仍可修复；继续添加 head.in_features=16 后候选通过并提交为 working 变体。",
+        "同一 PTY 流程在提交后执行变体撤销与重做；新进程对 working 变体执行 probe 并确认输出 shape 为 [2,4]。",
+        "源码多文件计划预览显示实际文件与 unified diff；提交后撤销/重做恢复两个源文件。外部修改后执行源码撤销的 CLI 集成测试确认返回 SOURCE_EDIT_HISTORY_FAILED 且用户文件逐字节保留。",
+        "edit_diff 页面单元测试验证共享别名、保留权重、源文件路径和 unified diff 的呈现；终端 Layer 结果渲染根据 edit_effects 展示共享、保留/新初始化状态。",
+        "cargo test --locked --test cli --quiet：54 passed；cargo check --locked、cargo fmt --all -- --check、git diff --check、worker architecture、compatibility、Rust architecture checks 均通过。"
+      ]
+    },
+    {
+      "id": "CLI-08",
+      "title": "根工厂装配页面与现有未验收交互收尾",
+      "status_snapshot": "done",
+      "product_refs": [
+        "/behavior_contracts/X-custom/structure_authority/assembly",
+        "/cli_interaction_design/commands/assembly",
+        "/layer_edit_acceptance"
+      ],
+      "handoff_file": "docs/cli-handoff/CLI-08.json",
+      "automated_evidence_paths": [
+        "根工厂装配页将写入范围标为项目默认配置，并显示模型工厂、配置文件、接缝绑定、组件版本/参数、实际模型注册路径和样本调用覆盖；将前向状态区分为已通过、失败、尚未运行。",
+        "交互 add/set/remove 使用明确的根工厂接缝名提示；factory 与已登记组件分别走项目入口或组件 Schema 参数表单，模型参数和临时批次参数有单独说明。",
+        "新增 preview 操作将候选送入真实 dry-run；候选失败、表单取消或拒绝确认均不更新配置。提交仍经过现有一次明确确认。",
+        "Linux PTY 测试覆盖 dry-run 后真实配置保持不变，以及真实 add→set→取消 set→确认 set→remove；非 TTY JSON assembly show 确认最终持久状态。",
+        "cargo test --locked --quiet 完整工作区测试全部通过；cargo check、fmt/diff、worker architecture、compatibility、Rust architecture checks 通过。"
+      ]
+    },
+    {
+      "id": "CLI-09",
+      "title": "组件目录、发现、安装、测试与卸载页面",
+      "status_snapshot": "done",
+      "product_refs": [
+        "/behavior_contracts/E-extensions",
+        "/extension_acceptance",
+        "/prototype_scenarios/S6"
+      ],
+      "handoff_file": "docs/cli-handoff/CLI-09.json",
+      "automated_evidence_paths": [
+        "docs/cli-handoff/CLI-09.json",
+        "tests/cli_components_ui.rs: 4 PTY tests",
+        "cargo test --locked --quiet: full workspace passed"
+      ]
+    },
+    {
+      "id": "CLI-10",
+      "title": "试跑、训练和续训计划页面",
+      "status_snapshot": "done",
+      "product_refs": [
+        "/behavior_contracts/F-feedback",
+        "/behavior_contracts/T-continue",
+        "/prototype_scenarios/S2",
+        "/prototype_scenarios/S3"
+      ],
+      "handoff_file": "docs/cli-handoff/CLI-10.json",
+      "automated_evidence_paths": [
+        "src/presentation/pages/training.rs、src/presentation/pages/resume.rs、src/presentation/widgets/run_plan.rs 已实现模式指南、可恢复来源选择和执行计划预览，并接入工作台。",
+        "Linux PTY 覆盖 managed-step、manual-step、external-loop 的模式专属输入；managed-step 默认优化器训练和 complex_acceptance 多模态 manual-step 均从计划确认实际执行并保存 checkpoint。",
+        "Linux PTY 覆盖已失败训练和较早成功训练同时存在时明确选择失败记录，显示父记录/checkpoint/新增步数/状态重置选择；取消不会创建续训子运行。",
+        "Linux PTY repeat 显示所选试跑的原始输入快照和覆盖，并在取消后不新增运行记录。",
+        "Linux PTY external-loop 不要求模型、批次或 loss；确认后通过真实 worker 执行两步用户循环并保存正式记录及 checkpoint。",
+        "cargo fmt、cargo check、cargo test 全量与 worker 架构、Rust/Python 兼容、Rust 架构检查全部通过。"
+      ]
+    },
+    {
+      "id": "CLI-11",
+      "title": "运行列表、详情、进度与后台控制页面",
+      "status_snapshot": "done",
+      "product_refs": [
+        "/behavior_contracts/R-run",
+        "/behavior_contracts/T-continue",
+        "/behavior_contracts/L-artifacts",
+        "/interaction_hypotheses/H1"
+      ],
+      "handoff_file": "docs/cli-handoff/CLI-11.json",
+      "automated_evidence_paths": [
+        "docs/cli-handoff/CLI-11.json"
+      ]
+    },
+    {
+      "id": "CLI-19",
+      "title": "CLI 自动验收脚手架与行为矩阵",
+      "status_snapshot": "done",
+      "product_refs": [
+        "/quality_and_acceptance",
+        "/prototype_scenarios",
+        "/interaction_hypotheses"
+      ],
+      "handoff_file": "docs/cli-handoff/CLI-19.json",
+      "automated_evidence_paths": [
+        "python3 scripts/verify_cli_interaction.py: real binary JSON inspect/probe and TTY onboarding passed; reports saved under target/cli-acceptance/.",
+        "python3 scripts/verify_cli_interaction.py --output-dir target/cli-acceptance-injected-failure --inject-failure: exited 1 as expected; failure diagnostic saved in report.json and transcript.txt.",
+        "cargo test --locked --test cli_onboarding_ui -- --test-threads=1: 10 PTY integration tests passed using tests/cli_ui_support/mod.rs.",
+        "python3 -m py_compile scripts/verify_cli_interaction.py; cargo fmt --all -- --check; git diff --check: passed."
+      ]
+    },
+    {
+      "id": "CLI-20",
+      "title": "使用指南、终端页面示例与真实用户观察材料",
+      "status_snapshot": "done",
+      "product_refs": [
+        "/value_validation",
+        "/quality_and_acceptance/usability_targets",
+        "/interaction_hypotheses/H1",
+        "/interaction_hypotheses/H2"
+      ],
+      "handoff_file": "docs/cli-handoff/CLI-20.json",
+      "automated_evidence_paths": [
+        "docs/cli-guide.md：每条用户路径对应当前 CLI 命令；复杂模型预览/编辑/重载命令按同一条真实 CLI 流程复现。",
+        "docs/cli-user-study.md：协议与记录表均标记 template-only，不含伪造参与者或研究结论；value_validation/A6/QA-04 保持未完成。",
+        "target/cli20-guide-human-transcript.json：complex_acceptance fixture 的真实 human-readable CLI 流程，首次预期维度错误 exit=4，dry-run/提交/重载 probe 成功，耗时 13.91 秒；仅作为仓库 fixture 验证。"
+      ]
+    }
+  ]
+}

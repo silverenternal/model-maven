@@ -1,0 +1,29 @@
+Port matrix · loaded scope
+Rows output · columns input · a index
+        1v   2
+>   1  [×]  =
+    2  |?   ?
+model.encoder[*] (2) → net.head[*] (1)
+Recorded 1 · mismatch 1 · ? 0 · consumers 1
+Pairs 1/2 · remaining unknown
+model.encoder[0] → net.head[0]
+Underlying wire 1/1 · w
+= match  × mismatch  o shape unknown
+! mixed  - no wire  ? unknown
+Arrows/wheel · Pg · n/p mismatch · Enter/click · r/c group · a · Esc
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

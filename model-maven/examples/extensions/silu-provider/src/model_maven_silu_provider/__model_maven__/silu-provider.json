@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "namespace": "example",
+  "component_id": "example/append-silu",
+  "component_version": "0.1.0",
+  "extension_api_version": 1,
+  "kind": "layer-edit-provider",
+  "entrypoint": "model_maven_silu_provider.provider:add_silu",
+  "description": "Append a named SiLU layer to a model encoder.",
+  "params_schema": {
+    "type": "object",
+    "properties": {
+      "name": {
+        "type": "string",
+        "default": "silu",
+        "description": "Unique name for the new encoder layer."
+      }
+    },
+    "required": ["name"],
+    "additionalProperties": false
+  },
+  "capabilities": {
+    "layer_edit": {
+      "state": "supported"
+    }
+  },
+  "conformance_fixture": "model_maven_silu_provider.provider:provider_fixture"
+}

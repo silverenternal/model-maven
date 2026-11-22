@@ -1,0 +1,180 @@
+{
+  "schema_version": 1,
+  "task_id": "EXT-03",
+  "status": "done",
+  "baseline": "Current coordinator worktree, 2026-11-20; Linux x86_64, Python 3.14, PyTorch 2.15.",
+  "branch": "master (uncommitted shared worktree)",
+  "files_changed": [
+    "python/model_maven_worker/extensions/conformance.py",
+    "scripts/verify_extension_conformance.py",
+    "tests/extensions_conformance.rs",
+    "docs/module-handoff/EXT-03.json",
+    "extensiontodo.json",
+    "python/model_maven_worker/data/conformance.py",
+    "python/model_maven_worker/extensions/references.py",
+    "python/model_maven_worker/__init__.py",
+    "src/adapters/components.rs",
+    "src/adapters/worker_assets.rs",
+    "src/application/extensions.rs",
+    "src/application/readiness.rs",
+    "src/cli.rs",
+    "src/domain/capability.rs",
+    "src/ports/components.rs",
+    "scripts/check_worker_architecture.py",
+    "tests/component_transform_conformance.rs",
+    "README.md",
+    "scripts/verify_product_acceptance.py",
+    "scripts/verify_extension_conformance_suite.py",
+    "python/model_maven_worker/extensions/value_conformance.py",
+    "python/model_maven_worker/extensions/layer_conformance.py",
+    "tests/extensions_component_state.rs",
+    "acceptancetodo.json",
+    "src/adapters/python.rs",
+    "python/model_maven_worker/runtime/capabilities.py",
+    "tests/cli.rs",
+    "product.json",
+    "docs/module-handoff/QA-02.json",
+    "docs/acceptance/results/qa02-incremental-20261120-extension-state/provider-conformance.json",
+    "python/model_maven_worker/extensions/trainer_conformance.py",
+    "src/presentation/service.rs",
+    "tests/extensions_trainer_conformance.rs",
+    "docs/extensions/sdk.md",
+    "moduletodo.json",
+    "python/model_maven_worker/train/external.py",
+    "python/model_maven_sdk/src/model_maven_sdk/contracts.py",
+    "docs/acceptance/results/qa02-20261120-trainer-deadline-0.13.63/provider-conformance.json"
+  ],
+  "implementation": [
+    "Added focused runtime checks proving that only explicit Provider layer_edit claims can become activation-eligible, only for the tested payload and disposable fixture expectations.",
+    "A missing fixture assertion keeps coverage partial; an untested additional declared capability also keeps coverage partial and blocks activation. Unsupported capability declarations are reported as skipped, while conditional claims remain non-activating.",
+    "Verification evidence returned by a successful supported check binds the exact payload digest, conformance suite version, Provider and fixture source fingerprints, Python version, and PyTorch version. The existing application layer records the manifest digest alongside that evidence and runtime references re-check it before executing edits.",
+    "Added an independent CLI acceptance entry point that exercises the existing separately packaged Provider workflow, fixture assertions, undo/redo, export restore, and tamper rejection without adding a CLI-specific extension implementation.",
+    "Provider activation evidence now fingerprints Provider/fixture source before fixture execution and compares it again after the assertions. If either source changes during the conformance run, coverage is downgraded to partial and no executable verification evidence is emitted.",
+    "Added an independent capability-driven conformance helper for custom transforms already executable through data.transforms.run_transform_pipeline. It executes a module:callable transform against a fresh fixture, checks the declared output port contract and finite tensor output, distinguishes supported/conditional/unsupported claims, and verifies actual transformed values in an integration test. This does not register a new extension manifest kind or add CLI component-test dispatch.",
+    "Integrated registered transform conformance into the real component discover/test CLI path. Rust validates schema/defaults and dependency locks; worker verifies the exact distribution/manifest/entrypoint/fixture source, runs the custom transform through the ordered data pipeline, checks declared output port and expected value, and rechecks source provenance after execution. The worker package includes the helper and compatibility advertises the generic extensions.component_conformance capability.",
+    "Integrated registered dataset, loss and metric component tests into the CLI. Dataset fixtures validate bounded length and indexed samples; losses must return the expected finite scalar and backpropagate finite input gradients; metrics must return finite fixture-matching values. Entry-point and fixture source fingerprints and locked component references are checked before and after execution.",
+    "Added a registered Layer state_roundtrip capability check through component test. A fresh instance loads the extension-owned state_dict with strict=True and must reproduce the original forward output; source fingerprints and locked component references are checked before and after. The finite state budget rejects deep/large/non-finite state.",
+    "Added registered Trainer conformance through the real external-loop engine: finite event fixtures check steps/loss/metrics, a stop-file fixture checks cooperative stop, and timeout fixtures verify the runner-owned cooperative deadline at a finite step boundary. The deadline is exposed as timeout_requested/remaining_time_seconds, and reporting another step after ignoring false fails conformance. A blocking Python/CUDA call remains non-preemptible by this cooperative contract.",
+    "Formal train timeout now writes the run-scoped cooperative stop request, waits at most 10 seconds for a step boundary, and then force-terminates the worker if it does not exit. Integration proves an external-loop step is checkpointed before a WORKER_TIMEOUT report; successful graceful exit also kills remaining ordinary worker process-group children. This is CLI-owned deadline handling, not a Trainer-owned timeout declaration.",
+    "Deadline origin is captured when the worker starts, so model import/construction time consumes the same runtime timeout budget as the CLI watchdog. The watchdog remains responsible for terminating a blocked worker after its grace window.",
+    "Closed a Layer conformance gap: the selected entrypoint is fingerprinted before/after construction and checks, component references are revalidated before reporting success, conditional claims stay conditional, and an unsupported construct declaration fails as a capability contradiction.",
+    "Extended capability/source integrity checks to regular Layer batch factories and conditional state-roundtrip claims: entrypoint and explicit batch module source fingerprints are rechecked before reporting; conditional Layer/Trainer checks retain conditional state and expose observed fixture success separately."
+  ],
+  "validation": [
+    {
+      "command": "cargo test --locked --test extensions_conformance -- --nocapture",
+      "result": "passed: 1 test covering supported, unsupported, conditional, missing expectations, untested additional claims, evidence fields, and non-finite fixture state rejection against Python 3.14 / PyTorch 2.15."
+    },
+    {
+      "command": "python3 scripts/verify_extension_conformance.py --binary target/debug/m-model --python python3",
+      "result": "passed: independent Provider package discovery and fixture conformance; complete_for_fixture_expectations; real edit; undo/redo; portable restore; tampered bundle rejected."
+    },
+    {
+      "command": "cargo clippy --locked --test extensions_conformance -- -D warnings; cargo fmt --all -- --check; py_compile; git diff --check",
+      "result": "clippy, formatting, Python syntax, and whitespace checks passed."
+    },
+    {
+      "command": "Extract and execute the Python behavior script embedded in tests/extensions_conformance.rs; py_compile; rustfmt --check; git diff --check",
+      "result": "passed directly under the workspace Python: supported, unsupported, conditional, missing expectations, extra untested claims, non-finite state and source-fingerprint drift are covered. Rust integration binary could not be rebuilt because shared TUI code references missing onboarding::penrose::show."
+    },
+    {
+      "command": "cargo test --locked --test extensions_conformance -- --nocapture",
+      "result": "passed: 1/1; includes source-drift detection that leaves coverage partial and emits no activation evidence."
+    },
+    {
+      "command": "cargo clippy --locked --test extensions_conformance -- -D warnings",
+      "result": "passed."
+    },
+    {
+      "command": "cargo test --locked --test extensions_conformance -- --nocapture",
+      "result": "passed 2/2: existing Provider conformance and custom-transform conformance through the actual data transform runtime; supported execution/value and output-port checks, conditional non-activation, unsupported skip, and port mismatch rejection."
+    },
+    {
+      "command": "python3 -m py_compile python/model_maven_worker/data/conformance.py && rustfmt --edition 2024 --check tests/extensions_conformance.rs && git diff --check -- python/model_maven_worker/data/conformance.py tests/extensions_conformance.rs docs/module-handoff/EXT-03.json",
+      "result": "passed."
+    },
+    {
+      "command": "cargo test --locked --test component_transform_conformance -- --nocapture",
+      "result": "passed 1/1: local distribution was discovered and registered; component test executed its transform factory and fixture through the CLI, verified package identity/source, output port and expected tensor value; invalid parameter type was rejected before execution."
+    },
+    {
+      "command": "cargo test --locked --test extensions_conformance -- --nocapture",
+      "result": "passed 2/2: Provider capability/source/fixture coverage and transform supported/conditional/unsupported and bad-port behavior."
+    },
+    {
+      "command": "cargo clippy --locked --test component_transform_conformance -- -D warnings; cargo clippy --locked --test extensions_conformance -- -D warnings; python3 scripts/check_worker_architecture.py; python3 scripts/check_compatibility.py; git diff --check",
+      "result": "passed; 72 worker modules have complete embedded asset coverage; import direction and Rust/Python operation capability contracts match."
+    },
+    {
+      "command": "cargo test --locked --test component_transform_conformance --test extensions_conformance -- --nocapture; cargo clippy --locked --test component_transform_conformance --test extensions_conformance -- -D warnings; python3 scripts/check_worker_architecture.py; python3 scripts/check_compatibility.py",
+      "result": "passed: real discovered package CLI test covers transform/dataset/loss/metric; dataset sample, loss scalar+backward gradients, metric expected value, invalid parameter rejection; Provider and transform helper tests 2/2; strict Clippy, 73 worker modules embedded, compatibility contract passed."
+    },
+    {
+      "command": "python3 scripts/verify_extension_conformance_suite.py --binary target/debug/m-model --python python3",
+      "result": "passed: Provider and Transform helper tests; installed-package CLI conformance for transform/dataset/loss/metric; disk-backed Provider replay/undo/redo and failure recovery; real extension state schema migration; independent Provider wheel edit, undo/redo, export restore and tamper rejection."
+    },
+    {
+      "command": "python3 scripts/verify_extension_conformance_suite.py --binary target/debug/m-model --python python3; cargo clippy --locked --test extensions_component_state --test extensions_conformance --test component_transform_conformance -- -D warnings; python3 scripts/check_worker_architecture.py; python3 scripts/check_compatibility.py",
+      "result": "passed: Provider/Transform/registered dataset-loss-metric suites; edit replay/failure and extension state migration; registered Layer custom state_dict/load_state_dict roundtrip via CLI; external-loop cooperative stop/resume; independent Provider wheel export/restore/tamper rejection; strict Clippy; 73 worker modules embedded; compatibility contracts passed."
+    },
+    {
+      "command": "cargo test --locked --test cli timeout_ -- --nocapture",
+      "result": "passed 3/3: timeout tests confirm a slow task actually started, worker descendants are terminated, and a real external-loop formal training run saves latest.json at completed_steps=1 before returning WORKER_TIMEOUT."
+    },
+    {
+      "command": "python3 scripts/verify_product_acceptance.py --case provider-conformance --python python3 --binary target/debug/m-model --output-dir docs/acceptance/results/qa02-incremental-20261120-extension-state; cargo clippy --locked --test extensions_trainer_conformance --test extensions_component_state --test extensions_conformance --test component_transform_conformance -- -D warnings; python3 scripts/check_worker_architecture.py; python3 scripts/check_compatibility.py",
+      "result": "passed: formal provider-conformance acceptance exit 0; includes registered trainer event/stop fixture, Layer state roundtrip, extension lifecycle and independent wheel; strict Clippy; 74 worker modules embedded; compatibility contract passed. Timeout capability remains not_tested and overall fixture coverage partial."
+    },
+    {
+      "command": "python3 scripts/verify_extension_conformance_suite.py --binary target/debug/m-model --python python3",
+      "result": "passed on 2026-11-20: Provider/Transform; registered transform, Dataset, Loss, Metric; edit persistence/replay, extension state migration, Layer state roundtrip, Trainer events/cooperative stop, timeout checkpoint behavior, external-loop integration, independent Provider wheel restore/tamper rejection."
+    },
+    {
+      "command": "python3 scripts/verify_extension_conformance_suite.py --binary target/debug/m-model --python python3",
+      "result": "passed on 2026-11-20: Provider/Transform; registered transform, Dataset, Loss, Metric; edit persistence/replay, extension state migration, Layer state roundtrip, Trainer events/cooperative stop, timeout checkpoint behavior, external-loop integration, independent Provider wheel restore/tamper rejection."
+    },
+    {
+      "command": "cargo test --locked --test extensions_trainer_conformance -- --test-threads=1",
+      "result": "passed 2/2: real finite cooperative-deadline fixture stops at a reported boundary; Trainer that ignores false is rejected with TRAINER_TIMEOUT_IGNORED."
+    },
+    {
+      "command": "python3 scripts/verify_product_acceptance.py --case provider-conformance --python python3 --binary target/debug/m-model --output-dir docs/acceptance/results/qa02-20261120-trainer-deadline-0.13.63",
+      "result": "verified exit 0 in 144.657s; current-source evidence docs/acceptance/results/qa02-20261120-trainer-deadline-0.13.63/provider-conformance.json covers the declared Trainer deadline fixture and full registered extension workflow."
+    },
+    {
+      "command": "cargo test --locked --test extensions_component_state --test extensions_conformance --test component_transform_conformance --test extensions_trainer_conformance -- --nocapture",
+      "result": "passed: 7 conformance integration tests, including source mutation during a real Layer factory call, conditional/unsupported capability reporting, Layer state roundtrip, Provider/transform/trainer checks."
+    },
+    {
+      "command": "cargo clippy --locked --test extensions_component_state -- -D warnings; python3 scripts/verify_product_acceptance.py --case extension-package --python python3 --binary target/debug/m-model --output-dir docs/acceptance/results/qa02-20261121-extension-conformance-current-0.13.63",
+      "result": "passed: strict Clippy and current-source independent extension package acceptance (22.901s); the acceptance record covers isolated discovery/install, runtime use, train/export/restore. It does not prove other OS/accelerator or arbitrary-input correctness."
+    },
+    {
+      "command": "python3 scripts/verify_product_acceptance.py --case extension-package --python python3 --binary target/debug/m-model --output-dir docs/acceptance/results/qa02-20261121-extension-conformance-final-0.13.63",
+      "result": "passed in 23.188s on the final extension conformance source. Isolated extension package acceptance and its bounded discovery/install/use/train/export/restore scope passed; only Linux x86_64 CPU was exercised."
+    },
+    {
+      "command": "cargo test --locked --test extensions_component_state --test extensions_trainer_conformance -- --nocapture; cargo clippy --locked --test extensions_component_state --test extensions_trainer_conformance -- -D warnings; python3 scripts/check_worker_architecture.py",
+      "result": "passed: 4 conformance integration tests cover component/batch source drift, conditional forward and state roundtrip, contradictory unsupported construct, Trainer conditional events, existing Layer state roundtrip and cooperative Trainer checks; strict Clippy and 84-module embedded worker architecture passed."
+    },
+    {
+      "command": "cargo test --locked --test extensions_component_state --test extensions_trainer_conformance -- --nocapture; cargo clippy --locked --test extensions_component_state --test extensions_trainer_conformance -- -D warnings; python3 -m py_compile python/model_maven_worker/extensions/layer_conformance.py python/model_maven_worker/extensions/trainer_conformance.py; python3 scripts/check_worker_architecture.py",
+      "result": "passed 4/4 integration tests. Component entrypoint and explicit batch-factory source drift are rejected; unsupported construct contradictions fail; fixture success does not upgrade conditional Layer/Trainer claims; strict Clippy, Python syntax, and 84-module embedded worker architecture passed."
+    }
+  ],
+  "remaining": [
+    "A runner-owned cooperative deadline is verified at a finite reported step boundary. It cannot preempt a blocked Python/CUDA call or guarantee checkpoint completion before the CLI watchdog terminates that process.",
+    "Finite fixtures do not prove arbitrary-input behavior or provide OS-level isolation; Python extension code executes with the selected interpreter permissions.",
+    "Value-component fixtures test bounded dataset samples, finite loss plus gradients, and metric output; they do not prove arbitrary datasets or domain-level metric correctness."
+  ],
+  "commit": null,
+  "limitations": [],
+  "evidence": [
+    "docs/acceptance/results/qa02-20261121-extension-conformance-current-0.13.63/extension-package.json",
+    "docs/acceptance/results/qa02-20261121-extension-conformance-current-0.13.63/logs/extension-package.stdout.log",
+    "docs/acceptance/results/qa02-20261121-extension-conformance-current-0.13.63/logs/extension-package.stderr.log",
+    "docs/acceptance/results/qa02-20261121-extension-conformance-final-0.13.63/extension-package.json",
+    "docs/acceptance/results/qa02-20261121-extension-conformance-final-0.13.63/logs/extension-package.stdout.log",
+    "docs/acceptance/results/qa02-20261121-extension-conformance-final-0.13.63/logs/extension-package.stderr.log"
+  ]
+}

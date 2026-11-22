@@ -1,0 +1,55 @@
+{
+  "task_id": "CLI-05",
+  "status": "done",
+  "owner": "总协调人",
+  "baseline": "99921de",
+  "branch": "integration",
+  "files_changed": [
+    "src/presentation/pages/model_tree.rs",
+    "src/presentation/pages/layer_detail.rs",
+    "src/presentation/widgets/model_tree.rs",
+    "src/presentation/pages/mod.rs",
+    "src/presentation/widgets/mod.rs",
+    "src/presentation/workbench.rs",
+    "clitodo.json"
+  ],
+  "implemented": [
+    "模型树由实际 Layer List 报告构建，支持路径/类型/别名/字段/已有端口证据搜索，保留祖先上下文，支持 40 条分页和容器折叠。",
+    "详情显示 instance id、共享别名影响、参数计数、构造与类型定义位置、Python/variant/显式 assembly 控制来源及当前可用操作。",
+    "显式前向 Probe 成功后，缓存按 model/batch/variant/seed 绑定；详情展示每次 invocation 输入/输出 tensor shape。无匹配报告或轨迹截断时不猜测调用数。",
+    "详情来自内存中已有报告，不启动 worker；编辑、新探测和刷新会清除旧 Probe 缓存；刷新同时废弃旧路径选择，避免 ModuleList 重编号误选。",
+    "修正“留空浏览”路径输入；空值现在可以执行帮助文案描述的候选浏览。"
+  ],
+  "validation": [
+    {
+      "command": "cargo fmt --check",
+      "result": "passed"
+    },
+    {
+      "command": "git diff --check",
+      "result": "passed"
+    },
+    {
+      "command": "cargo check --locked",
+      "result": "passed"
+    },
+    {
+      "command": "cargo test --locked",
+      "result": "passed: 27 unit + 33 CLI integration tests; 0 failed"
+    },
+    {
+      "command": "PTY width 40: temporary ModuleDict with long path, search and open detail",
+      "result": "passed: full path remains available and source/capability details render."
+    },
+    {
+      "command": "PTY: explicit probe, search selected Layer detail, then refresh tree",
+      "result": "passed: observed invocation and input/output tensor shapes render; expand does not run worker; one Probe and one Layer List per explicit operation; refresh clears old state."
+    }
+  ],
+  "integration_patch": [
+    "Workbench keeps only successful Probe evidence matching current model, batch, variant and seed.",
+    "Layer List and detail stay read-only; shape/call evidence comes from an explicit Probe action, never an implicit forward."
+  ],
+  "backend_requests": [],
+  "remaining": []
+}

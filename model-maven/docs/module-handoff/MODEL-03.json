@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "task_id": "MODEL-03",
+  "status": "done",
+  "baseline": "da40a7248e07de3bb91775359bcbbc6cdee747c4 plus coordinator worktree changes already present",
+  "branch": "master (uncommitted coordinator worktree)",
+  "files_changed": [
+    "python/model_maven_worker/model/contracts.py",
+    "python/model_maven_worker/model/shape.py",
+    "python/model_maven_worker/model/probe.py",
+    "python/model_maven_worker/model/tensor_tree.py",
+    "tests/model_contracts.rs",
+    "docs/model-contracts.md",
+    "docs/contracts/operations.json",
+    "docs/contracts/module-interfaces.json",
+    "src/cli.rs",
+    "src/application/model.rs",
+    "src/application/mod.rs",
+    "src/application/run_request.rs",
+    "src/domain/worker.rs",
+    "src/adapters/worker_assets.rs",
+    "src/presentation/workbench.rs"
+  ],
+  "implementation": [
+    "Added an optional JSON port contract passed by `m-model model probe --contract FILE` and selectable in the TTY Probe flow.",
+    "Validates nested input/output and per-module invocation ports, rank, dtype, PyTorch layout, memory format, fixed/symbolic dimensions and symbol ranges. Repeated/shared module calls retain invocation identity.",
+    "Runs best-effort torch.fx plus Meta inference. Confirmed static Linear inner-dimension failures report the FX module path and expected/actual values before real forward. Other trace/meta failures remain unsupported and proceed to real-batch probing.",
+    "Reports per-check coverage and leaves unexecuted module paths unobserved; a successful single sample does not claim all branches or shapes are correct."
+  ],
+  "verification": [
+    {
+      "command": "cargo test --locked --test model_contracts --test model_probe --test model_discovery -- --nocapture",
+      "result": "passed: 5 contract, 1 discovery, and 1 probe integration tests"
+    },
+    {
+      "command": "cargo check --locked",
+      "result": "passed"
+    },
+    {
+      "command": "cargo fmt --all -- --check",
+      "result": "passed"
+    },
+    {
+      "command": "python3 scripts/check_worker_architecture.py",
+      "result": "passed: 53 modules, complete embedded asset coverage"
+    },
+    {
+      "command": "python3 scripts/check_compatibility.py",
+      "result": "passed"
+    },
+    {
+      "command": "git diff --check",
+      "result": "passed"
+    }
+  ],
+  "limitations": [
+    "Contract files are JSON in this release; semantic NCHW/NHWC axes are not inferred. `layout` means PyTorch Tensor layout and `memory_format` means contiguous/channels-last storage format.",
+    "FX/Meta is best effort. Only recognized static matrix/Linear dimension mismatch messages are classified as failed; other trace or Meta errors are unsupported and fall through to runtime probe.",
+    "Runtime contract evidence covers only supplied batches and observed invocations; it does not prove unexecuted branches or all shape ranges."
+  ],
+  "integration_patch": "CLI request carries the optional contract path; worker reads it relative to project root, and worker_assets embeds contracts.py and shape.py. Cross-language report remains in existing JSON Report data; typed DTO normalization is future work."
+}

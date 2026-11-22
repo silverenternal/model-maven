@@ -1,0 +1,69 @@
+{
+  "task_id": "ENV-02",
+  "owner": "并行子任务：ENV-02",
+  "baseline": "da40a7248e07de3bb91775359bcbbc6cdee747c4",
+  "branch": "master (共享工作树；未提交)",
+  "status": "done",
+  "files_changed": [
+    "README.md",
+    "docs/environment-portability.md",
+    "docs/module-handoff/ENV-02.json",
+    "envtodo.json",
+    "python/model_maven_worker/__init__.py",
+    "python/model_maven_worker/environment/__init__.py",
+    "python/model_maven_worker/environment/wheelhouse.py",
+    "python/model_maven_worker/protocol.py",
+    "python/model_maven_worker/runtime/capabilities.py",
+    "src/adapters/worker_assets.rs",
+    "src/application/environment.rs",
+    "src/cli.rs",
+    "src/domain/capability.rs",
+    "src/main.rs",
+    "src/presentation/terminal.rs",
+    "tests/environment_offline.rs"
+  ],
+  "interface_changes": [
+    "新增 archive_environment_wheels(python, relative=None, stream_output=False)、inspect_wheel_archive(python, relative=None)、replay_wheel_archive(python, venv, relative=None, stream_output=False) Python 服务。",
+    "默认归档路径为 .model-maven/wheelhouse/<lock-sha256>/；index.json 逐文件记录包名、版本、文件名、大小、SHA-256 和不含 URL/凭据的来源类别。"
+  ],
+  "implemented": [
+    "归档仅使用锁中版本与哈希，要求运行 Python 的完整 ABI identity 与 lock 完全一致；pip 仅下载 wheel 并继承用户已配置的 index/find-links。",
+    "索引独立于 wheel 文件校验；check 分别给出 index_available、archive_available、compatible、missing 和 corrupt。缺失或篡改的 wheel 在安装前拒绝。",
+    "离线重放使用 isolated + no-index + 本地 find-links 和 require-hashes；安装后执行版本、ABI、requirements 输入和 pip check 验证。",
+    "Archive 保留锁快照，不覆盖已存在的无效目标；生成期间锁发生变化时不发布材料。"
+  ],
+  "validation": [
+    {
+      "command": "python3 -m py_compile python/model_maven_worker/environment/wheelhouse.py",
+      "result": "passed"
+    },
+    {
+      "command": "cargo test --locked --test environment_offline -- --nocapture",
+      "result": "passed: 在 PIP_NO_INDEX=1 和仅本地 wheel 源下创建 wheel archive；新 venv 离线重放成功；分别验证缺包、哈希篡改、ABI 不符、索引缺失、缺失/损坏不伪成功及索引不含私有源凭据。"
+    },
+    {
+      "command": "git diff --check",
+      "result": "passed"
+    },
+    {
+      "command": "cargo test --locked --test environment_offline -- --nocapture",
+      "result": "passed: CLI check/archive/replay invoked through embedded worker; direct service checks cover missing/tampered wheel, ABI mismatch, missing index, same-ABI offline new-venv replay, and credential omission."
+    },
+    {
+      "command": "python3 scripts/check_worker_architecture.py",
+      "result": "passed: 65 modules, embedded asset coverage complete, imports follow domain direction."
+    }
+  ],
+  "integration_follow_up": [],
+  "blockers": [],
+  "integration": [
+    "Registered wheelhouse.py as a worker asset and re-exported archive/check/replay functions from the environment package.",
+    "Added three protocol operations with environment.wheelhouse capability and environment_lock state format requirement; operations run before PyTorch import.",
+    "Added m-model env wheelhouse archive/check/replay commands, application request routing, and human-readable reports.",
+    "Extended the environment_offline integration test to invoke the embedded CLI for check, archive, and replay against the local no-index wheel fixture."
+  ],
+  "limitations": [
+    "Synthetic local wheel was used for offline end-to-end validation; production package-index and accelerator-specific combinations need release-environment verification.",
+    "The archive is bound to the original Python ABI and does not include OS libraries, accelerator drivers, CUDA/ROCm runtime, or datasets."
+  ]
+}

@@ -1,0 +1,24 @@
+Search · graph/source/evidence/commands
+/
+>[2/z] 2D flow view
+ [3/4] Exploded x1
+ [M] Port matrix
+ [F] Failure path
+ [D] Repair diff · need preview
+ [r] Reset view/layout
+1 / 6
+↑↓ select · Enter open · Esc cancel
+
+
+
+
+
+
+
+
+
+
+
+
+
+

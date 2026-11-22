@@ -1,0 +1,144 @@
+{
+  "task_id": "CORE-04",
+  "owner": "总协调人",
+  "baseline": "2629b5d",
+  "branch": "master",
+  "status": "done",
+  "files_changed": [
+    "coretodo.json",
+    "docs/module-handoff/CORE-04.json",
+    "src/adapters/project_config.rs",
+    "src/adapters/python.rs",
+    "src/application/config.rs",
+    "src/application/mod.rs",
+    "src/application/readiness.rs",
+    "src/application/replay_tests.rs",
+    "src/application/run.rs",
+    "src/application/run_inputs.rs",
+    "src/application/run_lifecycle.rs",
+    "src/application/run_prepare.rs",
+    "src/cli.rs",
+    "src/domain.rs",
+    "src/domain/input.rs",
+    "src/domain/operation.rs",
+    "src/domain/readiness.rs",
+    "src/main.rs",
+    "src/ports.rs",
+    "src/ports/project_config.rs",
+    "src/presentation/pages/home.rs",
+    "src/presentation/service.rs",
+    "src/presentation/terminal.rs",
+    "src/presentation/workbench.rs",
+    "tests/cli.rs",
+    "tests/core_inputs.rs",
+    "tests/operation_readiness.rs",
+    "python/model_maven_worker/extensions/references.py",
+    "src/presentation/pages/diagnostic.rs"
+  ],
+  "implemented": [
+    "Added deterministic configuration content revisions without changing the legacy schema_version=1 project.json shape; init, assembly show/edit and operation results expose the revision used.",
+    "Added bounded project configuration history (20 prior snapshots), written through an atomic sidecar update and revision-checked updates. Stale writes return a structured PROJECT_CONFIG_CONFLICT and retain the newer workspace configuration.",
+    "Added source-aware input resolution for explicit CLI values, saved run/variant values, workbench session candidates, project defaults and product defaults. Direct operations annotate model/batch/binding provenance; run records preserve config revision and input source lineage across try repeat and resume.",
+    "Added per-operation readiness plans to assembly show. Model inspect is ready without batch or training configuration; forward readiness identifies the example-batch action and does not require unrelated optimizer/loss fields.",
+    "Added tests for precedence, scoped revision identity, readiness states, legacy config compatibility, config history/stale revisions, explicit overrides and saved-run provenance.",
+    "Added human assembly-show readiness and provenance summary: operation state, base configuration revision, input requiredness/state/source/reference, capability and fact reasons, and suggested actions; resolved input values are never rendered.",
+    "Added `m-model config history` and a selected-field `config restore` command; restore previews by default, validates historical content revisions, rejects ambiguous prefixes and unsupported fields, and uses revision-checked writes when `--apply` is explicit.",
+    "Added a project configuration/history destination to the human workbench; users can select a prior version, choose fields, inspect the preview, and confirm before writing. The pre-restore current config is retained in bounded history.",
+    "Added a shared human-mode input provenance summary for model, try, train and edit reports. It shows each resolved input source, reference and scoped revision without echoing resolved values.",
+    "Added operation-specific input readiness preflight for model inspect/probe/verify, try/train, and Layer query/edit commands. Missing required entries return a structured plan and do not start the execution worker; JSON plans redact resolved input values.",
+    "Human terminal output renders readiness state, required input status and provenance, known facts/capabilities, and actionable next steps. Invalid config, stale replay, and operations whose requirements are owned by their concrete service continue through to authoritative application diagnostics.",
+    "External-loop readiness now treats the user loop as required while model and batch inputs remain optional, matching the operation contract.",
+    "Operation-complete plans now query the selected Python Worker doctor capability catalog and report actual supported/unsupported/unknown feature states with providers and reasons. The catalog is cached for the application session and invalidated when the interactive Python runtime changes.",
+    "A required capability reported unsupported blocks only the selected target operation with OPERATION_CAPABILITY_UNAVAILABLE. Unknown capability status remains visible and does not claim readiness or silently block an operation that the runtime can still validate.",
+    "Plans with missing required inputs do not start a Worker solely for capability detection; uncached capabilities remain optional/unknown until inputs are complete. Human prompts now derive from plan-required missing fields, so saved defaults are not redundantly prompted and external-loop does not ask for an independent model or batch.",
+    "Capability checks use the selected Backend runtime through doctor, retain the validated catalog for the application session, and invalidate it when the interactive Python runtime is changed. Unsupported required features produce OPERATION_CAPABILITY_UNAVAILABLE before target dispatch; unknown runtime status is reported without claiming ready.",
+    "Capability-check interruption now returns USER_INTERRUPTED and stops the target operation. The main CLI keeps SIGINT handling active between sequential Worker calls so Ctrl+C during the Doctor/operation boundary is not swallowed.",
+    "Interactive prompts are now driven by the same operation readiness plan as JSON/CLI execution. They prompt only for missing required inputs, respect project defaults and saved replay inputs, and external-loop does not ask for model/batch inputs.",
+    "扩展操作级 readiness：组件 show/check/test 显示描述、依赖、参数、fixture 与 Worker conformance 能力；Layer 编辑计划区分 plan_layer_edit/apply_layer_edit，并记录选区和持久化目标。注册 Provider 编辑还预检 kind、layer_edit 声明、依赖、fixture 和符合性记录；无法静态确认的 payload/源码/运行时绑定仍交由 Worker 执行时复核。静态阻塞保留组件领域诊断码和原因。",
+    "将 Operation Plan contract 升至 v2；CapabilityAvailability.conditional 与 unknown 在 readiness facts/capabilities 中分别序列化，并为 required conditional 状态保留条件说明。终端状态使用“有条件”，同步 operations JSON Schema 与 module interface 文档。",
+    "为 Provider Layer 编辑计划计算整数/字符串 payload 的 Worker 兼容摘要，准确区分没有对应 payload 验证记录（missing）和存在记录但仍须在执行时复核源码/Python/PyTorch（conditional）；浮点 payload 摘要保留为运行时条件，避免 Rust/Python 浮点格式差异造成错误拦截。",
+    "Provider verification failures now include structured mismatch fields and recorded/current Python version, PyTorch version, payload digest and provider/fixture source fingerprints. Human diagnostics show those exact mismatches; static readiness remains conditional where Python/PyTorch execution facts cannot be known in Rust."
+  ],
+  "validation": [
+    {
+      "command": "cargo test --locked --test core_inputs",
+      "result": "passed",
+      "scope": "Legacy project config shape and stable reported revision test."
+    },
+    {
+      "command": "cargo test --locked --test cli project_init_saves_defaults_for_probe_without_overwriting_or_side_effects_on_preview -- --exact --nocapture; cargo test --locked --test cli declared_model_injection_seams_are_saved_verified_and_replayed_in_variants -- --exact --nocapture; cargo test --locked --test cli managed_training_probe_persists_run_evidence_but_keeps_weights_ephemeral -- --exact --nocapture",
+      "result": "passed",
+      "scope": "Real CLI default resolution, explicit override, run snapshot and repeat provenance regressions."
+    },
+    {
+      "command": "cargo fmt --all -- --check; git diff --check; python3 scripts/check_architecture.py; python3 scripts/check_worker_architecture.py; cargo test --locked",
+      "result": "passed",
+      "scope": "58 Rust unit tests, 37 CLI integration tests, 1 core input test, 4 data adapter tests, 3 extension metadata tests, and 1 model discovery test all passed. Rust architecture passed; all 47 worker modules compile and embedded assets/import direction are complete."
+    },
+    {
+      "command": "cargo build --release --locked; run release binary outside the source tree for init, default model inspect and explicit model override",
+      "result": "passed",
+      "scope": "Release CLI reported stable config_revision; project default input source was project_config and explicit CLI override source was command_line."
+    },
+    {
+      "command": "cargo test --locked; cargo fmt --all -- --check; git diff --check; python3 scripts/check_architecture.py; python3 scripts/check_worker_architecture.py; python3 scripts/check_compatibility.py",
+      "result": "passed",
+      "scope": "Final full regression passed: 66 unit, 3 architecture, 41 CLI, 2 core input, 4 data adapter, 3 extension metadata, 1 model discovery, 6 protocol, and 1 dedicated train mode test (127 total). Formatting, whitespace, Rust/worker architecture, embedded assets and compatibility checks passed."
+    },
+    {
+      "command": "cargo test --locked --bin m-model readiness_summary_shows_missing_inputs_provenance_and_actions_without_values; cargo test --locked --test cli assembly_show_renders_operation_readiness_and_configuration_sources -- --exact --nocapture; git diff --check",
+      "result": "passed",
+      "scope": "Re-ran both focused checks after final human-facing operation labels and duplicate revision display were adjusted."
+    },
+    {
+      "command": "cargo test --locked; cargo fmt --all -- --check; git diff --check; python3 scripts/check_architecture.py; python3 scripts/check_worker_architecture.py; python3 scripts/check_compatibility.py",
+      "result": "passed",
+      "scope": "Final full regression passed: 66 unit, 3 architecture, 41 CLI, 2 core input, 4 data adapter, 3 extension metadata, 1 model discovery, 6 protocol, and 1 dedicated train mode test (127 total). Formatting, whitespace, Rust/worker architecture, embedded assets and compatibility checks passed."
+    },
+    {
+      "command": "cargo test --locked; cargo fmt --all -- --check; git diff --check; python3 scripts/check_architecture.py; python3 scripts/check_worker_architecture.py; python3 scripts/check_compatibility.py; cargo run --locked -- config restore --help",
+      "result": "passed",
+      "scope": "Final full regression passed: 66 unit, 3 architecture, 41 CLI, 2 core input, 4 data adapter, 3 extension metadata, 1 model discovery, 6 protocol, and 1 dedicated train mode test (127 total). Formatting, whitespace, Rust/worker architecture, embedded assets and compatibility checks passed."
+    },
+    {
+      "command": "cargo test --locked; cargo fmt --all -- --check; git diff --check; python3 scripts/check_architecture.py; python3 scripts/check_worker_architecture.py; python3 scripts/check_compatibility.py",
+      "result": "passed",
+      "scope": "Final full regression passed: 66 unit, 3 architecture, 41 CLI, 2 core input, 4 data adapter, 3 extension metadata, 1 model discovery, 6 protocol, and 1 dedicated train mode test (127 total). Formatting, whitespace, Rust/worker architecture, embedded assets and compatibility checks passed."
+    },
+    {
+      "command": "cargo test --locked --test operation_readiness -- --nocapture; cargo test --locked --test cli missing_operation_inputs_return_actionable_readiness_without_worker_runs -- --exact --nocapture; cargo check --locked",
+      "result": "passed",
+      "scope": "Three integration cases passed: actual runtime capability included on inspect success, missing-input preflight reports capability as unchecked without exposing input values, and an unsupported doctor capability blocks target execution. Existing missing-input regression passed; cargo check is warning-free."
+    },
+    {
+      "command": "cargo test --locked; cargo fmt --all -- --check; git diff --check; python3 scripts/check_architecture.py; python3 scripts/check_worker_architecture.py; python3 scripts/check_compatibility.py",
+      "result": "passed",
+      "scope": "Final regression: 66 unit, 3 architecture, 41 CLI, 2 core input, 4 data adapter, 3 extension metadata, 1 model discovery, 4 operation readiness, 6 protocol and 1 train mode tests passed (131 total). Formatting, whitespace, Rust/worker architecture, embedded assets and compatibility checks all passed; cancellation tests confirm exit 130 before target operation on SIGINT."
+    },
+    {
+      "command": "cargo fmt --all -- --check; git diff --check; cargo test --locked; python3 scripts/check_architecture.py; python3 scripts/check_worker_architecture.py; python3 scripts/check_compatibility.py",
+      "result": "passed",
+      "scope": "完整回归 132 项通过：66 unit、3 architecture、41 CLI、2 core_inputs、4 data_adapters、3 extensions_metadata、1 model_discovery、5 operation_readiness、6 protocol_versions、1 train_modes；格式、空白、Rust/Worker 架构和兼容性检查通过。"
+    },
+    {
+      "command": "cargo fmt --all -- --check; git diff --check; python3 -m json.tool docs/contracts/operations.json; python3 -m json.tool docs/contracts/module-interfaces.json; cargo test --locked; python3 scripts/check_architecture.py; python3 scripts/check_worker_architecture.py; python3 scripts/check_compatibility.py",
+      "result": "passed",
+      "scope": "完整回归 133 项通过：67 unit、3 architecture、41 CLI、2 core_inputs、4 data_adapters、3 extensions_metadata、1 model_discovery、5 operation_readiness、6 protocol_versions、1 train_modes；Operation Plan v2 Schema/接口 JSON 有效，格式、空白、Rust/Worker 架构与兼容性检查通过。"
+    },
+    {
+      "command": "cargo fmt --all -- --check; git diff --check; cargo test --locked; python3 scripts/check_architecture.py; python3 scripts/check_worker_architecture.py; python3 scripts/check_compatibility.py",
+      "result": "passed",
+      "scope": "完整回归 137 项通过：69 unit、3 architecture、41 CLI、2 core_inputs、4 data_adapters、3 extensions_metadata、1 model_discovery、7 operation_readiness、6 protocol_versions、1 train_modes；包括 runtime 切换缓存失效、损坏 Doctor 目录、Layer/训练 unsupported 能力、Provider payload 匹配和 dry-run 条件状态。全部架构和兼容性检查通过。"
+    },
+    {
+      "command": "cargo test --locked --bin m-model provider_verification_drift_shows_exact_runtime_and_source_fields -- --nocapture; cargo test --locked --test cli registered_layer_edit_provider_requires_matching_runtime_verification -- --exact --nocapture; python3 -m py_compile python/model_maven_worker/extensions/references.py; python3 scripts/check_worker_architecture.py; python3 scripts/check_compatibility.py; cargo clippy --all-targets --locked -- -D warnings",
+      "result": "passed: diagnostic renderer unit test, actual registered Provider source-drift integration, Python compilation, 66-module worker architecture/embedded assets, compatibility contract and strict Clippy."
+    }
+  ],
+  "remaining": [
+    "Floating-point Provider payload readiness remains conservatively conditional because Rust/Python JSON number serialization may differ; the Worker verifies the exact payload before execution, and no readiness false-negative is claimed."
+  ],
+  "integration_patch": [
+    "src/presentation/service.rs now uses the application readiness plan to collect only required missing interactive inputs, appends a redacted plan to operation reports, and presents unsupported runtime capabilities before dispatch. This is a presentation-service integration patch; retain CLI service boundary ownership when reviewing/merging."
+  ]
+}

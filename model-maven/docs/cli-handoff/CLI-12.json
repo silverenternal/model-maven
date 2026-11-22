@@ -1,0 +1,87 @@
+{
+  "schema_version": 1,
+  "task_id": "CLI-12",
+  "status": "in_review",
+  "baseline": "0.13.50 coordinator worktree; RUN-04 comparison service available",
+  "branch": "master (uncommitted coordinator worktree)",
+  "files_changed": [
+    "src/domain/comparison.rs",
+    "src/presentation/pages/comparison.rs",
+    "src/presentation/pages/home.rs",
+    "src/presentation/pages/mod.rs",
+    "src/presentation/workbench.rs",
+    "src/presentation/widgets/input_diff.rs",
+    "src/presentation/widgets/metric_comparison.rs",
+    "src/presentation/widgets/mod.rs",
+    "tests/cli.rs",
+    "clitodo.json",
+    "product.json",
+    "docs/acceptance/requirements.json",
+    "all root *todo.json source document versions",
+    "python/model_maven_worker/train/state.py",
+    "python/model_maven_worker/train/managed.py",
+    "python/model_maven_worker/train/manual.py",
+    "python/model_maven_worker/train/external.py",
+    "python/model_maven_sdk/src/model_maven_sdk/contracts.py",
+    "src/presentation/terminal.rs",
+    "docs/cli-guide.md",
+    "README.md",
+    "tests/train_modes.rs"
+  ],
+  "interface_changes": [
+    "工作台“试跑与训练”有“对照两次试跑”入口；按时间列出试跑，可输入序号/ID选择两条。",
+    "对照详情按输入、源码、数据、预算、设备、权重、指标展示差异/相同/信息不足；源码变化指出文件名，指标显示两侧值与数值差。",
+    "用户可明确选择按左侧/右侧原始试跑输入重试；不带入当前草稿和显式覆盖。"
+  ],
+  "implementation": [
+    "比较在读取既有运行记录时完成，不调用训练 worker；协议不同、条件有差异、证据不足在摘要中分开说明。",
+    "输入/预算按字段比较，缺字段报告 unknown；配置中的显式 null 与旧记录缺字段区分。",
+    "输入差异只显示有变化字段；hash 值缩略；指标缺失不显示 0。",
+    "无试跑/仅有一次时说明首次基线或还需一条记录。",
+    "Managed/manual/external training contexts accept explicit per-step stable sample IDs. Persisted run evidence stores only an ordered SHA-256 digest and count; incomplete reports remain unknown. The comparison UI says the identity is reported by user training code and is not independently matched to batch contents."
+  ],
+  "validation": [
+    {
+      "command": "tests/cli.rs::run_comparison_uses_persisted_evidence_and_latest_means_newest_timestamp",
+      "result": "passed: persisted JSON comparison and Unix PTY navigation through workbench selection, comparison detail, and repeat affordance; source file, data, metric changes and unknown weights visible."
+    },
+    {
+      "command": "cargo test --locked --bin m-model",
+      "result": "passed: 91 unit tests including page rendering, widgets, category registration, and repeat command preserving the selected run as sole source."
+    },
+    {
+      "command": "cargo fmt --all -- --check",
+      "result": "passed."
+    },
+    {
+      "command": "python3 scripts/check_architecture.py",
+      "result": "passed."
+    },
+    {
+      "command": "python3 scripts/check_worker_architecture.py",
+      "result": "passed: 63 modules and embedded asset coverage."
+    },
+    {
+      "command": "python3 scripts/check_compatibility.py",
+      "result": "passed."
+    },
+    {
+      "command": "git diff --check",
+      "result": "passed."
+    },
+    {
+      "command": "cargo test --locked --test cli run_comparison_uses_persisted_evidence_and_latest_means_newest_timestamp -- --exact --nocapture",
+      "result": "passed 1/1 on 2026-11-19: persisted evidence comparison, human summary and Unix PTY workbench path through selecting two runs, detail, and repeat affordance."
+    },
+    {
+      "command": "cargo test --locked --test train_modes managed_step_sample_identity_is_hashed_and_used_by_run_comparison -- --exact --nocapture; cargo test --locked --test train_modes managed_step_sample_identity_is_unknown_when_any_step_does_not_report_ids -- --exact --nocapture; cargo test --locked --test train_modes manual_step_context_can_report_stable_sample_ids -- --exact --nocapture; cargo test --locked --test train_modes external_loop_can_train_and_resume_without_model_or_batch_factory -- --exact --nocapture",
+      "result": "passed on 2026-11-19: all four PyTorch integration cases passed (managed digest/change comparison, incomplete per-step report => unknown, manual context reporting, external-loop checkpoint/resume); comparison page wording test passed; Python py_compile, cargo fmt --all -- --check, and git diff --check passed."
+    }
+  ],
+  "limitations": [
+    "交互 PTY 流程在 Unix 上验证；其它平台终端行为未验证。",
+    "Sample identity is opt-in and user-reported; it is a digest of ordered identifiers, not independent verification of batch contents. Older runs or runs with any missing/unstable step IDs display unknown."
+  ],
+  "integration_patch": "CLI-10 and CLI-11 are complete, so they no longer block this module. The comparison now consumes opt-in sample identity summaries from train reports. The real CLI-21 custom-model journey now includes comparison of two distinct trial runs; target-user readability observation remains external.",
+  "commit": null
+}

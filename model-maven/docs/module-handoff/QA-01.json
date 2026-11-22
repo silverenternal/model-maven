@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "task_id": "QA-01",
+  "status": "done",
+  "baseline": "0.13.46 coordinator worktree",
+  "branch": "master (uncommitted coordinator worktree)",
+  "files_changed": [
+    "docs/acceptance/requirements.json",
+    "docs/acceptance/evidence.schema.json",
+    "docs/acceptance/README.md",
+    "acceptancetodo.json",
+    "docs/module-handoff/QA-01.json"
+  ],
+  "implementation": [
+    "拆出 delivery levels、V0-V3、A0-A13、S0-S6、14 个 behavior contracts 和所有 CLI command 的产品级验收条目。",
+    "每条都引用 product.json 来源路径、责任 TODO、受约束的实现状态和证据状态及所需范围；模块通过不自动等价于整条产品要求通过。",
+    "证据 schema 强制记录 revision、运行环境、命令、退出码、实际覆盖和未覆盖；真实用户/硬件/发行环境保持 external_evidence_required。",
+    "为每条责任任务标注模块责任角色及 claimed/unclaimed 状态；尚未认领的任务不得被误认为已有执行者。"
+  ],
+  "validation": [
+    {
+      "command": "python -m json.tool docs/acceptance/requirements.json && python -m json.tool docs/acceptance/evidence.schema.json && python -m json.tool docs/module-handoff/QA-01.json && python -m json.tool acceptancetodo.json",
+      "result": "passed"
+    },
+    {
+      "command": "jsonschema Draft202012Validator.check_schema(evidence.schema.json)",
+      "result": "passed"
+    },
+    {
+      "command": "131-item inventory audit: unique IDs; V/A/S, behavior, command, detailed acceptance and usability coverage; task/role resolution; allowed statuses",
+      "result": "passed"
+    },
+    {
+      "command": "git diff --check",
+      "result": "passed"
+    }
+  ],
+  "remaining": [
+    "QA-02/QA-04 将按台账采集完整端到端运行与真实用户/外部证据；这些是后续任务，不阻止 QA-01 台账完成。"
+  ],
+  "integration_patch": [
+    "仅文档与 acceptancetodo 状态更新；没有修改实现代码或声称产品级验收通过。"
+  ],
+  "commit": null
+}

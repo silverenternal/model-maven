@@ -1,0 +1,56 @@
+{
+  "task_id": "DATA-01",
+  "owner": "总协调人",
+  "baseline": "36dd0f9",
+  "branch": "master",
+  "status": "done",
+  "files_changed": [
+    "python/model_maven_worker/data/adapters.py",
+    "python/model_maven_worker/data/batch.py",
+    "src/application/data.rs",
+    "tests/data_adapters.rs",
+    "docs/module-handoff/DATA-01.json",
+    "src/adapters/worker_assets.rs",
+    "python/model_maven_worker/model/probe.py",
+    "tests/cli.rs"
+  ],
+  "contracts_changed": [
+    "Added the Python DatasetAdapter and DataObservation protocol for explicit split/source identity, seeded subset selection, sample IDs, actual coverage, and adapter capability reporting.",
+    "Direct batch factories keep their existing binding behavior. A factory returning a Dataset-like or iterable source is sampled from the fresh instance produced by that factory; callers can still explicitly bind nested args/kwargs/envelopes.",
+    "Dataset state is resumable only when save/load hooks or an explicit stateless declaration exist. Iterable-only sources report bounded-prefix coverage, unstable IDs, and unsupported resume when no state protocol exists."
+  ],
+  "implemented": [
+    "Added indexed Dataset sampling with sha256-index-rank-v1 (stable across Python random-library changes), deterministic selected indices, optional unique sample IDs scoped by an explicit fingerprint, split/sample counts, and honest coverage metadata.",
+    "Added bounded sampling for iterable datasets. Each request gets a fresh factory instance; only the bounded prefix is consumed, and it is never described as representative or replayable without supporting IDs/state hooks.",
+    "Added Python state_dict/load_state_dict capability detection and an explicit MODEL_MAVEN_STATELESS opt-in. Unsupported cursor restoration includes a user-facing reason.",
+    "Kept arbitrary nested values and multi-input batches intact; Dataset items use PyTorch default_collate when available, while DataLoader-like values that already represent batches are not collated a second time.",
+    "Added application-level checks for empty batch references, batch parameters without a source, and binding without a source.",
+    "Coordinator embedded data/adapters.py, hardened unspecified seed handling for CLI-generated null seeds, and added data_observation to successful forward/backward probe reports plus forward failure evidence. An end-to-end CLI test verifies sample identity, algorithm, population and cursor capability."
+  ],
+  "validation": [
+    {
+      "command": "cargo fmt --all; git diff --check; python3 -m py_compile python/model_maven_worker/data/adapters.py python/model_maven_worker/data/batch.py; cargo test --locked",
+      "result": "passed",
+      "scope": "51 Rust unit tests, 36 existing CLI integration tests, and 4 live-Python data adapter integration tests passed. New cases cover deterministic nested/multimodal indexed sampling, independent bounded iterable instances and missing resume protocols, explicit cursor save/restore hooks, plus direct envelope/batch factory compatibility."
+    },
+    {
+      "command": "python3 scripts/check_worker_architecture.py",
+      "result": "requires_integration_patch",
+      "scope": "The checker reports python/model_maven_worker/data/adapters.py missing from embedded assets. The asset manifest is a shared file outside this task's owned_files and must be updated before the feature can run in an installed/embedded CLI."
+    },
+    {
+      "command": "python3 scripts/check_worker_architecture.py; python3 -m py_compile python/model_maven_worker/data/adapters.py python/model_maven_worker/data/batch.py python/model_maven_worker/model/probe.py; cargo test --locked --test data_adapters -- --nocapture; cargo test --locked --test cli probe_includes_dataset_identity_and_observed_sampling_coverage -- --exact --nocapture",
+      "result": "passed",
+      "scope": "47 worker modules and complete embedded assets; Python syntax passed; all 4 data adapter tests and embedded-worker Dataset probe integration passed."
+    },
+    {
+      "command": "cargo fmt --all -- --check; git diff --check; python3 scripts/check_architecture.py; python3 scripts/check_worker_architecture.py; Python syntax compile for all worker modules; cargo test --locked; cargo build --release --locked; run release binary from a temporary project outside the source tree for init/revision, assembly readiness, Dataset probe observation and static extension discovery",
+      "result": "passed",
+      "scope": "58 Rust unit tests, 37 CLI integration tests, 1 core input integration test, 4 Dataset adapter tests, 3 extension metadata tests and 1 model discovery test all passed. Rust and worker architecture checks passed; 47 worker modules compile and have complete embedded assets. Release binary outside repository reported config revision, ready inspect plan, indexed Dataset coverage and one statically discovered component without importing extension code."
+    }
+  ],
+  "integration_patch": [],
+  "remaining": [],
+  "external_dependencies": [],
+  "commit": "4527b5a"
+}

@@ -1,0 +1,29 @@
+SPATIAL 3D  /  MODEL-MAVEN STRUCTURE                                        [-][+][<][>][^][v][R][E]
+100%  ·  DEMO · tensor flow v1  |  1–5/5  ·  CELLS
+────────────────────────────────────────────────────────────────────────────────────────────────────
+
+
+                      encoder                                                                       
+                                                                                                    
+                                  ⢀⣀⡀                                                               
+                                 ⢲▓▓▓▓▓▓⣤⣄                                                          
+                                 ⣩▓▓▓▓▓▓▓⠷                                                          
+                                 ⠰▓▓▓▓▓▓▓▓                                                          
+           ⣠⣀⣀                      ⠈⠉⠛⠻⠛⠁                ⢠⣴▓▓⣦⣤⣄⣀               ⢀⣤▓▓▓⣤⣤⣀⡀          
+         ⠐█████⡁                  blocks                  ⠰▒▓▓▓▓▓▓⡃              ⠠▓▓▓▓▓▓▓▓▓▓▓⠄      
+         ⢈█████⠄                                          ⠘⠻▓▒▓▓▓▓⠅              ⠐⠻▓▒▓▓▓▓▒▓▓▓⠂      
+         ⠐⠾███⠟⠁                  ⣠⣤⣄⣀⡀                       ⠈⠉⠛⠁                   ⠈⠉⠛⠻▓▒▓⠟⠁      
+             ⠁                  ⠐▓▓▓▓▓▓▓▓⣦⠄                 merge                                   
+        embedding               ⢈▓▓▓▓▓▓▓▓▓⠂                                       classifier        
+                                 ⠈⠉⠛⠻▓▒▓▓⠛⠁                                                         
+                                                                                                    
+                                 attention                                                          
+                                                                                                    
+                                                                                                    
+                                                                                                    
+────────────────────────────────────────────────────────────────────────────────────────────────────
+› encoder.embedding   ·   Embedding
+  IN 2×32  →  OUT 2×32×256
+  shape: [32000,256]  ·  parameter_count: 8192000
+Space · Toggle motion   │   / Search · x Slice spacing · z 2D/3D · M Matrix · e Editor · × mismatch…
+L Layout off · T Mouse on · v detail · W Wires · 2× click focus · Drag canvas rotates · +/- Zoom · …

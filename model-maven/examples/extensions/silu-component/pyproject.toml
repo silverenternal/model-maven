@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "model-maven-silu-example"
+version = "0.1.0"
+description = "A minimal packaged Layer component for Model-Maven"
+requires-python = ">=3.10"
+dependencies = ["torch>=2.1"]
+
+[project.entry-points."model_maven.components"]
+silu = "model_maven_silu.layer:make_silu"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+model_maven_silu = ["__model_maven__/*.json"]

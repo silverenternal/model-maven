@@ -1,0 +1,63 @@
+{
+  "task_id": "CLI-06",
+  "status": "done",
+  "owner": "总协调人",
+  "baseline": "84a6304",
+  "branch": "integration",
+  "commit": "9aa059e",
+  "files_changed": [
+    "src/presentation/pages/probe.rs",
+    "src/presentation/widgets/call_list.rs",
+    "src/presentation/widgets/tensor_tree.rs",
+    "src/presentation/pages/mod.rs",
+    "src/presentation/widgets/mod.rs",
+    "src/presentation/workbench.rs"
+  ],
+  "implemented": [
+    "Probe 成功后进入逐次调用浏览器；每次模块调用单独列出 module path、共享模块 invocation 次数、call id 和父调用。全局行号与分页选择保持一致。",
+    "输入和输出端口使用可展开的嵌套树显示 Tensor shape、dtype、device 和 requires_grad；标量值隐藏，不透明节点和截断信息明确显示。",
+    "页面显示模型入口、批次入口、单次批次样本范围、train/eval 模式、保留记录数、观测调用数、覆盖说明和轨迹截断；未观测分支不会被描述为验证通过。",
+    "失败页面显示最后观测模块、输入摘要和项目源码位置；支持只读查看项目内源码上下文、浏览失败调用输入、更换批次、修复后重试。重试保留模型入口和当前批次。",
+    "浏览使用当前 Probe 报告，不重复运行 worker；新 Probe、模型/批次变更及编辑动作清除此前调用证据。"
+  ],
+  "validation": [
+    {
+      "command": "cargo fmt --check",
+      "result": "passed"
+    },
+    {
+      "command": "git diff --check",
+      "result": "passed"
+    },
+    {
+      "command": "cargo check --locked",
+      "result": "passed"
+    },
+    {
+      "command": "cargo test --locked",
+      "result": "passed: 34 unit + 33 CLI integration tests; 0 failed"
+    },
+    {
+      "command": "Linux PTY: shared Linear called with [2,4] and [3,4]; open each call and expand nested inputs",
+      "result": "passed: two invocations remained separately selectable and showed their respective input shapes; model factory counter stayed at one while navigating the report."
+    },
+    {
+      "command": "Linux PTY: fail on an incompatible model dimension, open project source context",
+      "result": "passed: failure stayed explicitly failed, the last module was model.fusion_projection, and fixture.py source lines around the failing call rendered."
+    },
+    {
+      "command": "Linux PTY: fail on initial batch, select a compatible batch, retry",
+      "result": "passed: model entry remained selected, batch changed to fixture:good, and the successful retry showed input shape [3,4]."
+    },
+    {
+      "command": "Probe page unit coverage",
+      "result": "passed: pagination rejects selections outside the visible page; partial coverage and truncated traces are stated; nested values and scalar redaction are covered."
+    }
+  ],
+  "integration_patch": [
+    "Integrated the Probe browser into the workbench action path so one user action dispatches exactly one probe; successful results populate the existing cache only after the browser returns.",
+    "Kept the integration in src/presentation/workbench.rs under coordinator ownership; page and widget implementation remains in their dedicated modules."
+  ],
+  "backend_requests": [],
+  "remaining": []
+}

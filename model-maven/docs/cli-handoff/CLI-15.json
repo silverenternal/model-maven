@@ -1,0 +1,225 @@
+{
+  "task_id": "CLI-15",
+  "status": "in_review",
+  "owner": "coordinator",
+  "baseline": "da40a7248e07de3bb91775359bcbbc6cdee747c4",
+  "branch": "master",
+  "files_changed": [
+    "src/presentation/pages/diagnostic.rs",
+    "src/presentation/widgets/progress.rs",
+    "src/presentation/widgets/recovery_actions.rs",
+    "src/presentation/pages/mod.rs",
+    "src/presentation/pages/probe.rs",
+    "src/presentation/widgets/mod.rs",
+    "src/presentation/terminal.rs",
+    "src/presentation/pages/run_progress.rs",
+    "tests/cli.rs",
+    "clitodo.json",
+    "docs/cli-handoff/CLI-15.json",
+    "src/presentation/workbench.rs",
+    "tests/cli_onboarding_ui.rs",
+    "src/cli.rs",
+    "src/application/data_preview.rs",
+    "src/presentation/pages/data_index.rs",
+    "python/model_maven_worker/data/index.py",
+    "python/model_maven_worker/data/classification.py",
+    "python/model_maven_worker/data/presets.py",
+    "tests/test_data_index.py",
+    "docs/cli-guide.md",
+    "src/adapters/runs.rs",
+    "src/presentation/pages/storage.rs",
+    "tests/cli_recovery_data.rs",
+    "tests/cli_recovery_storage.rs",
+    "src/application/environment.rs",
+    "python/model_maven_worker/environment/setup.py",
+    "python/model_maven_worker/environment/lock.py",
+    "python/model_maven_worker/protocol.py",
+    "tests/environment_system_site.rs",
+    "tests/cli_ui_support/mod.rs",
+    "src/presentation/pages/home.rs",
+    "src/presentation/pages/environment.rs",
+    "tests/cli_recovery_project.rs"
+  ],
+  "implemented": [
+    "统一错误摘要先显示原因和影响，再给最多三条建议；每条保留可用性与确认要求，超出项进入详情。",
+    "详情展示诊断码、严重级别、证据边界、作用范围、源码位置、最后观测模块和最近日志，不打印模型调用输入。",
+    "E1-E5 有具名恢复样例和防止误删/误报的安全边界；常见分类数据、切分、解码/依赖和 checkpoint 错误码映射到相应场景。未接线的动作明确标为需要在对应页面确认执行能力。",
+    "前向 Probe 失败页复用恢复动作组件，将查看源码、检查最后调用输入、更换批次等动作按可用性呈现；原有编号输入分别进入源码查看、Tensor 检查、换批次重试与返回处理器。前向尚未开始时禁用调用输入检查。",
+    "PTY 真实交互覆盖错误批次触发前向失败、选择更换批次、输入有效批次后重新执行并成功；失败时用户的模型选择得以保留。",
+    "运行进度组件展示实际阶段、已处理量、可验证总量、反馈、停止能力状态和实际时长；未知总量不计算百分比/ETA，状态未知时不根据旧时间戳伪造运行时长。",
+    "终端人类错误输出与后台运行进度页接入新 renderer；JSON 报告保持机器结构，不等待交互。",
+    "结构化恢复动作的 reason 会从 domain diagnostic 保留到人类界面；否则用户只看到状态，不知道 conditional 动作的具体前置条件。",
+    "E1-E5 fallback 建议合并进入唯一的“建议下一步”区域，统一标为执行方式待确认并附安全边界，不重复追加通用查看详情动作。",
+    "展开超过三项的恢复动作详情时编号从第 4 项连续排列。",
+    "工作台中的后台预览失败现可修改保留的工厂/参数设置并重新确认启动；原样重试仍可用，取消不会阻塞工作台。重试请求始终绑定原预览项目根，切换工程后不会把原项目批次送入新工程。",
+    "后台预览收到 IMAGE_DECODER_UNAVAILABLE、ENVIRONMENT_RUNTIME_DEPENDENCY_MISSING、COMPONENT_DEPENDENCY_MISSING 或 PRESET_DEPENDENCY_MISSING 时提供 E4 env 路由；用户选依赖文件并显式输入 setup 后，复用项目环境 setup 应用服务。只有成功且未显式固定 Python 时才切换当前会话解释器；项目根已切换时禁止在另一项目安装。",
+    "E4 依赖诊断可进入真实项目环境 setup；E5 在正式训练的底层 checkpoint 写入错误（包括 STEP_FAILED.cause_code）后可查看运行存储，或预览/确认清理已结束运行的日志和进度。清理使用服务返回的固定计划 ID，明确排除 checkpoint；不会自动重启训练。",
+    "E3：新增 `m-model data index` 类目录扫描和全图解码验证；TTY 展示损坏相对路径/类别，用户选择并确认后只原子写入内容指纹绑定的排除协议，不改原图。分类预设仅在根路径与源指纹吻合时应用；源变化 fail closed。修复图片后 `--verify --clear-exclusions` 全量验证并显式确认可清除协议。JSON 检查只报告诊断，不产生排除副作用。",
+    "E5：storage 服务新增运行目录所在文件系统的可用/总字节数探测。探测失败在报告中显式标为 unknown 与原因，不影响运行目录占用结果；存储界面区分目录扫描占用与文件系统剩余空间。",
+    "E1/E2：新增真实后台预览 PTY。`CLASS_DATASET_ROOT_INVALID` 可在失败后编辑数据 root 并重试；`DATA_SPLIT_EMPTY` 可编辑 selected_split 并重试；两者均断言实际预览状态转为 succeeded。",
+    "E5 清理后恢复已形成真实同工程 PTY 闭环：注入一次真实 torch.save 失败，进入失败训练的固定日志/进度清理计划并输入 CLEAN，随后启动第二次真实 managed 训练。断言两条 run 记录分别失败/完成、成功 run 发布 latest checkpoint、失败 run 日志/进度已清理，且无关项目标记文件保留。",
+    "E4：补充明确的环境复用策略 `m-model env configure --system-site-packages`，默认隔离保持不变；基础包与 pip check 警告进入锁定基线，漂移和新增冲突 fail closed。真实 PTY 使用本地 wheel 安装缺失依赖到新 venv，继承当前真实 PyTorch 后重试相同预览请求，generation 2 成功且签名与 last_success 对应。",
+    "跨项目后台预览恢复 PTY：项目配置页提供可达的“打开/切换项目目录”入口。预览从 A 启动后切到 B，B 中 retry 仍对 A 的原请求生成第二代成功结果；B 不产生预览记录，也不将 A 的批次与 B 的模型组合试跑。"
+  ],
+  "validation": [
+    {
+      "command": "cargo test --locked --bin m-model diagnostic::tests -- --nocapture",
+      "result": "passed: diagnostic reason/impact ordering, three-action limit, detail output and E1-E5 mappings"
+    },
+    {
+      "command": "cargo test --locked --bin m-model progress::tests -- --nocapture",
+      "result": "passed: unknown totals omit percent/ETA; known progress displays stage, budget and supported cancellation"
+    },
+    {
+      "command": "cargo test --locked --bin m-model recovery_actions::tests -- --nocapture",
+      "result": "passed: action availability/confirmation and three-action summary"
+    },
+    {
+      "command": "cargo test --locked --bin m-model failed_probe_preserves_recoverable_choices -- --nocapture && cargo test --locked --bin m-model probe_actions_mark_unavailable -- --nocapture",
+      "result": "passed: Probe recovery choices map to existing interactive routes and unavailable call inspection is explicit"
+    },
+    {
+      "command": "cargo test --locked --test cli workbench_probe_recovery_changes_batch_and_retries_the_forward_pass -- --exact --nocapture",
+      "result": "passed: PTY changes an invalid batch, retries the real forward pass, and observes exactly one failure followed by success"
+    },
+    {
+      "command": "cargo test --locked --test cli failed_probe_locates_the_last_module_and_user_source_frame -- --exact --nocapture",
+      "result": "passed: human error output retains last observed module and project source location"
+    },
+    {
+      "command": "cargo test --locked --test cli workbench_run_browse_preserves_filters_and_reports_unknown_progress -- --exact --nocapture",
+      "result": "passed after preserving prior progress summary and suppressing invalid epoch-derived duration"
+    },
+    {
+      "command": "cargo test --locked --quiet",
+      "result": "passed: full workspace, 23 targets and 270 tests; zero failures"
+    },
+    {
+      "command": "cargo check --locked && cargo fmt --all -- --check && git diff --check && python3 scripts/check_architecture.py && python3 scripts/check_worker_architecture.py && python3 scripts/check_compatibility.py",
+      "result": "passed"
+    },
+    {
+      "command": "cargo test --locked --bin m-model presentation::pages::diagnostic::tests -- --nocapture",
+      "result": "passed 6 tests including structured reason preservation and single-render, explicitly unverified E1-E5 fallback actions."
+    },
+    {
+      "command": "cargo test --locked --bin m-model presentation::widgets::recovery_actions::tests -- --nocapture",
+      "result": "passed 2 tests including continuous numbering for actions beyond the first three."
+    },
+    {
+      "command": "cargo test --locked --bin m-model presentation::widgets::progress::tests -- --nocapture",
+      "result": "passed 2 tests for unknown totals, factual stage/budget, and cancellation capability rendering."
+    },
+    {
+      "command": "cargo test --locked --test cli_onboarding_ui -- --test-threads=1",
+      "result": "passed: 15 real PTY tests including failed background preview edit/retry with confirmation, successful retry, cancellation and managed trial."
+    },
+    {
+      "command": "cargo test --locked --test cli_onboarding_ui -- --test-threads=1",
+      "result": "passed: 15/15 PTY tests in the current worktree, including failure/edit/confirmed retry, cancellation, workbench recovery and real evaluation."
+    },
+    {
+      "command": "cargo test --locked --test cli_onboarding_ui environment_dependency_failure_routes_to_confirmed_project_setup -- --exact --nocapture",
+      "result": "passed: real PTY emits structured IMAGE_DECODER_UNAVAILABLE, chooses env, explicitly confirms setup, reaches the project environment service; empty requirements are rejected and no .venv is created."
+    },
+    {
+      "command": "cargo test --locked --test cli_onboarding_ui workbench_background_preview -- --test-threads=1; cargo test --locked --test cli_onboarding_ui failed_background_preview_can_edit_and_retry_without_blocking_the_workbench -- --exact --nocapture",
+      "result": "passed: background preview cancel/success, failed edit-and-confirmed-retry, and environment-recovery route remain functional."
+    },
+    {
+      "command": "cargo clippy --locked --all-targets -- -D warnings; cargo fmt --all -- --check; git diff --check",
+      "result": "passed after recovery route integration."
+    },
+    {
+      "command": "cargo test --locked --test cli_onboarding_ui environment_dependency_failure_routes_to_confirmed_project_setup -- --exact --nocapture",
+      "result": "passed: PTY propagates a real structured missing-decoder diagnostic to explicit project environment setup; empty dependency inputs fail safely with no virtualenv side effect."
+    },
+    {
+      "command": "cargo test --locked --test cli_onboarding_ui checkpoint_write_failure_opens_storage_and_safe_cleanup_preview -- --exact --nocapture",
+      "result": "passed: actual PyTorch training reaches atomic checkpoint save and injected disk-write failure; CLI reports cause code, displays storage and fixed log/progress-only cleanup preview; cancel retains run log and publishes no checkpoint."
+    },
+    {
+      "command": "cargo clippy --locked --all-targets -- -D warnings; cargo test --locked --bin m-model presentation::pages::storage::tests -- --nocapture; cargo fmt --all -- --check; git diff --check",
+      "result": "passed: all-target strict Clippy, storage rendering 3/3, formatting and whitespace checks."
+    },
+    {
+      "command": "cargo test --locked --test cli_onboarding_ui damaged_class_images_can_be_explicitly_excluded_and_are_not_deleted -- --exact --nocapture",
+      "result": "passed: real PyTorch/Pillow PTY flow lists damaged class-folder image, confirms content-bound exclusion without deleting source, verifies the generated classification batch omits it, repairs it, runs full verification and explicitly clears the protocol; batch then includes the repaired image. JSON mode reports CLASS_SAMPLES_DAMAGED without applying exclusions."
+    },
+    {
+      "command": "PYTHONPATH=python python3 -m pytest -q tests/test_data_index.py",
+      "result": "passed: 2 data-index protocol tests including stale-source refusal and verified protocol clearing."
+    },
+    {
+      "command": "python3 scripts/check_worker_architecture.py",
+      "result": "passed: embedded worker assets and import boundaries include data index worker."
+    },
+    {
+      "command": "cargo test --locked --bin m-model adapters::runs::tests::storage_reports_filesystem_capacity_for_the_run_directory -- --exact --nocapture",
+      "result": "passed: reads available and total bytes from the real filesystem containing the project run directory."
+    },
+    {
+      "command": "cargo test --locked --bin m-model presentation::pages::storage::tests -- --nocapture",
+      "result": "passed 4/4: renders available capacity, reports explicit unknown on probe failure, and retains existing storage and cleanup safety messaging."
+    },
+    {
+      "command": "python3 scripts/verify_product_acceptance.py --case complex-model-workflow --python python3 --binary target/debug/m-model --output-dir docs/acceptance/results/cli15-incremental-20261121",
+      "result": "passed with source fingerprint; acceptance covers complex model construction, staged dual-optimizer training, checkpoint resume equivalence, and export/restore. It is not a user study, GPU/performance result, or E5 retry proof."
+    },
+    {
+      "command": "cargo test --locked --test cli_recovery_data -- --test-threads=1 --nocapture",
+      "result": "passed 2/2: real classification_batch reports CLASS_DATASET_ROOT_INVALID and DATA_SPLIT_EMPTY; the PTY edit-and-retry routes change settings, rerun the background preview, and persist succeeded state."
+    },
+    {
+      "command": "cargo test --locked --bin m-model cli::public_help_contract_tests::documented_operations_resolve_to_live_help_and_registered_execution -- --exact --nocapture",
+      "result": "passed after documenting the executable `data index --root <CLASS_FOLDER> --verify` form in operations.json; the live Clap command tree and registered data_index worker operation agree."
+    },
+    {
+      "command": "cargo test --locked --test cli_recovery_storage -- --test-threads=1 --nocapture",
+      "result": "passed 1/1: one-time real checkpoint save failure → fixed-plan CLEAN confirmation → successful real managed retrain in the same project; verifies failed and completed run records, checkpoint publication, log/progress cleanup, and preservation of an unrelated project file."
+    },
+    {
+      "command": "cargo test --locked --test environment_system_site -- --test-threads=1 --nocapture",
+      "result": "passed 3/3: explicit system-site policy installs a local hashed wheel while inheriting the real base runtime; existing environments reject in-place policy changes and a new isolated path remains available; E4 real PTY begins with IMAGE_DECODER_UNAVAILABLE, prepares the venv, retries the same preview signature and publishes generation 2; empty requirements still fail without creating a venv."
+    },
+    {
+      "command": "cargo clippy --locked --all-targets -- -D warnings; cargo fmt --all -- --check; git diff --check; python3 scripts/check_worker_architecture.py",
+      "result": "passed per implementation run; compatibility contract required updating to register environment_configure before final compatibility check."
+    },
+    {
+      "command": "cargo test --locked --test cli_recovery_project -- --exact --nocapture",
+      "result": "passed 1/1: real PTY switches from project A to B while an A-owned preview is active/failed; retry publishes generation 2 under A with matching last-success signature, leaves B preview state absent, and never starts mixed A-batch/B-model trial."
+    },
+    {
+      "command": "cargo test --locked --bin m-model presentation::pages::environment::tests -- --nocapture",
+      "result": "passed 3/3: the environment page renders explicit isolation/inheritance policy and displays inherited base pip-check warnings separately from new conflicts."
+    },
+    {
+      "command": "cargo clippy --locked --all-targets -- -D warnings; cargo fmt --all -- --check; git diff --check; python3 scripts/check_compatibility.py; python3 scripts/check_worker_architecture.py",
+      "result": "passed after project-switch and environment-policy page integration."
+    }
+  ],
+  "integration_patch": [
+    "已由协调人将 pages::diagnostic 与 widgets::{progress,recovery_actions} 注册到 presentation 模块。",
+    "terminal::display 的失败报告接入诊断摘要和详情；run_progress 页接入真实进度字段及可验证时长。",
+    "CLI-06 的 run_probe_interaction 已有源码/调用输入/换批次/重试处理器；probe 页面现在复用统一动作 renderer 展示其中三项，并保留已实现的选择路由。",
+    "新增 CLI-15 PTY 回归用例证明换批次动作会重建输入快照并再次调用真实前向；错误批次引发失败、兼容批次成功。",
+    "E4 `env` recovery is only shown for dependency-related diagnostic codes. It calls EnvironmentCommand::Setup on the current project through ApplicationUiServices, requires an explicit `setup` confirmation, reports setup results, and keeps the failed preview intact for a later retry."
+  ],
+  "backend_requests": [
+    {
+      "service": "运行监督/停止与 E1-E5 恢复操作",
+      "missing_contract": "诊断动作描述尚未全部绑定可执行的工作台动作；停止能力和恢复是否成功必须取自真实监督/领域服务状态。当前未知时明确显示未知，不能将建议项当作已执行。",
+      "affected_acceptance": [
+        "CLI-15 交互恢复动作",
+        "R-run 合作停止与实际结束状态",
+        "E1-E5 的真实故障恢复端到端验收"
+      ],
+      "frontend_can_continue": "可展示结构化建议、可用性、所需确认和准确的手动路径；不能声称建议已执行或后台任务已停止。"
+    }
+  ],
+  "remaining": [
+    "E1/E2/E3、E4 环境准备成功后同请求预览重试、E5 存储/清理/重训及跨项目预览恢复均已有真实集成证据。",
+    "H1 用户理解测试和训练停止/恢复点整体端到端研究仍由 QA/RUN 验收；真人观察不能由仓库测试替代。"
+  ]
+}

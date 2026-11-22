@@ -1,0 +1,81 @@
+{
+  "schema_version": 1,
+  "task_id": "EDIT-02",
+  "status": "done",
+  "baseline": "Coordinator worktree; 2026-11-19; Python/PyTorch runtime selected by MODEL_MAVEN_TEST_PYTHON.",
+  "branch": "master (uncommitted coordinator worktree)",
+  "files_changed": [
+    "python/model_maven_worker/edit/plan.py",
+    "python/model_maven_worker/edit/layers.py",
+    "python/model_maven_worker/edit/variants.py",
+    "python/model_maven_worker/edit/source_candidates.py",
+    "python/model_maven_worker/edit/source_set.py",
+    "python/model_maven_worker/edit/source_dispatch.py",
+    "src/adapters/source_edits.rs",
+    "src/adapters/variants.rs",
+    "tests/cli.rs",
+    "tests/edit_transactions.rs",
+    "edittodo.json",
+    "docs/module-handoff/EDIT-02.json"
+  ],
+  "implementation": [
+    "Layer variant histories replay structural edits through a candidate model before persistence; invalid grouped operations do not replace the saved variant.",
+    "Cross-file source changes use a durable journal with per-file replacement and recovery. The implementation documents and tests recovery without claiming cross-file instantaneous atomicity.",
+    "Undo/redo validates the recorded source digests and preserves user edits made after the original transaction.",
+    "ModuleList reindexing and ModuleDict named branch ordering are represented in replayable edit history and readable project source.",
+    "Added structural operations persist a deterministic initialization_seed. Replayed add/replace/custom constructors run inside a forked CPU RNG scope, so weights remain stable without advancing the worker global RNG; legacy operations derive the same seed from the variant base seed and history position."
+  ],
+  "validation": [
+    {
+      "command": "cargo test --locked source_edits::tests -- --nocapture",
+      "result": "passed 3/3: multi-file history, partial replacement recovery, and conflict-safe journal recovery."
+    },
+    {
+      "command": "cargo test --locked --test edit_transactions -- --nocapture",
+      "result": "passed: replayed seeded weights match, CPU global PyTorch RNG state is unchanged, and untouched sibling Parameter identity is preserved during a targeted edit."
+    },
+    {
+      "command": "cargo test --locked --test cli layer_variant_crud_is_persistent_undoable_and_transactional -- --exact --nocapture",
+      "result": "passed: failed candidate rollback, valid grouped repair, persisted initialization seed, undo/redo and replacement."
+    },
+    {
+      "command": "cargo test --locked --test cli source_set_transaction_updates_multiple_model_files_and_is_undoable -- --exact --nocapture",
+      "result": "passed: multi-file source set preview, commit, undo and redo."
+    },
+    {
+      "command": "cargo test --locked --test cli source_undo_refuses_to_overwrite_external_changes -- --exact --nocapture",
+      "result": "passed: external modifications are preserved on undo conflict."
+    },
+    {
+      "command": "cargo test --locked --test cli workbench_keeps_invalid_variant_draft_until_grouped_dimension_repair_passes -- --exact --nocapture",
+      "result": "passed: grouped repair succeeds without discarding the invalid draft prematurely."
+    },
+    {
+      "command": "cargo test --locked --test cli source_structural_transaction_groups_crud_across_sequential_files -- --exact --nocapture",
+      "result": "passed: multi-file Sequential edits revalidate and undo/redo."
+    },
+    {
+      "command": "cargo test --locked --test cli source_modulelist_crud_uses_indexes_and_keeps_readable_python -- --exact --nocapture",
+      "result": "passed: ModuleList index paths and reindex behavior."
+    },
+    {
+      "command": "cargo test --locked --test cli module_dict_crud_preserves_named_branch_order_in_variant_and_source -- --exact --nocapture",
+      "result": "passed: named ModuleDict branch order survives variant and source replay."
+    },
+    {
+      "command": "python3 -m py_compile python/model_maven_worker/edit/plan.py python/model_maven_worker/edit/layers.py python/model_maven_worker/edit/variants.py; cargo fmt --all",
+      "result": "passed."
+    },
+    {
+      "command": "cargo test --locked --bin m-model adapters::source_edits::tests -- --nocapture",
+      "result": "passed 7/7. Three subprocess tests kill a child process at the first file replacement, after all files are replaced, and after history state is synced but before pending journal removal; restart recovery completes exactly once or removes the stale journal."
+    },
+    {
+      "command": "cargo test --locked --quiet",
+      "result": "passed: full Rust workspace after source transaction failpoint coverage and concurrent CLI-15/CLI-16 changes."
+    }
+  ],
+  "remaining": [],
+  "integration_patch": "EDIT-02 acceptance is complete. Cross-file replacement is per-file atomic with a durable journal and restart recovery; no cross-file instantaneous atomicity claim is made. Weight and optimizer state migration remains the separate EDIT-05 scope.",
+  "commit": null
+}

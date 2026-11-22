@@ -1,0 +1,126 @@
+{
+  "schema_version": 1,
+  "task_id": "DATA-05",
+  "status": "done",
+  "baseline": "Shared worktree atop da40a72 with integrated coordinator changes; Linux x86_64, Python 3.14.10 + torch 2.15.0 (HIP 7.2), plus isolated /tmp torchvision 0.29.1+rocm7.2.",
+  "branch": "master (shared worktree; no commit)",
+  "files_changed": [
+    "clitodo.json",
+    "datatodo.json",
+    "docs/cli-handoff/CLI-04.json",
+    "docs/module-handoff/DATA-05.json",
+    "examples/presets/README.md",
+    "examples/presets/classification.py",
+    "python/model_maven_worker/data/presets.py",
+    "src/presentation/pages/onboarding.rs",
+    "src/presentation/workbench.rs",
+    "tests/cli_onboarding_ui.rs",
+    "tests/data_presets.rs"
+  ],
+  "dependencies_verified": [
+    {
+      "task_id": "DATA-02",
+      "status": "done",
+      "evidence": "class-folder content index and deterministic split/subset protocol"
+    },
+    {
+      "task_id": "DATA-03",
+      "status": "done",
+      "evidence": "ordered transforms and per-step ports"
+    },
+    {
+      "task_id": "TRAIN-01",
+      "status": "done",
+      "evidence": "managed-step budget/loss/gradient/finite-value checks"
+    },
+    {
+      "task_id": "MODEL-03",
+      "status": "done",
+      "evidence": "native model and layered contract/probe path"
+    }
+  ],
+  "implementation": [
+    "Added a native Tiny CNN and torchvision ResNet18 factory. ResNet18 weights are pinned to the official IMAGENET1K_V1 URL; random initialization is offline, and pretrained weights require explicit allow_download opt-in when the verified cache is absent.",
+    "Added cache evidence with source URL, path, SHA-256 and expected hash-prefix verification. Missing cache returns PRETRAINED_WEIGHTS_NOT_CACHED without network access; cached classifier weights retain the feature extractor and reset the task-specific fc head.",
+    "Added real class-folder batch factory that composes content indexing, deterministic class split, ordered transform execution, decoded RGB samples, tensor/target shape checks, and dataset/split/sample fingerprints.",
+    "The batch callable advances deterministic epoch ordering and provides state_dict/load_state_dict hooks for checkpoint resume. The training callable returns cross-entropy loss and named accuracy through the existing managed-step protocol.",
+    "Added example project wrappers and a copy-and-run Tiny CNN budget-try guide; custom code remains replaceable through ordinary Python callables.",
+    "Coordinator completed the human onboarding route: the Tiny CNN adapter uses local class folders, explicit confirmation, no-overwrite writes, envelope binding for probe, and the shared managed-step training function."
+  ],
+  "validation": [
+    {
+      "command": "cargo test --locked --test data_presets -- --nocapture",
+      "result": "passed: 6 tests on the current coordinator worktree. Added a simulated missing-torchvision case that verifies PRESET_DEPENDENCY_MISSING and fails if random ResNet18 attempts a weight download; existing tests cover no implicit pretrained download, real class-folder images through embedded CLI managed-step training, Tiny CNN inspection, cursor state and parameter diagnostics."
+    },
+    {
+      "command": "cargo test --locked --test data_presets -- --nocapture (rerun after CLI-18 compile fix)",
+      "result": "passed 6/6 on the integrated worktree; no remaining Rust compile blocker from the concurrent terminal page work."
+    },
+    {
+      "command": "python3 scripts/check_worker_architecture.py",
+      "result": "passed: embedded preset asset coverage complete."
+    },
+    {
+      "command": "cargo test --locked --test cli_onboarding_ui tiny_cnn_onboarding_creates_editable_project_and_probes_real_images -- --nocapture",
+      "result": "passed: generated adapter/project defaults, real-image forward probe, and one-step managed training trial."
+    },
+    {
+      "command": "python3 -m py_compile python/model_maven_worker/data/presets.py examples/presets/classification.py; python3 scripts/check_worker_architecture.py; git diff --check",
+      "result": "passed; worker architecture reports 66 modules with complete embedded asset coverage."
+    },
+    {
+      "command": "python3 --version; python3 -m pip show torch torchvision; inspect ~/.cache/torch/hub/checkpoints/resnet18-f37072fd.pth; cargo test --locked --test data_presets -- --nocapture",
+      "result": "环境为 Python 3.14.10、torch 2.15.0；torchvision 未安装，官方 resnet18-f37072fd.pth 缓存不存在。定向测试 6/6 通过，覆盖缺失 torchvision 的结构化诊断、随机初始化不触发下载、预训练权重缺失时不隐式联网，以及 Tiny CNN 真实图片/共享 managed-step 流程；未执行真实 ResNet18 构建或真实权重加载。"
+    },
+    {
+      "command": "PYTHONPATH=/tmp/model-maven-tv-rocm:python:$PYTHONPATH python3 - <<'PY' (ROCm torchvision 0.29.1+rocm7.2 installed into an isolated /tmp target; no model weights downloaded)",
+      "result": "passed against system torch 2.15.0 (ROCm 7.2): built real torchvision ResNet18 with weights=random; batch (2,3,224,224) produced logits (2,3), finite cross-entropy, and finite gradients for all 62 gradient-bearing tensors. Weight plan reports random with no source/cache. This removes the random-construction/forward/backward environment blocker; it does not validate official pretrained checkpoint loading."
+    },
+    {
+      "command": "cargo test --locked --test data_presets -- --nocapture (independent rerun after adding registry/cache-integrity cases)",
+      "result": "passed 8/8: Tiny CNN real image batch + embedded CLI inspect + shared managed-step; static Tiny/ResNet catalog discovery without importing torch/torchvision; absent/corrupt pretrained cache refusal; missing torchvision refusal; diagnostics."
+    },
+    {
+      "command": "PYTHONPATH=/tmp/model-maven-tv-rocm:python python3 inline integration (no download)",
+      "result": "passed: torch 2.15.0 HIP 7.2.53211 + torchvision 0.29.1+rocm7.2 built random ResNet18; real 3-class folder images and Resize(224)/ToTensor/ImageNet Normalize produced inputs (3,3,224,224), targets (3,), logits (3,3), finite loss and finite gradients on all 62 trainable tensors. Weight plan was random/source=null."
+    },
+    {
+      "command": "PYTHONPATH=/tmp/model-maven-tv-rocm:python target/debug/m-model --python python3 --json model inspect --model model_maven_worker.data.presets:build_resnet18 --model-param num_classes=3 --model-param weights='\"random\"'",
+      "result": "passed: installed embedded worker exposed the built-in ResNet18 factory; CLI inspect status=success and reported 68 modules."
+    },
+    {
+      "command": "curl --fail --location https://download.pytorch.org/models/resnet18-f37072fd.pth -o /tmp/model-maven-resnet18-f37072fd.pth && sha256sum /tmp/model-maven-resnet18-f37072fd.pth",
+      "result": "official artifact downloaded once; full SHA-256 f37072fd47e89c5e827621c5baffa7500819f7896bbacec160b1a16c560e07ec. The full digest is now pinned and compared by the cache verifier; the catalog exposes it."
+    },
+    {
+      "command": "PYTHONPATH=python python3 inline cache verification (copy official artifact to a temporary cache; call resnet18_weights_status and build_resnet18)",
+      "result": "full SHA verified, torch.load(weights_only=True) read 102 state entries including fc.weight shape [1000,512]; build_resnet18 then returned PRESET_DEPENDENCY_MISSING because torchvision is unavailable in the selected interpreter. The valid artifact was read but not actually applied to a ResNet module."
+    },
+    {
+      "command": "cargo test --locked --test data_presets invalid_resnet_cache_fails_closed_without_replacing_user_file -- --exact --nocapture; cargo test --locked --test data_presets preset_registry_exposes_tiny_cnn_and_resnet_without_loading_optional_ml_libraries -- --exact --nocapture",
+      "result": "both focused tests passed 1/1; they cover fail-closed cache behavior, pinned full SHA metadata, and no optional ML imports for catalog discovery."
+    },
+    {
+      "command": "python3 -m py_compile python/model_maven_worker/data/presets.py; python3 scripts/check_worker_architecture.py; git diff --check -- python/model_maven_worker/data/presets.py tests/data_presets.rs",
+      "result": "passed; embedded worker asset coverage complete."
+    },
+    {
+      "command": "Isolated torchvision 0.29.1+rocm7.2 install; official ResNet18 IMAGENET1K_V1 checkpoint SHA-256 verification; real build_resnet18(num_classes=3, weights=\"imagenet1k-v1\") integration",
+      "result": "passed on Python 3.14.10 / torch 2.15.0 HIP 7.2 using an isolated /tmp torchvision target and cache. Full digest f37072fd47e89c5e827621c5baffa7500819f7896bbacec160b1a16c560e07ec matched; 100 non-classifier tensors matched exactly; fc.weight/bias reset to shape (3,512)/(3,); forward loss and all gradients finite. System Python and project dependency set were unchanged."
+    }
+  ],
+  "limitations": [
+    "Preset catalog API describe_presets() exposes Tiny CNN and ResNet18 without importing optional ML libraries, and direct embedded model factory invocation works; however, m-model currently has no human-facing presets list/search command, and onboarding currently offers Tiny CNN only. ResNet18 discoverability is through the example docs/direct factory path, not an interactive preset picker; this CLI integration is outside DATA-05 owned files."
+  ],
+  "integration_patch": [
+    "Coordinator registered model_maven_worker/data/presets.py in src/adapters/worker_assets.rs.",
+    "Added embedded CLI model inspect test and real image-classification managed-step trial through the Rust binary without copying preset modules into the project.",
+    "Added to examples and tests: direct built-in factory entrypoints run via m-model model inspect and m-model try without copying preset modules into the project.",
+    "Human-first onboarding now creates a project-local editable adapter and validates actual image data before returning to the workbench; related implementation and evidence are recorded in docs/cli-handoff/CLI-04.json."
+  ],
+  "commit": null,
+  "blockers": [
+    "Preset list/search and onboarding choice remain CLI-owned; do not count them as a backend DATA-05 blocker."
+  ],
+  "remaining": []
+}

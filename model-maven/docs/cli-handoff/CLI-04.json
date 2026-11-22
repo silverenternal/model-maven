@@ -1,0 +1,78 @@
+{
+  "task_id": "CLI-04",
+  "status": "in_review",
+  "owner": "总协调人",
+  "branch": "integration",
+  "files_changed": [
+    "clitodo.json",
+    "datatodo.json",
+    "docs/cli-handoff/CLI-04.json",
+    "docs/module-handoff/DATA-05.json",
+    "python/model_maven_worker/data/presets.py",
+    "src/cli.rs",
+    "src/main.rs",
+    "src/presentation/mod.rs",
+    "src/presentation/pages/onboarding.rs",
+    "src/presentation/pages/project_open.rs",
+    "src/presentation/pages/session_restore.rs",
+    "src/presentation/service.rs",
+    "src/presentation/session_store.rs",
+    "src/presentation/workbench.rs",
+    "tests/cli.rs",
+    "tests/cli_components_ui.rs",
+    "tests/cli_onboarding_ui.rs",
+    "tests/cli_resnet18_onboarding.rs",
+    "tests/run_supervision.rs"
+  ],
+  "implemented": [
+    "未配置项目的 TTY 首次启动进入向导；提供连接已有模型、打开目录、分类预设、环境诊断和模型工作台入口。",
+    "接入已有模型只要求根模型工厂与可选代表批次；临时 inspect/probe 不写 project.json，显式保存才创建默认入口。",
+    "分类预设先检查本地类别子目录、每类至少一张受支持图像并显示类别数；用户确认后仅在配置目录、适配文件均可安全新建时生成可编辑 classification.py 和模型/批次默认入口。",
+    "预设保存 envelope 批次绑定，执行真实图片前向；生成 wrapper 的 classification_step 可读取 probe/training envelope，并完成一部 managed-step 试跑。",
+    "项目配置、分类入口已存在或 .model-maven 是符号链接时拒绝覆盖/跟随；无效目录、取消和初始化失败均不留下本次创建的入口文件。",
+    "打开目录校验并切换项目根，读取目标项目入口并按目标项目切换默认 Python 环境。向导恢复点只记录确认过的入口和路径，不自动执行或写入业务配置。",
+    "首次分类向导提供 Tiny CNN/ResNet18 选择；ResNet18 在写项目文件前以当前 Python 环境运行真实工厂检查，缺少兼容 torchvision 时给出恢复建议且不写文件。生成的 ResNet18 adapter 使用 224px ImageNet 标准化、随机初始化，并明确不下载权重。"
+  ],
+  "validation": [
+    {
+      "command": "cargo test --locked --test cli_onboarding_ui -- --test-threads=1",
+      "result": "passed: 10 PTY tests, including real-image probe and one-step managed trial; cancel, existing adapter and symlinked config directory are rejected without overwriting."
+    },
+    {
+      "command": "cargo test --locked --test data_presets -- --test-threads=1",
+      "result": "passed: 5 existing preset/managed-step regressions."
+    },
+    {
+      "command": "python3 -m py_compile python/model_maven_worker/data/presets.py && cargo fmt --all -- --check && git diff --check && python3 scripts/check_worker_architecture.py && python3 scripts/check_compatibility.py",
+      "result": "passed; worker asset coverage and Rust/Python compatibility checks are clean."
+    },
+    {
+      "command": "cargo test --locked --test cli_onboarding_ui tiny_cnn_onboarding_creates_editable_project_and_probes_real_images -- --exact --nocapture",
+      "result": "passed on current shared worktree: first-run onboarding creates an editable Tiny CNN project, probes real image files, and reaches the managed one-step trial."
+    },
+    {
+      "command": "python3 scripts/verify_cli_interaction.py --binary target/debug/m-model --python python3 --output-dir docs/acceptance/results/cli-interaction-20261121-current",
+      "result": "passed: current acceptance matrix; real JSON model inspect and forward probe; PTY existing-project onboarding completed a probe, returned to the workbench, and did not require a training loss. This does not cover onboarding preset selection or user value."
+    },
+    {
+      "command": "cargo test --locked --test cli_onboarding_ui -- --test-threads=1",
+      "result": "passed: 11 PTY tests. Tiny CNN onboarding runs real image probe and managed one-step trial; ResNet18 dependency preflight is tested and leaves project untouched when torchvision is missing. Positive ResNet18 generation/probe is not verified in this Python environment because torchvision is unavailable."
+    },
+    {
+      "command": "cargo test --locked --test cli_resnet18_onboarding -- --exact --nocapture",
+      "result": "passed 1/1 with real PyTorch 2.15 and torchvision 0.29 fixture: TTY onboarding selected ResNet18, generated the two-class project, ran real forward (76 observed module calls, logits [2,2]), then one managed step with finite loss and nonzero gradient/parameter observations."
+    }
+  ],
+  "integration_patch": [
+    "Onboarding pages enable the Tiny CNN starter and describe its local class-folder requirements and no-overwrite behavior.",
+    "After explicit confirmation, the flow scans visible class directories, previews Init without writing, creates classification.py with create_new, and persists model/batch/envelope defaults through the existing Init service.",
+    "The generated adapter delegates to embedded model_maven_worker.data.presets; the initial probe uses the real dataset. Managed training remains the shared existing runner and can be started with classification:step.",
+    "If configuration save fails, the coordinator removes only the exact adapter bytes it created; user data and any concurrently changed file are retained.",
+    "DATA-05 independently completed the real ResNet18 official-cache load path with pinned SHA and finite gradients.",
+    "Added m-model data presets [QUERY] as a read-only human-facing catalog/search path. It needs no project configuration, reports model entrypoint/input/weight choices, and does not download pretrained weights."
+  ],
+  "backend_requests": [],
+  "remaining": [
+    "真实用户接入时长、首次收益与理解情况仍需 CLI-20/QA-04 配对观察。"
+  ]
+}

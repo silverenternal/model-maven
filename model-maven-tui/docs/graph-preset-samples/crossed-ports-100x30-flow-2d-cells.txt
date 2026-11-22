@@ -1,0 +1,29 @@
+MODEL-MAVEN · Tab Details · ? Controls · L Layout off · T Mouse on · F Failure path · m Welcome
+100%  ·  2D  ·  OFFLINE · observed tensor flow v1  |  1–4/4  ·  CELLS
+────────────────────────────────────────────────────────────────────────────────────────────────────
+  ╭─ model.encoder[0] → net.head[0]
+  ╰─ 2×48 → …×32  ·  shape mismatch
+
+                                   ⢀  ⡤⠤⠤⡤⠤⠤⠤⠤⠤⢰⠒⠒⠒⠒⡆                            ⡖⠒⠒⠒⢲
+                            ⢸⠉⠉⠉⠉⠉⠉⠙⠉⠉⡏⠉⠉⠉⠉⠉⠉⠉⠉⠸⠤⠤⠤⠤⠇                            ⠧⠤⠤⠤⠼
+              ⡖⠒⠒⠒⢲⣀⣀⣀⣀⣀⣀⣀⣀⣀⣸⣀⣀⣀⣀⡀    ⡇         merge                           adapter
+              ⠧⠤⠤⠤⠼⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠁⠠⡣ ⠉⠉⠉⠁
+             encoder            ⠈⡎             ⢰⠒⠒⠒⠒⡆
+                                 ⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠸⠤⠤⠤⠤⠇
+                                                head
+
+
+────────────────────────────────────────────────────────────────────────────────────────────────────
+› model.encoder[0] → net.head[0]
+  2×48 → …×32  ·  shape mismatch
+
+Space · Toggle motion   │   / Search · z 2D/3D · M Matrix · × mismatch · dashed unknown · H tree
+L Layout off · T Mouse on · W Wires · Drag canvas to pan · +/- Zoom · Enter expand · w/u/d trace · …
+w Cycle · W Wire list · u Source · d Destination
+────────────────────────────────────────────────────────────────────────────────────────────────────
+Offline sample · Failed · Graph
+model.head #2 · demo.py:12 · a Axes
+Observed 2×48 · Expected …×32
+changing-batch-01 · trace captured
+observed
+? · ↑↓ calls · e Preview · Tab graph · q quit · i Call evidence · s Settings · m Welcome

@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "task_id": "TRAIN-02",
+  "status": "done",
+  "baseline": "0.13.39 coordinator worktree",
+  "branch": "master (uncommitted coordinator worktree)",
+  "files_changed": [
+    "python/model_maven_worker/train/checkpoint.py",
+    "python/model_maven_worker/train/state.py",
+    "python/model_maven_worker/train/runner.py",
+    "src/adapters/runs.rs",
+    "src/application/replay_tests.rs",
+    "tests/train_resume.rs",
+    "product.json",
+    "traintodo.json",
+    "docs/module-handoff/TRAIN-02.json"
+  ],
+  "implementation": [
+    "Checkpoint writes use unique step-scoped payload filenames, fsync payload and directory, then atomically publish a SHA-256 manifest pointer; failed publication leaves the previous committed recovery point intact.",
+    "Resume validates manifest/payload step, mode and model digest, payload model-state fingerprint, requested mode/configuration, source manifest, Python/PyTorch versions and environment fingerprint before continuing.",
+    "Python, CPU Torch and available CUDA device RNG states are stored and restored. Missing device RNG on CUDA, changed visible device count, or unavailable saved CUDA state returns a specific compatibility diagnostic before training resumes.",
+    "Training status coverage text now describes device RNG behavior; task evidence and product plan source versions were synchronized to 0.13.40.",
+    "Resume orchestration rejects a live supervised run and rejects an unknown run state that lacks verifiable supervisor identity, preventing duplicate active training."
+  ],
+  "validation": [
+    {
+      "command": "cargo test --locked --test train_resume -- --nocapture",
+      "result": "passed: 3 checkpoint fault, integrity and simulated multi-device RNG restore/drift tests."
+    },
+    {
+      "command": "cargo test --locked --test train_modes -- --nocapture",
+      "result": "passed: 4 training mode and checkpoint-resume tests."
+    },
+    {
+      "command": "cargo test --locked",
+      "result": "passed: full workspace regression; 69 unit tests, 41 CLI integration tests and all data, model, environment, protocol, operation and training suites."
+    },
+    {
+      "command": "cargo fmt --all -- --check; python3 -m py_compile python/model_maven_worker/train/state.py python/model_maven_worker/train/checkpoint.py python/model_maven_worker/train/runner.py; python3 scripts/check_worker_architecture.py; python3 scripts/check_compatibility.py; git diff --check",
+      "result": "passed."
+    },
+    {
+      "command": "cargo test --locked --bin m-model resume_rejects_a_live_run_and_a_run_with_unknown_supervisor_identity -- --nocapture",
+      "result": "passed: application-level guard test for a live supervised run and an unknown state without verifiable supervisor identity."
+    }
+  ],
+  "integration_patch": [
+    "The product and all module TODO source references now use document version 0.13.40.",
+    "CUDA RNG compatibility is simulated in tests because this run did not establish validation on a physical CUDA device; GPU training remains separately scoped to TRAIN-04."
+  ],
+  "remaining": [],
+  "commit": null
+}

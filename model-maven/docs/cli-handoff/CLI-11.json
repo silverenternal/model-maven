@@ -1,0 +1,82 @@
+{
+  "schema_version": 1,
+  "task_id": "CLI-11",
+  "owner": "coordinator",
+  "status": "done",
+  "baseline": "da40a7248e07de3bb91775359bcbbc6cdee747c4",
+  "branch": "master (coordinator integration worktree)",
+  "files_changed": [
+    "src/presentation/pages/runs.rs",
+    "src/presentation/pages/run_detail.rs",
+    "src/presentation/pages/run_progress.rs",
+    "src/presentation/pages/mod.rs",
+    "src/presentation/pages/home.rs",
+    "src/presentation/workbench.rs",
+    "python/model_maven_worker/__init__.py",
+    "python/model_maven_worker/train/runner.py",
+    "tests/cli.rs",
+    "tests/run_supervision.rs",
+    "clitodo.json"
+  ],
+  "interface_changes": [
+    "运行列表支持名称/ID 搜索、状态筛选、保留状态筛选和分页；活动、失败、中断及 unknown 运行优先显示。",
+    "运行详情支持查看快照、查看进度、请求协作停止；只对训练步骤试跑提供按所选历史记录重试。返回时保留原筛选和页码。",
+    "进度浏览使用单次快照刷新；退出页面不会继续附加、启动或停止任务。停止前要求确认并使用当前明确选择的运行 ID。",
+    "训练进度事件新增 stage 与 at_ms；无事件时页面显示未上报，不伪造阶段、步数或指标。"
+  ],
+  "implementation": [
+    "列表排序将 running/stopping 放前，failed/interrupted/unknown 紧随其后，再按启动时间倒序。",
+    "unknown 或非活动运行不会出现可执行的停止入口；停止动作使用协作停止，不隐式强制终止。",
+    "详情页退出后重新读取列表状态，并保持原过滤条件与所在页。"
+  ],
+  "validation": [
+    {
+      "command": "cargo fmt --all",
+      "result": "passed"
+    },
+    {
+      "command": "git diff --check",
+      "result": "passed"
+    },
+    {
+      "command": "cargo check --locked --quiet",
+      "result": "passed"
+    },
+    {
+      "command": "python -m py_compile python/model_maven_worker/__init__.py python/model_maven_worker/train/runner.py",
+      "result": "passed"
+    },
+    {
+      "command": "cargo test --locked --test cli workbench_run_browse_preserves_filters_and_reports_unknown_progress -- --nocapture",
+      "result": "passed: Linux PTY filter/detail return, unknown supervisor status, progress stage/steps/metric/time, and failure diagnostics."
+    },
+    {
+      "command": "cargo test --locked --test run_supervision detached_run_heartbeats_attach_is_read_only_and_stop_is_cooperative -- --nocapture",
+      "result": "passed: detached worker remains active after leaving the workbench progress view; confirmed workbench stop request transitions it to interrupted; existing attach viewer and force-stop path also pass."
+    },
+    {
+      "command": "cargo test --locked --quiet",
+      "result": "passed: 201 Rust unit and integration tests across all test binaries."
+    },
+    {
+      "command": "python3 scripts/check_worker_architecture.py && python3 scripts/check_compatibility.py && python3 scripts/check_architecture.py",
+      "result": "passed: worker module/import boundaries, embedded assets, Rust/Python protocol compatibility, and Rust architecture boundaries."
+    },
+    {
+      "command": "cargo fmt --all -- --check && git diff --check",
+      "result": "passed."
+    }
+  ],
+  "integration_patch": [
+    "为训练进度事件补充真实阶段名和 Unix 毫秒更新时间，供进度页面呈现。"
+  ],
+  "remaining": [
+    "当前核心每项目单活动任务约束使多个活动候选不可产生；运行详情始终绑定用户当前选择的确切 ID。",
+    "首个训练进度事件之前没有更细的初始化子阶段事件；页面明确显示尚未上报，不虚构阶段信息。"
+  ],
+  "completion_evidence": [
+    "Linux PTY 验证列表筛选、详情返回原筛选、失联监督状态 unknown、进度阶段/步数/Loss/更新时间与失败诊断。",
+    "Linux PTY 启动真实 detached run，离开进度页后仍继续运行；再次进入并确认停止后，运行以 interrupted 结束。",
+    "全量 Rust 测试 201 项通过，架构、兼容、格式及差异空白检查通过。"
+  ]
+}

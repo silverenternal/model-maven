@@ -1,0 +1,72 @@
+{
+  "schema_version": 1,
+  "task_id": "ENV-03",
+  "status": "done",
+  "baseline": "Current shared worktree after full Rust workspace test pass; coordinator review 2026-11-20.",
+  "branch": "master (uncommitted shared worktree)",
+  "files_changed": [
+    "src/adapters/exports.rs",
+    "tests/cli.rs",
+    "envtodo.json",
+    "docs/module-handoff/ENV-03.json",
+    "python/model_maven_worker/run/snapshot.py",
+    "python/model_maven_worker/__init__.py",
+    "tests/run_snapshot.rs",
+    "docs/module-handoff/RUN-01.json",
+    "runtodo.json"
+  ],
+  "implemented": [
+    "Existing exporter creates the package in a sibling staging directory and publishes it by directory rename; existing targets require --overwrite and are preserved in a backup directory.",
+    "Export includes run-observed Python sources, applicable variant, checkpoint, environment snapshot, the bundled model/variant worker, and exact registered extension distribution files plus PEP 508 Python dependency closure.",
+    "Restore verifies runtime versions, each bundled/source file SHA-256 and checkpoint hash, reconstructs from bundled source and variant, and validates the restored model-state digest.",
+    "New exports include a `bundle_files` SHA-256 inventory for environment.json, requirements.snapshot.txt, variant.json when present, the top-level worker compatibility module, and every bundled worker package file. Restore verifies these files before importing the worker or using the variant.",
+    "Standalone restore exposes the verified `weights_only` checkpoint payload through `load_training_state()` for caller-owned handling of steps, optimizer, RNG, batch, step and loop state; it does not reconstruct arbitrary training callables or resume them automatically.",
+    "The export integration test now checks the restore API, deletes the original project directory, clears PYTHONPATH/PYTHONHOME, and rejects tampered checkpoint/variant files."
+  ],
+  "validation": [
+    {
+      "command": "cargo test --locked --test cli export_training_run_copies_verified_sources_and_restores_weights -- --exact --nocapture",
+      "result": "passed after adding original-project deletion and sanitized-environment restore; the model-state digest matched."
+    },
+    {
+      "command": "cargo test --locked --quiet",
+      "result": "full workspace passed immediately before the new isolated-restore assertion; rerun the relevant target and full workspace before completion."
+    },
+    {
+      "command": "python3 scripts/verify_complex_acceptance.py --binary target/debug/m-model --python python3",
+      "result": "passed: multimodal shared-call diagnosis, local Layer repair, two-stage optimizer-aware resume and independent variant export/restore all matched expected state hashes."
+    },
+    {
+      "command": "python3 scripts/verify_extension_package.py --binary target/debug/m-model --python python3",
+      "result": "passed after run snapshot integration patch: registered Layer variant trained, extension bundle exported, original install removal/alteration did not shadow bundle, and tampered files were rejected."
+    },
+    {
+      "command": "python3 scripts/verify_provider_extension.py --binary target/debug/m-model --python python3",
+      "result": "passed after run snapshot integration patch: independent Provider edit undo/redo/reload/train/export/restore, runtime version mismatch and tampered bundle rejection passed."
+    },
+    {
+      "command": "cargo test --locked --test run_snapshot -- --nocapture",
+      "result": "passed: variant-pinned component JSON copied into read-only run snapshot and content drift rejected."
+    },
+    {
+      "command": "Temporary isolated Python harness executed the generated restore_model.py from exports.rs; model-state check, weights_only training-state API, and bundle tamper rejection",
+      "result": "passed without cargo: a source fixture and bundled worker were copied to a fresh temp directory, PYTHONPATH/PYTHONHOME were removed, model weights restored with matching digest, load_training_state returned completed_steps and optimizer state, and tampered environment.json was rejected before worker import."
+    },
+    {
+      "command": "cargo test --locked --test cli export_training_run_copies_verified_sources_and_restores_weights -- --exact --nocapture",
+      "result": "passed 1/1 against current shared worktree, including after original-project deletion. The generated restore script ran with PYTHONPATH/PYTHONHOME removed; model state hash and load_training_state optimizer/step payload were verified. Tampered checkpoint/variant hashes and a missing environment.json bundle file were rejected."
+    },
+    {
+      "command": "cargo fmt -- tests/cli.rs; git diff --check -- tests/cli.rs docs/module-handoff/ENV-03.json",
+      "result": "passed."
+    }
+  ],
+  "limitations": [
+    "load_training_state() exposes the SHA-256-verified weights_only checkpoint payload; it does not rebuild arbitrary optimizer/scheduler/user-callable state or claim exact continuation. Caller code must interpret and validate continuation.",
+    "Datasets, external model weights, private package-index settings, unregistered packages, OS/accelerator libraries and drivers are not copied; README and export manifest describe those omissions.",
+    "Generated assembly code remains part of the source snapshot and dependencies must stay importable; export does not vendor arbitrary project/runtime dependencies."
+  ],
+  "remaining": [],
+  "commit": null,
+  "integration_patch": "Standalone export/restore is accepted for the declared boundary: it verifies source/bundle/checkpoint hashes, reconstructs the model from the copied variant/source and embedded worker, and exposes a verified checkpoint payload. The focused Rust CLI integration passes after removing the source project and environment path variables, and checks tamper plus missing-bundle rejection."
+}

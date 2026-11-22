@@ -1,0 +1,65 @@
+{
+  "task_id": "ENV-01",
+  "owner": "总协调人",
+  "baseline": "da40a7248e07de3bb91775359bcbbc6cdee747c4",
+  "branch": "master",
+  "status": "done",
+  "files_changed": [
+    "python/model_maven_worker/environment.py (deleted)",
+    "python/model_maven_worker/environment/__init__.py",
+    "python/model_maven_worker/environment/common.py",
+    "python/model_maven_worker/environment/lock.py",
+    "python/model_maven_worker/environment/setup.py",
+    "python/model_maven_worker/environment/snapshot.py",
+    "src/adapters/worker_assets.rs",
+    "src/adapters/python.rs",
+    "scripts/check_worker_architecture.py",
+    "scripts/verify_environment_setup.py",
+    "product.json",
+    "envtodo.json",
+    "docs/module-handoff/ENV-01.json"
+  ],
+  "interface_changes": [
+    "将 environment.py 迁移为 environment 包；包根重新导出 environment_operation、snapshot_environment、digest、distribution_name_key、Python/路径/锁服务函数，保留 worker 与 train/extensions 调用接口。",
+    "Worker 架构守卫允许 environment 子模块依赖同域模块，并持续检查循环依赖、内嵌资源完整性与跨域方向。"
+  ],
+  "implemented": [
+    "新建项目环境前使用 mkdir 独占目标目录；目标在检查后被其他进程占用时返回 ENVIRONMENT_ALREADY_EXISTS。",
+    "venv 创建、锁依赖安装、pip check、包指纹验证或项目环境选择写入失败/取消时，按目录设备号和 inode 核验所有权后回滚本次新建目录。既有环境不会进入清理路径。",
+    "增加离线 CLI 验收：分别在 venv 创建后、依赖安装阶段注入失败，确认临时目标被清除，原环境解释器与 .model-maven/environment.json 均保持不变。",
+    "扩展离线验收，覆盖递归 requirements 输入清单与 ABI 变化导致的 ENVIRONMENT_LOCK_STALE。",
+    "CLI 收到 Ctrl+C 后向 worker 进程组发送 SIGINT，给 worker/子进程最多 10 秒回滚本次临时状态，再对未退出进程组使用 SIGKILL；JSON 输出保持 USER_INTERRUPTED 与退出码 130。",
+    "离线验收实际启动 CLI，在 venv 创建成功且依赖安装开始前的阻塞阶段发送 SIGINT，验证新目标被清理、旧环境与项目选择配置不变。",
+    "把共享路径/进程/身份工具、requirements 与 wheel-hash lock、项目 venv setup/drift、运行环境 snapshot 分入 common.py、lock.py、setup.py、snapshot.py。",
+    "Rust 内嵌 worker 清单包含 package initializer 与全部 environment 子模块；旧 model_maven_worker.environment 导入兼容。",
+    "把未支持 VCS/editable/direct file 来源拒绝、source credential redaction 和 recursive requirements/ABI drift 加入离线验收。"
+  ],
+  "validation": [
+    {
+      "command": "python3 -m py_compile python/model_maven_worker/environment.py scripts/verify_environment_setup.py; cargo build --locked; python3 scripts/verify_environment_setup.py",
+      "result": "passed",
+      "scope": "Worker/验收脚本语法有效，CLI 构建成功；离线环境流程、递归 requirements 指纹、Python ABI 漂移诊断、venv 创建失败及依赖安装失败回滚均通过。"
+    },
+    {
+      "command": "cargo test --locked --test cli sigint_cancels_the_worker_and_returns_exit_code_130 -- --exact --nocapture; cargo build --locked; python3 scripts/verify_environment_setup.py",
+      "result": "passed",
+      "scope": "通用 worker SIGINT 回归通过；真实 CLI 环境 setup 取消返回退出码 130 和 USER_INTERRUPTED，新环境被回滚、旧环境和选择配置不变。"
+    },
+    {
+      "command": "cargo test --locked; cargo fmt --all -- --check; git diff --check; python3 scripts/check_architecture.py; python3 scripts/check_worker_architecture.py; python3 scripts/check_compatibility.py; python3 scripts/verify_environment_setup.py",
+      "result": "passed",
+      "scope": "137 项全套 Rust 测试通过；环境 worker 拆分与真实取消回滚端到端验收通过；格式、diff、Rust/Worker 架构、内嵌资源覆盖和协议兼容性均通过。"
+    }
+  ],
+  "integration_patch": [
+    "environment.py 仍是 CORE-02/CORE-05 当前 worker 的环境入口，本次安全回滚实现直接放在该文件并通过既有 environment_setup 操作接通；按实际文件位置扩展 ENV-01 owned_files。",
+    "src/adapters/python.rs 的 worker 信号处理属于 CORE adapter 接线；该改动由协调人作为 ENV 取消回滚的 integration patch 实施，SIGINT 后给 worker 10 秒清理窗口，超时再强杀。",
+    "src/adapters/worker_assets.rs 注册 environment 包的五个 Python 模块；scripts/check_worker_architecture.py 更新同域依赖规则并验证完整 embed coverage。",
+    "src/adapters/python.rs 将取消升级为 SIGINT 优雅清理，最多 10 秒后 SIGKILL；通用 worker SIGINT 回归保持退出码 130。"
+  ],
+  "remaining": [],
+  "notes": [
+    "清理时限为 10 秒；超时进程会被强制终止。离线验证覆盖中小型环境目录，尚未测量极慢磁盘上的大型环境清理耗时。",
+    "如果超时强杀打断递归目录删除，操作目标可能残留；既有环境和环境选择记录不受影响，CLI 会拒绝把不完整目录当作有效 venv。"
+  ]
+}

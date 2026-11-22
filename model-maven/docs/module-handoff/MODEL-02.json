@@ -1,0 +1,51 @@
+{
+  "task_id": "MODEL-02",
+  "owner": "总协调人",
+  "baseline": "da40a7248e07de3bb91775359bcbbc6cdee747c4",
+  "branch": "master",
+  "status": "done",
+  "files_changed": [
+    "python/model_maven_worker/model/probe.py",
+    "tests/model_probe.rs",
+    "docs/contracts/operations.json",
+    "product.json",
+    "modeltodo.json",
+    "docs/module-handoff/MODEL-02.json"
+  ],
+  "interface_changes": [
+    "Probe top-level now carries probe_id, forward_id, batch_id, batch_identity_stable, structural input_signature and bounded input_output_paths.",
+    "Each retained and failure-location call adds invocation_id, probe_id, forward_id, batch_id, alias_paths, parent_invocation_id, input_signature and input_output_paths while retaining legacy call_id/parent_call_id/paths.",
+    "batch_id is stable only when the Dataset observation has both a data fingerprint and stable sample IDs; other batch factories receive an execution-local opaque ID."
+  ],
+  "implemented": [
+    "Structural input signatures hash tensor shape/dtype/device and bounded nested structure, excluding tensor contents and scalar values.",
+    "Calls across shared module aliases retain distinct per-call inputs and scoped IDs; the last call identity remains available on FORWARD_FAILED, including after trace truncation.",
+    "Existing TTY ProbeCache continues to browse the captured report and layer details without dispatching a new forward; its cache is scoped by model/batch/variant/seed selections."
+  ],
+  "validation": [
+    {
+      "command": "cargo test --locked --test model_probe -- --nocapture",
+      "result": "passed",
+      "scope": "Different shapes through one shared Linear remain separate; repeated input signatures remain structural while probe/forward IDs differ; different input batch produces new IDs; failure report carries last-call scope; paths include inputs/outputs."
+    },
+    {
+      "command": "cargo test --locked --test cli probe_ -- --nocapture",
+      "result": "passed",
+      "scope": "5 existing forward-probe CLI regressions, including shared calls, Dataset observations, failure location/truncation and managed training probe."
+    },
+    {
+      "command": "cargo test --locked; cargo fmt --all -- --check; git diff --check; python3 scripts/check_architecture.py; python3 scripts/check_worker_architecture.py; python3 scripts/check_compatibility.py",
+      "result": "passed",
+      "scope": "完整套件 138 项通过：69 unit、3 architecture、41 CLI、2 core_inputs、4 data_adapters、3 extensions_metadata、1 model_discovery、1 model_probe、7 operation_readiness、6 protocol_versions、1 train_modes；Rust/Worker 架构、worker 内嵌资源和兼容性检查通过。"
+    }
+  ],
+  "integration_patch": [
+    "docs/contracts/operations.json now maps legacy call ordinals to forward-scoped invocation identities and documents structural signatures."
+  ],
+  "remaining": [],
+  "notes": [
+    "Direct batch IDs are intentionally execution-local because identical factory references do not prove identical batch contents.",
+    "input_signature is a structural tensor signature, not a content digest or proof of semantic equivalence.",
+    "TTY layer browser passes the latest matching ProbeCache report into Layer detail rendering; the existing cache-boundary and no-forward-render tests pass. No standalone PTY scripted walk-through was run in this task."
+  ]
+}

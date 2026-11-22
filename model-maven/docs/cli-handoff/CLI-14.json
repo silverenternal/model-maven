@@ -1,0 +1,150 @@
+{
+  "schema_version": 1,
+  "task_id": "CLI-14",
+  "status": "in_progress",
+  "owner": "coordinator",
+  "baseline": "da40a7248e07de3bb91775359bcbbc6cdee747c4",
+  "branch": "master (shared coordinator worktree)",
+  "files_changed": [
+    "clitodo.json",
+    "docs/cli-handoff/CLI-14.json",
+    "src/application/data_preview.rs",
+    "src/main.rs",
+    "src/presentation/pages/mod.rs",
+    "src/presentation/pages/preview.rs",
+    "src/presentation/terminal.rs",
+    "src/presentation/widgets/mod.rs",
+    "src/presentation/widgets/preview_delivery.rs",
+    "src/presentation/widgets/preview_state.rs",
+    "src/presentation/workbench.rs",
+    "tests/data_preview.rs",
+    "src/presentation/background_preview.rs",
+    "src/presentation/pages/home.rs",
+    "tests/cli_onboarding_ui.rs",
+    "tests/cli_preview_generation.rs",
+    "docs/cli-guide.md",
+    "docs/cli-acceptance-matrix.json"
+  ],
+  "implementation": [
+    "成功预览由独立页面呈现来源类型、切分、请求/实际样本数、种子、请求 generation、缩短后的输入签名、图像数及产物类型/路径/媒体类型/大小。页面不打印样本 ID 或完整签名。",
+    "仅 stdin 和 stderr 都是终端且非 JSON 时，缺少 Dataset/batch 来源才进入预览设置表单；管道和 JSON 保持非交互。可逐项设置工厂入口与 NAME=JSON 参数、切分、样本上限、可选指纹/变换文件、内置或自定义 Renderer 和 local/SSH 交付，再以一个请求执行。空行保留默认/当前值，重复参数名可修订，非法参数会提示后留在表单内，缺失必填值会要求重输；取消返回 USER_INTERRUPTED，不启动请求。",
+    "freshness 状态区分当前已发布、复用已验证缓存、被较新请求取代、生成中、失败、取消和未知；没有发布证据时不会将产物标成当前结果。",
+    "当前预览失败时，应用层只在请求 ID/generation 仍是当前失败任务且 last_success_stale=true 时，将最后成功版本及产物引用带回 CLI；终端显示明确的过期标签和历史 HTML 路径，不伪称旧产物对应本次设置。",
+    "本机交付展示准确 HTML 路径并说明未自动打开；SSH 交付保留用户确认的目标、端口、命令和本机位置，并说明不会自动连接或传输。缺字段时不猜测路径或连接参数。",
+    "终端 preview 命令将成功和失败报告统一交给页面渲染；失败页面显示 freshness 边界与结构化诊断，避免旧结果被误认为新结果。",
+    "预览失败后提供修改设置重试、原样重试或返回诊断；修改表单沿用上次来源/入口/参数/切分/样本数/Renderer/交付设置。空切分名会留在表单内重问，非法重试动作会留在菜单，不会意外重复启动预览。",
+    "PTY 验收覆盖无 DISPLAY、带空格的项目根目录/本机下载路径、非默认 SSH 端口和 shell 引号；缺少 SSH 主机参数由 Clap 在 worker 启动前拒绝，测试确认预览 generation 不变。",
+    "JSON 参数解析失败现在通过标准 Report 返回 CLI_ARGUMENT_INVALID；Clap 的 help/version 请求仍走原生帮助输出。",
+    "Page presentation now labels artifacts by publication evidence: superseded requests are explicitly historical, other unpublished references remain unconfirmed, and only published reports use the published-artifact heading. Missing local `opened` metadata is displayed as unknown instead of inferred false; partial SSH delivery fields retain only known paths and never invent a host/port/command.",
+    "工作台在首页原 6 号产物/清理分类内提供预览入口；保留首页 8=退出和产物页 3=返回的旧编号，预览为产物页 4。独立子进程执行真实 CLI preview，私有暂存 stdout/stderr 避免阻塞管道；用户可返回工作台继续编辑/训练，再查看、等待或 SIGINT 协作取消。完成后展示原始结构化预览报告。",
+    "成功的批次预览可引导用户用相同 batch factory/参数和当前模型入口创建一份 managed-step 试跑输入快照；固定为 1 步并复用现有 readiness/run-plan 确认服务。训练重新调用批次工厂，不复用预览样本；Dataset 预览不被误当作批次契约。",
+    "后台任务绑定启动时的规范项目根；切换至其他工程后仍可读取旧任务结果，但不会把旧项目批次与新项目模型组合试跑。首页与产物页入口保持旧动作序号，避免新增预览打断既有 PTY/脚本交互。",
+    "工作台只在预览报告明确 `published=true` 时提供试跑快捷入口；被较新 generation 取代的成功报告只展示历史 freshness 与当前 generation，不会继续使用旧批次设置。"
+  ],
+  "validation": [
+    {
+      "command": "cargo test --locked --bin m-model preview -- --nocapture",
+      "result": "passed: 8 unit tests for preview content, empty artifacts, current/cached/superseded/failed freshness, stale previous artifacts, local paths and SSH command presentation"
+    },
+    {
+      "command": "cargo test --locked --test data_preview -- --nocapture",
+      "result": "passed: 6 integration tests including real PNG/HTML generation, Dataset/custom renderer paths, latest-generation publication, human cached-result output, PTY setup through a real worker invocation, cancellation that leaves the current generation unchanged, and renderer failure showing the prior artifact as stale"
+    },
+    {
+      "command": "cargo check --locked && cargo fmt --all -- --check",
+      "result": "passed"
+    },
+    {
+      "command": "cargo test --locked --quiet",
+      "result": "passed: complete Rust workspace test run, including all CLI and integration targets"
+    },
+    {
+      "command": "cargo test --locked --test data_preview cli_preview_samples_project_batch_and_publishes_real_artifacts -- --exact --nocapture",
+      "result": "passed: PTY exercises empty split correction, invalid retry-menu choice, failure then edit-and-rerun to a successful real preview, plus cancellation preserving generation"
+    },
+    {
+      "command": "cargo fmt --all -- --check",
+      "result": "passed after retry-flow update"
+    },
+    {
+      "command": "cargo test --locked --test data_preview -- --nocapture",
+      "result": "passed: all 6 data preview integration tests, including the updated end-to-end PTY failure/edit/retry path"
+    },
+    {
+      "command": "cargo test --locked --test data_preview cli_preview_samples_project_batch_and_publishes_real_artifacts -- --exact --nocapture",
+      "result": "passed: real terminal with DISPLAY removed; project and destination paths containing spaces; non-default SSH port; quoted scp paths; missing SSH host rejected before worker launch without changing current preview generation"
+    },
+    {
+      "command": "cargo test --locked --test data_preview -- --nocapture",
+      "result": "passed: all 6 integration tests; missing SSH arguments return one structured JSON diagnostic and do not start/change preview work"
+    },
+    {
+      "command": "target/debug/m-model --json --help",
+      "result": "passed: exit 0, help text on stdout, no stderr output"
+    },
+    {
+      "command": "cargo test --locked --quiet",
+      "result": "passed: full Rust workspace; captured exit code 0 after preview retry, SSH path quoting and JSON argument-diagnostic changes"
+    },
+    {
+      "command": "cargo test --locked --bin m-model preview::tests -- --nocapture",
+      "result": "passed: 5 page tests cover current published output, empty artifacts, stale previous output, superseded historical artifacts, and pending artifact references without publication claims."
+    },
+    {
+      "command": "cargo test --locked --bin m-model preview_state::tests -- --nocapture",
+      "result": "passed: 2 freshness tests cover current/cached/superseded and failed/previous states."
+    },
+    {
+      "command": "cargo test --locked --bin m-model preview_delivery::tests -- --nocapture",
+      "result": "passed: 4 delivery tests cover confirmed local/SSH details, unknown local opened status, and incomplete SSH metadata without guessed fields."
+    },
+    {
+      "command": "cargo test --locked --test data_preview cli_preview_samples_project_batch_and_publishes_real_artifacts -- --exact --nocapture",
+      "result": "passed: real CLI/PTY renderer, preview publication, delivery and recovery integration remains intact."
+    },
+    {
+      "command": "cargo fmt --all -- --check; git diff --check -- src/presentation/pages/preview.rs src/presentation/widgets/preview_state.rs src/presentation/widgets/preview_delivery.rs docs/cli-handoff/CLI-14.json",
+      "result": "passed."
+    },
+    {
+      "command": "cargo test --locked --bin m-model presentation::pages::preview::tests::superseded_preview_artifacts_are_not_labeled_as_current_publication -- --exact --nocapture",
+      "result": "passed: verifies latest request ID/generation is shown and superseded artifacts cannot be labelled current or published."
+    },
+    {
+      "command": "cargo test --locked --test data_preview cli_preview_samples_project_batch_and_publishes_real_artifacts -- --exact --nocapture",
+      "result": "passed after strengthening human stale-result assertions: renderer failure output retains the last HTML artifact under an explicit expired label and cannot claim current/published status."
+    },
+    {
+      "command": "cargo test --locked --test cli_onboarding_ui -- --test-threads=1",
+      "result": "passed: 13 PTY tests. New real PyTorch flow starts a deliberately slow background preview, returns to home and edit pages while it is still running, waits and renders the actual result, then confirms the run plan and completes a real one-step managed trial using the same batch factory. Separate PTY cancellation test verifies the persisted request status becomes cancelled. Existing onboarding and project-switch flows also pass."
+    },
+    {
+      "command": "cargo check --locked --bin m-model; cargo test --locked --bin m-model presentation::pages::home::tests -- --nocapture; cargo fmt --all -- --check; git diff --check",
+      "result": "passed: binary compiles, workbench navigation tests pass, formatting and whitespace checks are clean."
+    },
+    {
+      "command": "cargo test --locked --test cli_onboarding_ui workbench_background_preview -- --test-threads=1; cargo test --locked --bin m-model presentation::pages::home::tests -- --nocapture",
+      "result": "passed: background preview success/return/edit/wait/managed-trial and cancellation PTY tests; both workbench category registration/order unit tests pass."
+    },
+    {
+      "command": "cargo test --locked --test cli_preview_generation -- --exact --nocapture",
+      "result": "passed 1/1 on Linux/PyTorch: a slow real workbench request A is superseded by independent CLI request B; A renders historical freshness and generation 2, never offers a trial, and current.json retains B as the succeeded publication."
+    }
+  ],
+  "integration_patch": [
+    "注册 preview page/state/delivery modules；terminal::display 将 operation=preview 的成功和失败报告交给该页面。",
+    "DATA-04 integration test 增加真实非 JSON CLI 调用，断言缓存状态、实际样本数、HTML 路径和未自动打开状态可读。",
+    "Workbench preview command 的 TTY 表单从同一命令调用入口收集设置；PTY 验证非法参数修订、批次参数/切分传入 Worker、真实预览生成与结果页显示；在切分步骤取消后确认当前 generation 未变化。",
+    "表单使用 is_interactive 同时核验 stdin/stderr 终端状态；JSON 和管道命令不触发交互读取。",
+    "PTY failure recovery now verifies empty split correction, invalid retry-menu choices do not rerun the failed operation, and editing the retained preview settings can repair the factory entrypoint and publish a new successful generation.",
+    "PTY delivery acceptance uses a project root containing spaces and DISPLAY unset; it verifies the generated scp command quotes the remote and local paths, preserves port 2244, and never connects/transfers automatically. Non-interactive SSH without a host is rejected before the worker changes preview state.",
+    "main.rs now catches Clap parse errors in --json mode and emits the normal single-document Report envelope; help/version remain native success output. The missing SSH options scenario exercises this branch and asserts no preview generation change.",
+    "Home keeps its existing eight action indices; the existing outputs/cleanup category contains Export, Clean, Back, then Preview, preserving old action 3=Back. Preview reuses the typed form and exact command in an isolated JSON child.",
+    "On successful batch preview, the shortcut copies only the selected model/batch entrypoints and batch factory arguments into Command::Try. Existing planning/readiness and explicit `start` confirmation create the immutable trial run input snapshot; no preview tensor is reused.",
+    "A real concurrent-generation PTY race exposed and closed a stale-result trial path: only a published current preview can feed managed-step planning; superseded results show their request/current generation without offering to train from stale settings."
+  ],
+  "remaining": [
+    "后台等待/返回/取消、同一工作台页面应对真实并发 generation 更替，以及以预览批次参数发起一步 managed-step 试跑均由真实 PTY/PyTorch 集成覆盖。H2 目标用户理解和页面可读性观察仍需 CLI-20/QA-04 配对研究。"
+  ],
+  "commit": null
+}

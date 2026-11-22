@@ -1,0 +1,409 @@
+{
+  "schema_version": "1.0.0",
+  "contract_version": 2,
+  "status": "proposed_except_legacy_report_and_current_ports",
+  "authority": [
+    "product.json modular_architecture",
+    "product.json behavior_contracts/G-validation",
+    "product.json agent_integration",
+    "moduletodo.json ownership and dependency rules"
+  ],
+  "implementation_boundary": "This file defines cross-module field ownership and planned service seams. A type or trait existing in Rust does not prove that the application produces, persists, or enforces it. Per-field status is authoritative.",
+  "shared_envelopes": {
+    "operation_request": {
+      "type": "domain::operation::OperationRequest",
+      "status": "proposed",
+      "fields": {
+        "contract_version": "Required contract major/minor generation; incompatible changes require a new version.",
+        "operation": "Canonical operation_ref selected by the user or caller.",
+        "inputs[]": "Only values and facts relevant to this operation, with source and optional source-scoped revision.",
+        "parameters": "Operation-specific open JSON object; owner module defines its schema."
+      }
+    },
+    "operation_plan": {
+      "type": "domain::operation::OperationPlan",
+      "status": "implemented_for_selected_application_operations",
+      "fields": [
+        "contract_version",
+        "plan_id",
+        "operation",
+        "readiness",
+        "inputs",
+        "base_revision"
+      ],
+      "rules": [
+        "The plan is for one selected operation; unrelated missing project fields do not block it.",
+        "ready requires every required fact, input, and capability to be available.",
+        "actions are suggestions with availability and reason; the CLI decides how to present them.",
+        "needs_input, unsupported, conditional, and unknown are distinct; conditional capability state is serialized as conditional and carries an explanation, while unknown is never treated as success."
+      ]
+    },
+    "legacy_report": {
+      "type": "domain::Report",
+      "status": "implemented",
+      "fields": [
+        "protocol_version",
+        "operation",
+        "status",
+        "data",
+        "diagnostics"
+      ],
+      "limitations": [
+        "success/error is not an operation readiness result.",
+        "data schemas vary by operation and are not yet normalized into typed DTOs.",
+        "operation currently mixes Rust report labels and Python worker operation names."
+      ]
+    },
+    "diagnostic": {
+      "type": "domain::diagnostic::Diagnostic",
+      "status": "legacy_wire_shape_implemented; details_contract_proposed",
+      "fields": [
+        "code",
+        "message",
+        "hint",
+        "details?"
+      ],
+      "details_fields": [
+        "severity",
+        "scope?",
+        "recovery_actions[]",
+        "evidence_state"
+      ],
+      "rule": "A recovery action is advice until an application service confirms it is available and executes it."
+    },
+    "identity_and_revision": {
+      "status": "proposed_envelope; provider semantics_owned_by_domain_modules",
+      "types": [
+        "ModelIdentity",
+        "ModuleInvocationIdentity",
+        "InputSource",
+        "ArtifactRef"
+      ],
+      "rules": [
+        "A revision is meaningful only for its named source/provider; it is not globally comparable.",
+        "Invocation identity is scoped to one probe/forward/batch. Dynamic call indices are not persistent edit targets.",
+        "Alias paths identify references to an instance; they do not duplicate module parameter ownership.",
+        "Sensitive input values are redacted from diagnostics, logs, and acceptance evidence."
+      ],
+      "legacy_mapping": {
+        "parent_invocation_id": "worker currently calls this parent_call_id",
+        "alias_paths": "worker currently returns paths",
+        "module_instance_id": "worker-generated instance id when available; CLI rows may currently use instance_id",
+        "source_revision": "source/manifest hashes where current operations expose them"
+      }
+    },
+    "state_and_event": {
+      "status": "proposed_envelope; concrete state formats_owned_by_domain_modules",
+      "types": [
+        "EditPlanContract",
+        "StateImpact",
+        "OperationEvent"
+      ],
+      "rules": [
+        "Every state category uses preserved/reset/migrated/not_applicable/unknown; omission is not equivalent to preserved.",
+        "Event sequence is monotonic within one operation id; event absence is not proof that work did not occur.",
+        "Artifact references carry owner and integrity identity; a path string alone is not proof of a valid artifact."
+      ]
+    }
+  },
+  "modules": {
+    "core": {
+      "owner": "CORE",
+      "responsibility": "Operation planning/execution seams, protocol version, diagnostics and cross-module adapters.",
+      "provides": [
+        "C-operation",
+        "C-diagnostic",
+        "typed service port definitions"
+      ],
+      "consumes": [],
+      "owns_fields": [
+        "operation_ref",
+        "plan_id",
+        "readiness.state",
+        "readiness.facts",
+        "readiness.actions",
+        "diagnostics[].code",
+        "diagnostics[].scope"
+      ],
+      "must_not_claim": [
+        "an operation is executable because its CLI command exists",
+        "a missing event means no work occurred"
+      ],
+      "status": "contracts_proposed; legacy Report and existing Backend ports implemented"
+    },
+    "model": {
+      "owner": "MODEL",
+      "responsibility": "Native model construction/discovery, input/output ports, module identity, forward evidence and contract checks.",
+      "provides": [
+        "C-model",
+        "model identity",
+        "per-invocation evidence",
+        "shape/dtype/device observations",
+        "declared input/output and per-module invocation contract evidence",
+        "ephemeral local invocation replay and metadata-only evidence reuse",
+        "contract evidence"
+      ],
+      "consumes": [
+        "OperationRequest",
+        "model/batch InputBinding",
+        "capability decisions",
+        "source revision"
+      ],
+      "owns_fields": [
+        "model_ref",
+        "module_instance_id",
+        "invocation_index",
+        "parent_invocation_id",
+        "alias_paths",
+        "input_output_paths",
+        "observed_mode",
+        "coverage",
+        "trace_truncated",
+        "contract_report",
+        "shape_inference",
+        "local_probe_reports",
+        "evidence_cache"
+      ],
+      "status": "native worker probe and optional JSON port contracts implemented; normalized Rust DTO remains planned"
+    },
+    "edit": {
+      "owner": "EDIT",
+      "responsibility": "Layer/source/variant/assembly plan, candidate validation, commit history, shared-instance policy and state migration.",
+      "provides": [
+        "C-edit",
+        "EditPlanContract payload",
+        "StateImpact",
+        "base/candidate revisions"
+      ],
+      "consumes": [
+        "ModelIdentity",
+        "source or variant revision",
+        "readiness facts/capabilities",
+        "explicit user decisions"
+      ],
+      "owns_fields": [
+        "plan_id",
+        "base_revision",
+        "edit operation payloads",
+        "EditPlanState",
+        "StateImpact"
+      ],
+      "status": "planned; existing CRUD is implemented in app/worker but not the unified plan contract"
+    },
+    "train": {
+      "owner": "TRAIN",
+      "responsibility": "Training modes, user steps/loops, budget, named optimizers, evaluation and resumable state.",
+      "provides": [
+        "C-training",
+        "training mode and step evidence",
+        "checkpoint state compatibility",
+        "metrics"
+      ],
+      "consumes": [
+        "model/batch or user-loop inputs",
+        "OperationPlan",
+        "data binding if selected",
+        "runtime capability"
+      ],
+      "owns_fields": [
+        "training_mode",
+        "step_budget",
+        "optimizer_groups",
+        "checkpoint compatibility",
+        "metric identity"
+      ],
+      "status": "planned; existing try/train/resume paths are implemented with documented limits"
+    },
+    "run": {
+      "owner": "RUN",
+      "responsibility": "Immutable run inputs, activity ownership, supervision, cancellation, events, artifacts and query.",
+      "provides": [
+        "C-run",
+        "OperationEvent",
+        "ArtifactRef",
+        "run identity and status"
+      ],
+      "consumes": [
+        "accepted OperationPlan",
+        "training/edit output state",
+        "runtime identity"
+      ],
+      "owns_fields": [
+        "operation_id",
+        "sequence",
+        "event state/progress",
+        "artifact ownership and digest",
+        "run status"
+      ],
+      "status": "implemented_for_registered_run_artifacts; undeclared copies and non-run consumers remain outside the resolver",
+      "artifact_manifest": {
+        "format": "artifacts.json schema_version=2; v1 is readable but cannot authorize release",
+        "declaration": "external-loop context.register_artifact(id, files, owner, references, consumes, complete, kind)",
+        "verification": "Rust verifies declared files and SHA-256; project cleanup resolves typed {run_id, artifact_id} consumers across complete run manifests and fails closed on active, incomplete, legacy, malformed, or dangling identities.",
+        "completion": "producer complete=true is effective only when the enclosing run completed successfully; invalid declarations produce incomplete state with all unregistered files protected",
+        "cleanup": "Custom multi-file checkpoint release uses a fixed plan and revalidates project consumers, ownership, files, hashes, run state, and hard links."
+      },
+      "cleanup": "m-model runs clean accepts --artifact <artifact-id> during dry-run; complete reference-free custom checkpoint sets release as one fixed-plan group after member-by-member identity/hash checks."
+    },
+    "extension": {
+      "owner": "EXT",
+      "responsibility": "Versioned component descriptions, dependency closure, API compatibility, conformance and lifecycle.",
+      "provides": [
+        "C-extension",
+        "component identity/version",
+        "schema",
+        "declared capabilities"
+      ],
+      "consumes": [
+        "operation protocol range",
+        "runtime/provider capability",
+        "component dependency locks"
+      ],
+      "owns_fields": [
+        "component_id",
+        "component_version",
+        "extension_api_version",
+        "manifest_digest",
+        "dependency references"
+      ],
+      "status": "planned; local component metadata and dependency resolution are implemented"
+    },
+    "data": {
+      "owner": "DATA",
+      "responsibility": "Task-specific batch adaptation, deterministic sampling, transform order and preview request/result.",
+      "provides": [
+        "C-data",
+        "C-preview",
+        "batch identity/scope",
+        "transform evidence"
+      ],
+      "consumes": [
+        "user data source",
+        "operation-specific sample request",
+        "transform schemas"
+      ],
+      "owns_fields": [
+        "batch_ref",
+        "sample scope",
+        "split",
+        "sample indices",
+        "transform order",
+        "preview artifact reference"
+      ],
+      "status": "local class-folder indexing, content/split fingerprints, deterministic per-class split/subset selection, explicit exclusions, selected-image verification, ordered built-in/custom transforms and per-step port checks, real Dataset/batch preview sampling, signed PNG/HTML/summary/custom-renderer artifacts, stable-sample cache and generation-safe publication implemented; generic model_probe Dataset adapters remain separate"
+    },
+    "environment": {
+      "owner": "ENV",
+      "responsibility": "Python/runtime identity, lock/setup/drift, offline package closure and portability/export facts.",
+      "provides": [
+        "C-environment",
+        "runtime identity",
+        "environment fingerprint",
+        "external resource manifest"
+      ],
+      "consumes": [
+        "selected Python runtime",
+        "package/runtime requirements",
+        "artifact/export requests"
+      ],
+      "owns_fields": [
+        "python executable/version/ABI",
+        "framework versions",
+        "lock digest",
+        "platform/device",
+        "external resource availability"
+      ],
+      "status": "environment lock/check/setup and same-ABI wheelhouse archive/check/replay are implemented; OS/driver/data portability remains outside the contract"
+    },
+    "cli": {
+      "owner": "CLI",
+      "responsibility": "Human terminal interaction, action selection, forms, navigation, waiting and machine output.",
+      "provides": [
+        "user-selected OperationRequest values",
+        "session-scoped input source"
+      ],
+      "consumes": [
+        "Readiness",
+        "ActionAvailability",
+        "Diagnostic/recovery suggestions",
+        "OperationEvent",
+        "ArtifactRef"
+      ],
+      "owns_fields": [
+        "page/action labels",
+        "terminal input",
+        "human confirmation",
+        "rendered progress"
+      ],
+      "must_not_own": [
+        "domain readiness policy",
+        "model/training algorithms",
+        "business file persistence"
+      ],
+      "status": "current CLI pages are partly implemented; typed application service consumption is proposed"
+    },
+    "acceptance": {
+      "owner": "QA",
+      "responsibility": "Requirements-to-evidence mapping, failure recovery, integration, release and value validation.",
+      "provides": [
+        "C-acceptance",
+        "evidence and gate outcomes"
+      ],
+      "consumes": [
+        "all domain reports/events/artifacts",
+        "actual command/runtime evidence",
+        "user observation"
+      ],
+      "owns_fields": [
+        "requirement_ref",
+        "evidence_scope",
+        "observed result",
+        "limitations",
+        "gate status"
+      ],
+      "status": "planned"
+    }
+  },
+  "native_callable_protocols": {
+    "status": "implemented_current_convention; stable only for the named entrypoint kind",
+    "rules": [
+      "Model factory: module:callable -> torch.nn.Module; accepts explicit declared factory parameters.",
+      "Batch factory: module:callable -> a native value or {args: [...], kwargs: {...}} envelope; explicit binding is required when ambiguous.",
+      "Managed step: training_step(model, batch, context, **parameters) -> declared loss/result mapping.",
+      "External loop: run_loop(model, context, **parameters); owns its internal data and update logic within the declared budget/stop contract.",
+      "A plain Python callable is sufficient for one-off use; component manifests and SDK classes are optional adoption layers."
+    ],
+    "compatibility": "Changing positional meaning, batch envelope semantics or result interpretation requires an explicit protocol version or adapter; unknown optional fields remain preservable."
+  },
+  "file_ownership_and_handoff": {
+    "shared_files": [
+      "src/domain.rs",
+      "src/ports.rs",
+      "src/app.rs",
+      "src/adapters/mod.rs",
+      "python/worker.py",
+      "product.json",
+      "moduletodo.json",
+      "all *todo.json"
+    ],
+    "rule": "CORE owns migration of shared entry files. Domain modules own their assigned post-migration directories. Cross-module shared-file changes are sent as integration_patch to the coordinator; no parallel edits to the same shared file.",
+    "contract_change": "The named contract owner proposes a versioned change, lists producer/consumer impact, updates schemas and positive/negative examples, and requests integration before any consumer assumes it."
+  },
+  "current_vs_proposed": {
+    "implemented": [
+      "Report envelope v1",
+      "Backend.execute(JSON)->Report",
+      "current Rust command and Python worker operations",
+      "native model/batch/step/loop callables"
+    ],
+    "proposed": [
+      "canonical OperationRef",
+      "per-operation readiness plan",
+      "typed input provenance/revisions",
+      "unified diagnostic recovery actions",
+      "typed event/artifact references",
+      "domain module ownership DTOs"
+    ],
+    "explicit_non_claim": "Proposed contracts are not evidence that readiness planning, a service, a protocol adapter, persistence, or a user workflow is implemented."
+  }
+}

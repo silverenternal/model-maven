@@ -1,0 +1,90 @@
+{
+  "schema_version": 1,
+  "task_id": "RUN-02",
+  "status": "done",
+  "baseline": "product.json 0.13.63; shared coordinator worktree",
+  "branch": "master (uncommitted coordinator worktree)",
+  "files_changed": [
+    "src/adapters/supervisor.rs",
+    "src/adapters/python.rs",
+    "src/adapters/runs.rs",
+    "src/ports/runs.rs",
+    "src/main.rs",
+    "src/application/run_query.rs",
+    "src/application/replay_tests.rs",
+    "src/presentation/workbench.rs",
+    "tests/run_supervision.rs",
+    "runtodo.json",
+    "product.json",
+    "docs/module-handoff/RUN-02.json",
+    "docs/acceptance/results/qa02-20261120-run02-final-0.13.63/supervisor-disconnect.json",
+    "docs/acceptance/results/qa02-20261120-run02-final-0.13.63/logs/supervisor-disconnect.stdout.log",
+    "docs/acceptance/results/qa02-20261120-run02-final-0.13.63/logs/supervisor-disconnect.stderr.log",
+    "docs/acceptance/results/qa02-20261120-final-local-0.13.63/supervisor-disconnect.json",
+    "docs/acceptance/results/qa02-20261120-final-local-0.13.63/logs/supervisor-disconnect.stdout.log",
+    "docs/acceptance/results/qa02-20261120-final-local-0.13.63/logs/supervisor-disconnect.stderr.log"
+  ],
+  "implementation": [
+    "Detached Linux supervisors write identity-scoped heartbeats to a separate atomic heartbeat file. Heartbeats do not mix with progress/event logs; stale or mismatched detached heartbeats are surfaced as unknown rather than reported as healthy.",
+    "The attach follow loop consumes Ctrl+C as a viewer-only detach and leaves the backend run active. Cooperative stop requests the existing step-boundary stop path; force interrupts the verified supervisor and worker process group.",
+    "Foreground run admission and reconciliation remain protected by the project activity lock; unknown supervisor identity remains protected. Progress, logs, events and heartbeat retain separate ownership and read paths."
+  ],
+  "validation": [
+    {
+      "command": "cargo test --locked --quiet",
+      "result": "passed: all workspace test suites, including Linux detached run supervision and existing CLI/data/model/training tests."
+    },
+    {
+      "command": "cargo test --locked --test run_supervision",
+      "result": "passed: detached heartbeat is fresh, attach is read-only, viewer SIGINT leaves the run active, cooperative stop interrupts at a step boundary, and force interrupts a second detached run."
+    },
+    {
+      "command": "cargo fmt --all -- --check && cargo check --locked",
+      "result": "passed."
+    },
+    {
+      "command": "python3 scripts/check_worker_architecture.py && python3 scripts/check_compatibility.py",
+      "result": "passed: 62 worker modules and embedded asset coverage; Rust/Python protocol and required features match."
+    },
+    {
+      "command": "JSON parse of product.json, root *todo.json and docs/module-handoff/*.json; git diff --check",
+      "result": "passed."
+    },
+    {
+      "command": "cargo test --locked --test run_supervision -- --nocapture",
+      "result": "passed: 2 Linux integration tests. Added a detached external-loop run with --checkpoint-every 1; after the first latest checkpoint is committed, the test sends SIGKILL to the recorded supervisor PID, confirms runs show reports status=unknown/last_observed_status=running with the recovery hint, and verifies latest.json plus checkpoint bytes remain unchanged. It then kills the orphaned worker process group and confirms unknown state and checkpoint bytes remain unchanged."
+    },
+    {
+      "command": "cargo test --locked --test run_supervision controlling_terminal_hangup_detaches_viewer_without_stopping_run_or_checkpoint -- --nocapture",
+      "result": "passed on Linux. A child attach viewer gets a new controlling PTY session; closing the PTY master delivered SIGHUP and terminated only the viewer. The detached training run remained running with fresh supervisor heartbeat, the latest.json pointer and checkpoint bytes remained identical, and a new attach viewer reconnected successfully; Ctrl+C detached this viewer without stopping training. The run then stopped cooperatively and was observed as interrupted."
+    },
+    {
+      "command": "cargo test --locked --test run_supervision -- --nocapture && cargo clippy --locked --test run_supervision -- -D warnings && git diff --check -- tests/run_supervision.rs",
+      "result": "passed: all 3 Linux supervision tests, including the PTY hangup/reconnect regression; clippy emitted no warnings; targeted whitespace check passed."
+    },
+    {
+      "command": "cargo test --locked --test run_supervision controlling_terminal_hangup_detaches_viewer_without_stopping_run_or_checkpoint -- --nocapture",
+      "result": "passed after adding the reconnect assertion: the PTY HUP viewer exits with SIGHUP; the detached run remains running and fresh, latest checkpoint remains byte-identical, a fresh viewer reattaches and detaches on SIGINT, and the run then stops cooperatively. This exact test passes in isolation."
+    },
+    {
+      "command": "cargo test --locked --test run_supervision -- --nocapture",
+      "result": "passed on current shared worktree: all 3 Linux supervision integration tests passed, covering detached heartbeat/read-only attach/cooperative stop, verified-supervisor SIGKILL with unknown status and checkpoint preservation, and PTY HUP viewer detach/reconnect while the detached run continued. The prior transient TUI compile issue did not reproduce for this target."
+    },
+    {
+      "command": "cargo test --locked --test run_supervision externally_killed_supervisor_is_unknown_and_keeps_last_checkpoint -- --nocapture",
+      "result": "passed: after SIGKILL of the recorded supervisor, runs show reports unknown while preserving the last checkpoint pointer and bytes; after explicitly cleaning up the orphaned worker process group, --resume creates a distinct child run from the retained checkpoint, the child completes, and the parent recovery pointer/bytes remain unchanged. Stop ownership remains truthful: this path is a supervisor/worker force-kill, with no claim of graceful stop."
+    },
+    {
+      "command": "python3 scripts/verify_product_acceptance.py --case supervisor-disconnect --python python3 --binary target/debug/m-model --output-dir docs/acceptance/results/qa02-20261120-final-local-0.13.63",
+      "result": "passed: provenance-bound current-source record at docs/acceptance/results/qa02-20261120-final-local-0.13.63/supervisor-disconnect.json plus captured logs. Three Linux integration tests cover PTY HUP/reconnect, verified local supervisor SIGKILL/unknown state, checkpoint preservation and child-run recovery. Real SSH/network/host failure is explicitly not covered."
+    }
+  ],
+  "remaining": [
+    "Out of scope for this local RUN-02 delivery: real SSH/network partition and host/kernel failure evidence. QA-02 keeps these as external platform evidence gates; product claims are limited to Linux PTY hangup and verified local process-group behavior."
+  ],
+  "integration_patch": [
+    "RUN-02 touched src/application/run_query.rs, which is also owned by RUN-04; RUN-04 must integrate against the current heartbeat-aware query behavior and avoid reverting it.",
+    "RUN-03 owns separate artifact files and may proceed independently after RUN-01."
+  ],
+  "commit": null
+}

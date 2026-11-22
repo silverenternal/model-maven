@@ -1,0 +1,348 @@
+{
+  "task_id": "CORE-02",
+  "owner": "总协调人",
+  "baseline": "774732e",
+  "branch": "master",
+  "status": "done",
+  "files_changed": [
+    "python/worker.py",
+    "python/model_maven_worker/__init__.py",
+    "python/model_maven_worker/protocol.py",
+    "python/model_maven_worker/environment.py",
+    "src/adapters/python.rs",
+    "src/adapters/exports.rs",
+    "coretodo.json",
+    "python/model_maven_worker/extensions/__init__.py",
+    "python/model_maven_worker/extensions/catalog.py",
+    "src/adapters/worker_assets.rs",
+    "python/model_maven_worker/data/__init__.py",
+    "python/model_maven_worker/data/batch.py",
+    "python/model_maven_worker/model/__init__.py",
+    "python/model_maven_worker/model/tensor_tree.py",
+    "python/model_maven_worker/model/structure.py",
+    "python/model_maven_worker/model/inspection.py",
+    "python/model_maven_worker/model/construction.py",
+    "python/model_maven_worker/model/probe.py",
+    "python/model_maven_worker/train/__init__.py",
+    "python/model_maven_worker/train/runtime.py",
+    "python/model_maven_worker/train/managed.py",
+    "python/model_maven_worker/train/manual.py",
+    "python/model_maven_worker/train/external.py",
+    "tests/cli.rs",
+    "python/model_maven_worker/train/checkpoint.py",
+    "python/model_maven_worker/train/probe.py",
+    "python/model_maven_worker/train/runner.py",
+    "python/model_maven_worker/edit/__init__.py",
+    "python/model_maven_worker/edit/layers.py",
+    "python/model_maven_worker/edit/variants.py",
+    "python/model_maven_worker/edit/plan.py",
+    "python/model_maven_worker/edit/source_ast.py",
+    "python/model_maven_worker/edit/source_candidates.py",
+    "python/model_maven_worker/edit/source_set.py",
+    "python/model_maven_worker/extensions/conformance.py",
+    "python/model_maven_worker/extensions/layer_conformance.py",
+    "python/model_maven_worker/extensions/source_inspection.py",
+    "python/model_maven_worker/extensions/lifecycle.py",
+    "python/model_maven_worker/extensions/bundle.py",
+    "scripts/check_worker_architecture.py",
+    "python/model_maven_worker/extensions/references.py",
+    "python/model_maven_worker/model/loading.py",
+    "python/model_maven_worker/run/__init__.py",
+    "python/model_maven_worker/run/provenance.py",
+    "python/model_maven_worker/train/state.py",
+    "python/model_maven_worker/extensions/wheels.py",
+    "python/model_maven_worker/runtime/__init__.py",
+    "python/model_maven_worker/runtime/capabilities.py",
+    "python/model_maven_worker/runtime/entrypoints.py",
+    "python/model_maven_worker/edit/source_dispatch.py"
+  ],
+  "implemented": [
+    "Created the model_maven_worker Python package and moved the shared protocol constants and UserError type into protocol.py.",
+    "Moved environment lock validation, interpreter selection, dependency resolution, environment snapshots/checks, path handling and subprocess helpers into environment.py. The worker package imports this module as its environment domain.",
+    "Kept python/worker.py as a small compatibility launcher.",
+    "PythonBackend stages the worker entrypoint and package modules into a fresh temporary directory, independent of repository cwd or installed Model-Maven Python packages.",
+    "Training export now includes the same package initializer, protocol module and environment module alongside its compatibility launcher.",
+    "Moved static component discovery, entry-point validation, distribution source mapping, manifest lookup and project extension path discovery into extensions/catalog.py. The module only imports protocol errors and environment name normalization; it does not import or execute component code.",
+    "Added one Rust worker asset manifest and shared staging function used by both the runtime adapter and training export, so each package module is embedded and exported from the same inventory.",
+    "Moved batch factory construction and args/kwargs/envelope binding into data/batch.py. The operation receives the Torch module and entrypoint resolver explicitly; model probe, backward verification and component forward smoke share it.",
+    "Moved bounded nested Python/Tensor-to-JSON normalization into model/tensor_tree.py. The Torch module is an explicit argument, including during recursive traversal, so this model helper has no mutable worker-global dependency.",
+    "Moved stable module instance enumeration, persistent Layer path normalization and submodule resolution into model/structure.py. These helpers do not import Torch or worker-global state and are shared by inspect, edit and provider flows.",
+    "Moved editable-parameter descriptions, safe source-constructor fields, state migration boundaries and model inspection reports into model/inspection.py. The module receives Torch, source-site evidence and container capability through explicit arguments; compatibility routing in the package initializer assembles them.",
+    "Moved model injection schema validation, project construction-site discovery and native nn.Module construction capture into model/construction.py. Torch, entrypoint resolution and module identity enumeration are explicit; source locations/counts return to the compatibility layer as data.",
+    "Moved real-batch forward call tracing and loss/backward gradient verification into model/probe.py. Torch, entrypoint and batch resolvers, model-path helpers, tensor-tree encoding and invocation cap are explicit dependencies; package-level wrappers preserve existing dispatch callers.",
+    "Moved managed AdamW step execution into train/managed.py. Added TrainingRuntime as an explicit dependency bundle for Torch, entrypoint resolution, Tensor summaries, StepContext and metric validation; the worker initializer retains a compatibility router.",
+    "Moved manual-step optimizer registration, gradient/parameter finite checks and named optimizer state persistence into train/manual.py. It shares TrainingRuntime with managed training. A first regression run exposed and fixed a stale StepContext reference and missing re import.",
+    "Moved external-loop progress context, budget and parameter checks, stop-file polling and checkpoint-boundary handoff into train/external.py, reusing TrainingRuntime with managed/manual engines.",
+    "Added a repeatable external-loop CLI integration case that exercises step budget reporting, user optimizer updates, finite checks and latest checkpoint persistence.",
+    "Moved checkpoint payload validation, source-bound run signatures, model state fingerprints, atomic checkpoint writes and compatibility-checked checkpoint loading into train/checkpoint.py. The worker initializer passes Torch explicitly through compatibility wrappers.",
+    "Moved training operation preflight, environment/source drift checks, bounded-run routing and provenance attachment into train/probe.py. TrainingProbeRuntime supplies environment, entrypoint, source manifest, execution callbacks and Python/PyTorch runtime identity explicitly; the package initializer remains a compatibility router.",
+    "Moved formal managed/manual/external training-run orchestration, checkpoint cadence, state-hook capture/restore, recovery status and progress-event production into train/runner.py. TrainingRunRuntime explicitly supplies checkpoint, engine, runtime identity and progress callbacks; the initializer retains the worker protocol adapter.",
+    "Moved native Layer construction and Sequential/ModuleList/ModuleDict add, set, replace, remove, bypass, shared-alias replacement and transaction replay into edit/layers.py. LayerEditRuntime explicitly supplies Torch, entrypoint loading, module path/alias services and editable-field discovery; compatibility wrappers preserve worker callers.",
+    "Moved persisted edit-operation and variant-history integrity validation into edit/variants.py. EditValidationRuntime explicitly provides allowed actions, canonical digest calculation and model-injection schema validation; compatibility wrappers preserve existing dispatch and edit-plan callers.",
+    "Moved variant edit planning into edit/plan.py, including undo/redo cursor handling, transaction checks, base reconstruction and history replay, optional forward validation, and source/component fingerprint publication. EditPlanRuntime supplies model loading, validation, component verification, source edits, probe and inspection services explicitly.",
+    "Moved AST source offsets, collision-free generated aliases, built-in/custom factory expressions and readable Sequential/ModuleList/ModuleDict source rebuilding into edit/source_ast.py. The worker initializer retains compatibility names for source candidate handlers.",
+    "Moved direct-assignment source CRUD candidate generation for native Sequential/ModuleList/ModuleDict containers into edit/source_candidates.py. SourceCandidateRuntime supplies model/path operations, AST generators, Layer construction, probe/inspection, and dynamic source-location evidence providers; dynamic providers observe the dictionaries rebound during model construction.",
+    "Moved source structural transaction-state discovery into edit/source_candidates.py. It validates container identity, unique construction sites, project-local non-symlink source paths, UTF-8/AST assignments and derives the initial editable source/runtime container state through dynamic construction-site evidence providers.",
+    "Moved multi-container source structural transaction planning into edit/source_candidates.py. The executor replays add/replace/remove/bypass operations across native containers, checks overlapping targets and runtime/source state, constructs deterministic initializers, builds per-file patches/diffs, validates complete candidate syntax and optional forward behavior, and preserves the existing recoverable commit contract.",
+    "Moved source-set constructor candidate application into edit/source_candidates.py. The helper reconstructs uniquely mapped parameterless custom nn.Module constructors, preserves untouched call arguments, refuses unsupported variadic forms and stateful migration guesses, and reports affected aliases through explicit model/edit runtime services.",
+    "Moved multi-target source-set candidate planning into edit/source_candidates.py. The planner rejects duplicate Layer targets, validates project-local and unique construction sites, builds coordinated parameter replacements across source files, detects overlapping patches, enforces snapshot/preview limits, compiles candidate files, applies changes to the disposable model, and runs optional forward validation.",
+    "Single-Layer source set candidate planning now lives in edit/source_set.py with an explicit SourceCandidateRuntime; the package initializer retains only source operation dispatch for this path. The new module is included by the shared embedded/export asset manifest.",
+    "Layer Edit Provider conformance execution now lives in extensions/conformance.py with an explicit ProviderConformanceRuntime. The worker initializer assembles the runtime dependencies, and Rust embedded/export assets include the conformance module.",
+    "Registered Layer component smoke/conformance behavior now lives in extensions/layer_conformance.py with an explicit LayerConformanceRuntime for component resolution, construction, batch creation and tensor summaries. The package initializer keeps component-test routing and runtime assembly.",
+    "Extension JSON store scanning, recursive component reference discovery, and project Python import/source inspection now live in extensions/source_inspection.py. Environment path behavior is injected as callbacks, and uninstall/bundle code keeps using the established helper contract.",
+    "Project component uninstall planning/application now lives in extensions/lifecycle.py with explicit inspection dependencies. Added an end-to-end apply test. Corrected five malformed shutil.rmtree calls in installer failure cleanup and uninstall rollback/cleanup paths so cleanup failures no longer trigger argument errors.",
+    "Project extension wheel build/preflight/install/content-addressed staging/static discovery now lives in extensions/lifecycle.py. ComponentInstallRuntime injects the selected interpreter, project root, environment process runner, dependency validation, wheel hashing and static discovery. Added end-to-end scaffold → wheel build → isolated install → registered component coverage.",
+    "Project extension wheel build, build-dependency preflight, content-addressed isolated installation and static component discovery now live in extensions/lifecycle.py. ComponentInstallRuntime injects project root, selected interpreter, process runner, dependency/wheel inspection and discovery. Added scaffold-to-wheel-to-install-to-registration integration coverage.",
+    "Extension distribution/dependency closure planning now lives in extensions/bundle.py with an explicit ExtensionBundleRuntime. The scaffold install integration now injects the installed component into a model, trains, exports, and checks the non-empty extension package manifest/vendor archive, exercising the bundle planner through the public product flow.",
+    "Moved locked component-manifest loading, dependency-reference checks, distribution verification calls and Provider activation evidence into extensions/references.py. The initializer now supplies runtime fingerprints/digest functions and retains compatibility adapters for existing dispatch and conformance call sites.",
+    "Moved environment distribution inventory, package source classification, requirements snapshot generation and environment fingerprint construction into environment.snapshot_environment(). The worker initializer now only injects the currently loaded Torch module and capture timing.",
+    "Moved variant/model reconstruction into model/loading.py. The service validates variant origin/seed/runtime/source, verifies component locks, constructs the user model, replays validated edit history and returns origin/effect evidence through explicit runtime dependencies; the initializer now assembles those dependencies.",
+    "Created the run worker domain and moved source-manifest capture and drift verification to run/provenance.py. Loaded Python modules are passed explicitly from the composition root; the service owns project path filtering, package-tree capture, hashing and structured drift errors. Updated worker domain checks and embedded assets.",
+    "Moved StepContext, scalar/metric validation, finite accumulation, user-callable checkpoint state hooks and Python/Torch RNG checkpoint handling into train/state.py. TrainingStateRuntime receives Torch and Python RNG explicitly; the initializer keeps compatibility wrappers and composes TrainingRuntime.",
+    "Moved extension wheel archive safety, metadata parsing, PEP 508 requirement checks and selected-environment lock compatibility into extensions/wheels.py. Environment lock/ABI operations are explicit ComponentWheelRuntime dependencies.",
+    "Moved module:callable validation/import into runtime/entrypoints.py and the static doctor capability catalog into runtime/capabilities.py. The composition root only probes current interpreter facts and delegates report construction; stale imports from previous migrations were removed.",
+    "下沉源码编辑动作分派至 edit/source_dispatch.py；包初始化器仅装配既有源码编辑处理器并注入依赖，set/结构变更/原子事务分类策略归 edit 域维护。Rust worker 资产清单登记该模块，内嵌执行与导出资源覆盖检查通过。",
+    "下沉训练模式选择至 train/probe.py 的 run_training_mode；包初始化器只提供 managed/manual/external 实现。",
+    "将 Layer 与 Layer Edit Provider 符合性测试选择、项目导入路径和运行时组合移入 extensions/conformance.py；包初始化器仅组装共享 runtime 依赖。",
+    "复核包初始化器：剩余入口是兼容路由、依赖组装及协议 dispatch/main；业务动作分派已归入所属 worker 域。共享 torch/source capture 状态仍由每个隔离 worker 进程持有并在模型构造时更新。"
+  ],
+  "validation": [
+    {
+      "command": "python3 -m py_compile python/worker.py python/model_maven_worker/__init__.py python/model_maven_worker/protocol.py python/model_maven_worker/environment.py",
+      "result": "passed"
+    },
+    {
+      "command": "cargo fmt && git diff --check && cargo check --locked",
+      "result": "passed",
+      "scope": "format, diff hygiene and warning-free compile"
+    },
+    {
+      "command": "cargo test --locked",
+      "result": "passed",
+      "scope": "50 unit tests and 33 CLI integration tests, including embedded worker runtime and export restoration"
+    },
+    {
+      "command": "cargo build --locked; run target/debug/m-model doctor --json from a TemporaryDirectory outside the repository",
+      "result": "passed",
+      "scope": "exit 0; structured JSON success; no source-tree cwd or installed Model-Maven package required"
+    },
+    {
+      "command": "python3 -m py_compile worker package files; cargo fmt && git diff --check && cargo check --locked && cargo test --locked",
+      "result": "passed",
+      "scope": "50 unit tests and 33 CLI integration tests; static component discovery and training export restore regressions included"
+    },
+    {
+      "command": "cargo fmt && git diff --check && cargo check --locked && cargo test --locked",
+      "result": "passed",
+      "scope": "50 unit tests and 33 CLI integration tests; runtime worker and training export share the asset manifest"
+    },
+    {
+      "command": "python3 -m py_compile worker package files; cargo fmt && git diff --check && cargo check --locked && cargo test --locked",
+      "result": "passed",
+      "scope": "50 unit tests and 33 CLI integration tests including batch probe, gradient verification, complex models and export restore"
+    },
+    {
+      "command": "python3 -m py_compile worker package files; cargo fmt && git diff --check && cargo check --locked && cargo test --locked",
+      "result": "passed",
+      "scope": "50 unit tests and 33 CLI integration tests including nested tensor metadata, shared-module probes and export restore"
+    },
+    {
+      "command": "python3 -m py_compile model package files; cargo fmt && git diff --check && cargo check --locked && cargo test --locked",
+      "result": "passed",
+      "scope": "50 unit tests and 33 CLI integration tests including model tree, shared aliases, source edits, variants and export restore"
+    },
+    {
+      "command": "python3 -m py_compile model package files; cargo fmt && git diff --check && cargo check --locked && cargo test --locked",
+      "result": "passed",
+      "scope": "50 unit tests and 33 CLI integration tests including model inspection, source edit boundaries, variants and export restore"
+    },
+    {
+      "command": "python3 -m py_compile model package files; cargo fmt && git diff --check && cargo check --locked && cargo test --locked",
+      "result": "passed",
+      "scope": "50 unit tests and 33 CLI integration tests including custom constructors, module aliases, seams, edits and export restore"
+    },
+    {
+      "command": "python3 -m py_compile model package files; cargo fmt && git diff --check && cargo check --locked && cargo test --locked",
+      "result": "passed",
+      "scope": "50 unit tests and 33 CLI integration tests including shared invocation tracing, multimodal models, gradient checks and export restore"
+    },
+    {
+      "command": "python3 -m py_compile training package files; cargo fmt && git diff --check && cargo check --locked && cargo test --locked",
+      "result": "passed",
+      "scope": "50 unit tests and 33 CLI integration tests including bounded managed training, finite gradients, checkpoint/resume and export restore"
+    },
+    {
+      "command": "targeted custom multimodal manual-step test; targeted formal manual resume test; cargo fmt --check && git diff --check && cargo check --locked && cargo test --locked",
+      "result": "passed",
+      "scope": "both targeted regressions passed; full suite 50 unit tests and 33 CLI integration tests passed"
+    },
+    {
+      "command": "isolated temporary project: m-model train --training-mode external-loop --steps 2; python3 -m py_compile training package files; cargo fmt --check && git diff --check && cargo check --locked && cargo test --locked",
+      "result": "passed",
+      "scope": "external loop returned success with 2 completed updates; full suite 50 unit tests and 33 CLI integration tests passed"
+    },
+    {
+      "command": "cargo test --locked --test cli external_loop_observes_budget_and_saves_checkpoint; cargo fmt && git diff --check && cargo check --locked && cargo test --locked",
+      "result": "passed",
+      "scope": "targeted external-loop test passed; full suite 50 unit tests and 34 CLI integration tests passed"
+    },
+    {
+      "command": "python3 -m py_compile python/model_maven_worker/__init__.py python/model_maven_worker/train/*.py; cargo fmt && git diff --check && cargo check --locked && cargo test --locked",
+      "result": "passed",
+      "scope": "Python syntax; formatted and clean diff; warning-free Rust compile; 50 unit tests and 34 CLI integration tests, including checkpoint save/resume, failed-run recovery point retention, external-loop persistence, and export restoration."
+    },
+    {
+      "command": "python3 -m py_compile python/model_maven_worker/__init__.py python/model_maven_worker/train/*.py; cargo fmt && git diff --check && cargo check --locked && cargo test --locked",
+      "result": "passed",
+      "scope": "Python syntax; formatted and clean diff; warning-free Rust compile; 50 unit tests and 34 CLI integration tests passed, including managed/manual/external training probes, source/runtime drift checks, checkpoint/resume and export restore."
+    },
+    {
+      "command": "python3 -m py_compile python/model_maven_worker/__init__.py python/model_maven_worker/train/*.py; cargo fmt && git diff --check && cargo check --locked && cargo test --locked",
+      "result": "passed",
+      "scope": "Python syntax; formatted and clean diff; warning-free Rust compile; 50 unit tests and 34 CLI integration tests passed, including formal managed/manual/external training, checkpoint/resume, failed-run recovery and export restore."
+    },
+    {
+      "command": "python3 -m py_compile python/model_maven_worker/__init__.py python/model_maven_worker/edit/*.py python/model_maven_worker/train/*.py; cargo fmt && git diff --check && cargo check --locked && cargo test --locked",
+      "result": "passed",
+      "scope": "Python syntax; formatted and clean diff; warning-free Rust compile; 50 unit tests and 34 CLI integration tests passed, including Layer CRUD for supported containers, transactions, variants, custom edit providers, training checkpoint/resume and export restore."
+    },
+    {
+      "command": "cargo test --locked after initial variant extraction",
+      "result": "failed_then_repaired",
+      "scope": "The first full run exposed a Python block-boundary mistake that removed load_model and component verification functions, followed by a missing runtime validator callback. Restored the functions from committed HEAD, fixed the callback, and reran targeted and full acceptance tests."
+    },
+    {
+      "command": "python3 -m py_compile python/model_maven_worker/__init__.py python/model_maven_worker/edit/*.py python/model_maven_worker/train/*.py; cargo fmt && git diff --check && cargo check --locked && cargo test --locked",
+      "result": "passed",
+      "scope": "Python syntax; formatting and diff hygiene; warning-free Rust compile; 50 unit tests and 34 CLI integration tests passed, including persisted variant CRUD/undo/redo and source edit regression flows."
+    },
+    {
+      "command": "python3 -m py_compile python/model_maven_worker/__init__.py python/model_maven_worker/edit/*.py python/model_maven_worker/train/*.py; cargo fmt && git diff --check && cargo check --locked && cargo test --locked",
+      "result": "passed",
+      "scope": "Python syntax; formatting and diff hygiene; warning-free Rust compile; 50 unit tests and 34 CLI integration tests passed, including persistent Layer variants, transaction replay, source edits, training/resume and export restore."
+    },
+    {
+      "command": "python3 -m py_compile python/model_maven_worker/__init__.py python/model_maven_worker/edit/*.py python/model_maven_worker/train/*.py; cargo fmt && git diff --check && cargo check --locked && cargo test --locked",
+      "result": "passed",
+      "scope": "Python syntax; formatting and diff hygiene; warning-free Rust compile; 50 unit tests and 34 CLI integration tests passed, including readable source CRUD, constructor parameters, multi-file source transactions, variants and export restore."
+    },
+    {
+      "command": "targeted source ModuleList and registered-factory Sequential CRUD tests; python3 -m py_compile python/model_maven_worker/__init__.py python/model_maven_worker/edit/*.py python/model_maven_worker/train/*.py; cargo fmt && git diff --check && cargo check --locked && cargo test --locked",
+      "result": "passed after repair",
+      "scope": "Initial full test exposed stale source-location dictionary capture and a missing call_name dependency; converted source-location access to dynamic providers and supplied call_name. Targeted source tests and final full suite passed: 50 unit tests and 34 CLI integration tests, including source CRUD, transactions and export restore."
+    },
+    {
+      "command": "cargo test --locked --test cli source_structural_transaction_groups_crud_across_sequential_files; python3 -m py_compile python/model_maven_worker/__init__.py python/model_maven_worker/edit/*.py python/model_maven_worker/train/*.py; cargo fmt && git diff --check && cargo check --locked && cargo test --locked",
+      "result": "passed",
+      "scope": "Targeted cross-file structural transaction passed; Python syntax, formatting, diff hygiene and warning-free compile passed; full suite 50 unit tests and 34 CLI integration tests passed, including source CRUD, transaction rollback/undo and export restore."
+    },
+    {
+      "command": "cargo test --locked --test cli source_structural_transaction_groups_crud_across_sequential_files; python3 -m py_compile python/model_maven_worker/__init__.py python/model_maven_worker/edit/*.py python/model_maven_worker/train/*.py; cargo fmt && git diff --check && cargo check --locked && cargo test --locked",
+      "result": "passed",
+      "scope": "Targeted multi-container cross-file transaction test passed; Python syntax, formatting, diff hygiene and warning-free Rust compile passed; full suite 50 unit tests and 34 CLI integration tests passed, including source transaction/undo, variants, training and export restore."
+    },
+    {
+      "command": "cargo test --locked --test cli source_set_supports_project_layer_constructor_parameters; python3 -m py_compile python/model_maven_worker/__init__.py python/model_maven_worker/edit/*.py python/model_maven_worker/train/*.py; cargo fmt && git diff --check && cargo check --locked && cargo test --locked",
+      "result": "passed",
+      "scope": "Targeted custom-constructor source-set case passed; Python syntax, formatting, diff hygiene and warning-free Rust compile passed; full suite 50 unit tests and 34 CLI integration tests passed, including multi-file source-set rollback/undo and export restore."
+    },
+    {
+      "command": "cargo test --locked --test cli source_set_transaction_updates_multiple_model_files_and_is_undoable; python3 -m py_compile python/model_maven_worker/__init__.py python/model_maven_worker/edit/*.py python/model_maven_worker/train/*.py; cargo fmt && git diff --check && cargo check --locked && cargo test --locked",
+      "result": "passed",
+      "scope": "Targeted multi-file set/undo case passed; Python syntax, formatting, diff hygiene and warning-free Rust compile passed; full suite 50 unit tests and 34 CLI integration tests passed, including source transactions, rollback, variants, training and export restore."
+    },
+    {
+      "command": "cargo test --locked source_set_supports_project_layer_constructor_parameters -- --exact --nocapture; cargo test --locked source_set_ -- --nocapture; python3 -m py_compile python/model_maven_worker/__init__.py python/model_maven_worker/edit/*.py; cargo fmt --check && git diff --check && cargo test --locked",
+      "result": "passed",
+      "scope": "Both targeted source set/transaction tests passed; Python syntax, Rust formatting and diff checks passed; full suite passed with 50 unit tests and 34 CLI integration tests, including source editing and export restore."
+    },
+    {
+      "command": "cargo test --locked provider_ -- --nocapture; python3 -m py_compile python/model_maven_worker/__init__.py python/model_maven_worker/extensions/*.py python/model_maven_worker/edit/*.py; cargo fmt --check && git diff --check && cargo test --locked",
+      "result": "passed",
+      "scope": "Three provider-focused tests passed; Python syntax, Rust formatting and diff checks passed; full suite passed with 50 unit tests and 34 CLI integration tests, including provider activation gates and export restore."
+    },
+    {
+      "command": "cargo test --locked --test cli component_discovery_registers_static_package_metadata_without_importing_it -- --exact --nocapture; cargo test --locked --test cli source_sequential_crud_rebuilds_registered_python_factories -- --exact --nocapture; python3 -m py_compile python/model_maven_worker/__init__.py python/model_maven_worker/extensions/*.py python/model_maven_worker/edit/*.py; cargo fmt --check && git diff --check && cargo test --locked",
+      "result": "passed after repair",
+      "scope": "Targeted component discovery and component-backed source CRUD passed after fixing a missing runtime torch.no_grad dependency; Python syntax, Rust formatting and diff checks passed; full suite passed with 50 unit tests and 34 CLI integration tests."
+    },
+    {
+      "command": "cargo test --locked --test cli registered_layer_components_can_be_parameterized_and_locked_as_model_injections -- --exact --nocapture; python3 -m py_compile python/model_maven_worker/__init__.py python/model_maven_worker/extensions/*.py; cargo fmt --check && git diff --check && cargo test --locked",
+      "result": "passed",
+      "scope": "Component registration, uninstall reference reporting and blocked removal targeted test passed; Python syntax, formatting and diff checks passed; full suite passed with 50 unit tests and 34 CLI integration tests."
+    },
+    {
+      "command": "cargo test --locked --test cli component_uninstall_apply_removes_registration_after_preview -- --exact --nocapture; cargo test --locked --test cli registered_layer_components_can_be_parameterized_and_locked_as_model_injections -- --exact --nocapture; python3 -m py_compile python/model_maven_worker/__init__.py python/model_maven_worker/extensions/*.py; cargo fmt --check && git diff --check && cargo test --locked",
+      "result": "passed",
+      "scope": "Actual uninstall apply and protection of referenced components passed targeted checks; all Python files compiled, formatting and diff checks passed, and full suite passed with 50 unit tests and 35 CLI integration tests."
+    },
+    {
+      "command": "cargo test --locked --test cli component_install_builds_and_registers_scaffolded_wheel -- --exact --nocapture; cargo test --locked --test cli component_uninstall_apply_removes_registration_after_preview -- --exact --nocapture; cargo test --locked --test cli registered_layer_components_can_be_parameterized_and_locked_as_model_injections -- --exact --nocapture; python3 -m py_compile python/model_maven_worker/__init__.py python/model_maven_worker/extensions/*.py; cargo fmt --check && git diff --check && cargo test --locked",
+      "result": "passed",
+      "scope": "Scaffolded wheel build/install/registration, actual uninstall apply and in-use protection passed; Python syntax/format/diff passed; full suite 50 unit tests and 36 CLI integration tests."
+    },
+    {
+      "command": "cargo test --locked --test cli component_install_builds_and_registers_scaffolded_wheel -- --exact --nocapture; cargo test --locked --test cli component_uninstall_apply_removes_registration_after_preview -- --exact --nocapture; cargo test --locked --test cli registered_layer_components_can_be_parameterized_and_locked_as_model_injections -- --exact --nocapture; python3 -m py_compile python/model_maven_worker/__init__.py python/model_maven_worker/extensions/*.py; cargo fmt --check && git diff --check && cargo test --locked",
+      "result": "passed",
+      "scope": "Actual scaffolded wheel install/registration, uninstall apply and in-use protection passed; Python syntax, formatting and diff passed; full suite: 50 unit tests and 36 CLI integration tests."
+    },
+    {
+      "command": "cargo test --locked --test cli component_install_builds_and_registers_scaffolded_wheel -- --exact --nocapture; cargo test --locked --test cli export_training_run_copies_verified_sources_and_restores_weights -- --exact --nocapture; python3 -m py_compile python/model_maven_worker/__init__.py python/model_maven_worker/extensions/*.py; cargo fmt --check && git diff --check && cargo test --locked",
+      "result": "passed",
+      "scope": "Installed extension train/export verified a non-empty extension_packages archive; standard export restore test passed; Python syntax/format/diff passed; full suite 50 unit tests and 36 CLI integration tests."
+    },
+    {
+      "command": "python3 scripts/check_worker_architecture.py; python3 scripts/check_architecture.py; cargo build --release --locked; run target/release/m-model doctor --json with cwd=TemporaryDirectory outside repository; cargo test --locked",
+      "result": "passed",
+      "scope": "Worker architecture checker validated 33 modules, domain import direction, acyclic dependencies and full embedded asset coverage; Rust architecture check passed; optimized release build succeeded; release binary doctor from outside the repository returned success with empty stderr and PyTorch detected; full regression suite on the same product revision passed 50 unit tests and 36 CLI integration tests."
+    },
+    {
+      "command": "python3 -m py_compile python/model_maven_worker/__init__.py python/model_maven_worker/extensions/*.py; python3 scripts/check_worker_architecture.py; python3 scripts/check_architecture.py; cargo fmt --all -- --check; git diff --check; cargo check --locked; cargo test --locked --test cli provider -- --nocapture; cargo test --locked --test cli declared_model_injection_seams_are_saved_verified_and_replayed_in_variants -- --exact --nocapture; cargo test --locked --test cli component_install_builds_and_registers_scaffolded_wheel -- --exact --nocapture; cargo test --locked",
+      "result": "passed",
+      "scope": "Provider-focused tests (3), model injection/variant replay, extension install-train-export-restore, and full suite (50 unit + 36 CLI) passed; Python syntax, 35-module direction/cycle/embedded-asset check, Rust architecture, formatting, diff hygiene and cargo check passed."
+    },
+    {
+      "command": "python3 -m py_compile python/model_maven_worker/__init__.py python/model_maven_worker/environment.py python/model_maven_worker/extensions/*.py; python3 scripts/check_worker_architecture.py; cargo fmt --all -- --check; git diff --check; cargo test --locked --test cli export_training_run_copies_verified_sources_and_restores_weights -- --exact --nocapture; cargo test --locked",
+      "result": "passed",
+      "scope": "Environment snapshot export/restore targeted test passed; full suite passed (50 Rust unit + 36 CLI integration tests); Python syntax, 35-module import/cycle/embedded-asset check, formatting and diff hygiene passed."
+    },
+    {
+      "command": "cargo build --release --locked; run target/release/m-model with cwd=TemporaryDirectory for model inspect/probe, try, layer add, train, plain export/restore, component scaffold/install/injected train/export/restore, complex multimodal shared-call + named-loss try, and external-loop train",
+      "result": "passed",
+      "scope": "Optimized binary executed outside the source tree. Plain model flow completed inspect/probe/try/Layer add/train/export/restore. Component flow built and installed a wheel, trained with component injection, exported the vendored package and restored the model. Complex multimodal flow observed the shared projection twice and three named losses; external-loop completed two updates and saved a checkpoint."
+    },
+    {
+      "command": "python3 -m py_compile python/model_maven_worker/__init__.py python/model_maven_worker/model/loading.py; python3 scripts/check_worker_architecture.py; python3 scripts/check_architecture.py; cargo fmt --all -- --check; git diff --check; cargo test --locked; cargo build --release --locked; run release functional matrix in isolated project directories outside the source tree",
+      "result": "passed",
+      "scope": "Full suite: 50 unit + 36 CLI tests. Optimized release executable validated inspect/probe/try/Layer add/train/plain export restore; extension scaffold/install/injected train/export restore; complex shared-module tracing and three named losses; and two-step external-loop checkpoint. Worker architecture passed with 36 embedded modules."
+    },
+    {
+      "command": "python3 -m py_compile python/model_maven_worker/__init__.py python/model_maven_worker/run/*.py; python3 scripts/check_worker_architecture.py; python3 scripts/check_architecture.py; cargo fmt --all -- --check; git diff --check; cargo test --locked; cargo build --release --locked; run release inspect/probe/train/export/restore from an isolated project outside the source tree",
+      "result": "passed",
+      "scope": "Variant replay targeted test passed; full suite passed (50 unit + 36 CLI integration tests); worker architecture passed with 38 modules and complete embedded assets; release executable started from outside the repo and completed probe, source snapshot, train, export and restore. One initial harness attempt placed export inside the project and was correctly rejected; corrected external destination passed."
+    },
+    {
+      "command": "python3 -m py_compile python/model_maven_worker/__init__.py python/model_maven_worker/train/state.py; python3 scripts/check_worker_architecture.py; cargo fmt --all -- --check; git diff --check; cargo test --locked; cargo build --release --locked; run source-free release external-loop training for 2 steps with checkpoint",
+      "result": "passed",
+      "scope": "External-loop checkpoint test and full suite passed (50 unit + 36 CLI); 39 worker modules pass direction/cycle/embedded-asset checks; release source-free external-loop completed two updates and saved checkpoint."
+    },
+    {
+      "command": "python3 -m py_compile worker modules; python3 scripts/check_worker_architecture.py; python3 scripts/check_architecture.py; cargo fmt --all -- --check; git diff --check; cargo test --locked; cargo build --release --locked; release smoke from a temporary project outside the repository covering doctor, model entrypoint/probe and component wheel scaffold/install",
+      "result": "passed",
+      "scope": "Full suite passed (50 unit + 36 CLI). Worker architecture passed with 43 modules and complete embedded assets; component wheel install, doctor capability report and public Python entrypoint passed on release binary outside the source tree."
+    },
+    {
+      "command": "cargo fmt --all -- --check; git diff --check; python3 -m py_compile python/model_maven_worker/__init__.py python/model_maven_worker/edit/source_dispatch.py python/model_maven_worker/train/probe.py python/model_maven_worker/extensions/conformance.py; python3 scripts/check_worker_architecture.py; python3 scripts/check_architecture.py; cargo test --locked",
+      "result": "passed",
+      "scope": "格式与 diff 检查、Python 语法检查通过；worker architecture 检查通过（44 个模块，嵌入资产完整、导入方向与无环依赖通过）；Rust architecture 检查通过；完整回归 50 个单元测试 + 36 个 CLI 集成测试全部通过。此前 release 隔离项目矩阵覆盖 source edit dispatch 和 component conformance dispatch。"
+    }
+  ],
+  "remaining": [],
+  "external_dependencies": [],
+  "composition_boundary_review": {
+    "result": "passed",
+    "initializer_lines": 801,
+    "decision": "保留初始化器作为组合根：剩余函数负责运行时依赖装配、兼容 API 路由及 worker 协议 dispatch/main；模型、编辑、训练、运行、环境、数据和扩展业务实现位于各自域包。新增 source edit/conformance/training mode 选择均已下沉。",
+    "shared_state": "torch 与源码构造位置证据是隔离 worker 进程级状态，由 construct_model 路径更新并经显式 runtime 参数传入领域服务；不是跨进程共享状态。"
+  }
+}

@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "task_id": "TRAIN-03",
+  "status": "done",
+  "baseline": "0.13.40 coordinator worktree",
+  "branch": "master (uncommitted coordinator worktree)",
+  "files_changed": [
+    "python/model_maven_worker/train/evaluation.py",
+    "python/model_maven_worker/train/__init__.py",
+    "python/model_maven_worker/protocol.py",
+    "python/model_maven_worker/runtime/capabilities.py",
+    "src/adapters/worker_assets.rs",
+    "src/application/evaluation.rs",
+    "src/application/mod.rs",
+    "src/application/run.rs",
+    "src/cli.rs",
+    "src/domain/capability.rs",
+    "src/presentation/terminal.rs",
+    "docs/contracts/compatibility.json",
+    "docs/contracts/operations.json",
+    "tests/cli.rs",
+    "tests/train_evaluation.rs",
+    "product.json",
+    "traintodo.json",
+    "clitodo.json",
+    "docs/module-handoff/TRAIN-03.json"
+  ],
+  "implementation": [
+    "Added m-model evaluate --run <id> with explicit --evaluator and --data entrypoints, split/sample target, evaluator/data parameters and optional declared data fingerprint.",
+    "Evaluation accepts arbitrary model return structures and only reports evaluator-owned named finite scalar metrics; no classification assumption is introduced.",
+    "Only completed/failed/interrupted training runs with a valid latest checkpoint can be evaluated. The worker verifies checkpoint manifest/file/model-state hashes, reuses the run model/injection/variant snapshot, and rejects source drift before model construction.",
+    "Results are persisted as separate evaluation run records and reference source run, checkpoint digest/step, evaluator/data entrypoints, data parameters, split/seed/fingerprint, loaded source manifest and protocol/runtime versions.",
+    "Reported sample counts are checked against the requested target; unreported counts remain unknown. Invalid/non-finite metrics, missing metrics/data and incompatible checkpoint conditions return structured diagnostics.",
+    "Registered the evaluate operation and training.evaluation capability in Rust/Python protocol contracts, doctor, embedded assets and operation documentation.",
+    "Added CLI-22 to track the remaining human-facing evaluation overview and sample/prediction browsing flow."
+  ],
+  "validation": [
+    {
+      "command": "cargo test --locked --test train_evaluation -- --nocapture",
+      "result": "passed: custom multi-output evaluation, provenance captured after evaluator loading, unknown sample count, invalid/missing metrics/data, sample-limit over-report and checkpoint integrity."
+    },
+    {
+      "command": "cargo test --locked --test cli evaluation_command_uses_checkpoint_custom_metrics_and_persists_provenance -- --nocapture",
+      "result": "passed: train→evaluate→runs show end-to-end CLI; custom multi-output metrics, fingerprint provenance, NaN rejection and model source drift rejection."
+    },
+    {
+      "command": "cargo test --locked",
+      "result": "passed: 70 unit tests, 42 CLI integration tests and all architecture, data, model, protocol, operation and training suites."
+    },
+    {
+      "command": "cargo fmt --all -- --check; cargo check --locked; python3 -m py_compile ...; python3 scripts/check_worker_architecture.py; python3 scripts/check_compatibility.py; git diff --check",
+      "result": "passed; worker architecture reports 61 modules and complete embedded asset coverage."
+    }
+  ],
+  "integration_patch": [
+    "Product and all module TODO source references synchronized to 0.13.41.",
+    "Interactive evaluation setup and sample/prediction browsing are tracked separately as CLI-22 and remain pending.",
+    "A declared data fingerprint is optional; without one, provenance accurately claims only the data entrypoint, parameters, split and seed, not content-level identity."
+  ],
+  "remaining": [],
+  "commit": null
+}

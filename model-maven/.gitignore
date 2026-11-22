@@ -1,0 +1,16 @@
+/target
+.venv/
+build/
+dist/
+*.egg-info/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.model-maven/variants/*.lock
+.model-maven/runs/
+.model-maven/source-edits/
+.model-maven/source-edits.lock
+.model-maven/project.json.lock
+.model-maven/ui-session.json
+.model-maven/ui-form-drafts.json
+.model-maven/ui-page-session.json

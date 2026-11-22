@@ -1,0 +1,74 @@
+{
+  "schema_version": 1,
+  "task_id": "CLI-13",
+  "status": "in_review",
+  "baseline": "0.13.45 coordinator worktree",
+  "branch": "master (uncommitted coordinator worktree)",
+  "files_changed": [
+    "src/presentation/pages/environment.rs",
+    "src/presentation/pages/export.rs",
+    "src/presentation/pages/storage.rs",
+    "docs/cli-handoff/CLI-13.json",
+    "scripts/verify_cli13_clean_cancel.py",
+    "docs/acceptance/results/cli13-clean-cancel-20261121/report.json",
+    "docs/acceptance/results/cli13-clean-cancel-20261121/transcript.txt",
+    "scripts/verify_environment_setup.py",
+    "tests/cli.rs",
+    "src/presentation/workbench.rs"
+  ],
+  "implementation": [
+    "environment.rs renders service-reported interpreter/ABI, lock, missing/version-mismatched packages, requirement drift, pip-check output, setup state, diagnostics, and safe next steps without inferring readiness from a directory.",
+    "export.rs renders the source run, destination, checkpoint step, verified file/package counts, environment snapshot provenance, overwrite backup path, omitted external resources, and service diagnostics.",
+    "storage.rs renders service-measured storage categories, de-duplication and scan limits, retention/state protections, fixed cleanup plan targets/reasons/estimated reclaim, checkpoint recovery loss, and apply/partial-result state. These renderers do not mutate state or derive cleanup targets.",
+    "Coordinator registered the modules and wired them into the interactive workbench. Environment reports, export reports, storage reports, clean plans, and clean results now use these renderers; clean apply still submits only the service-issued plan ID.",
+    "CLI-13 environment setup now has actual workbench PTY coverage using the existing offline wheelhouse fixture; it exercises first-time venv creation, report rendering, session interpreter selection, and post-setup reuse without network access.",
+    "Workbench PTY acceptance now exercises a real trained-run export to a new destination and a second attempt against that existing destination; the conflict is rendered to the user and a pre-existing user file remains unchanged.",
+    "工作台导出遇到既有目标时，先展示冲突和保留选项；只有用户输入精确确认词 OVERWRITE 才执行服务端备份并替换。取消路径明确提示原目录保留。"
+  ],
+  "validation": [
+    {
+      "command": "rustfmt --edition 2024 --check src/presentation/pages/environment.rs src/presentation/pages/export.rs src/presentation/pages/storage.rs",
+      "result": "passed after formatting. Unit tests were added in the modules but cannot be compiled/run until coordinator registers the three modules in pages/mod.rs (outside this task's owned files)."
+    },
+    {
+      "command": "cargo test --locked --bin m-model presentation::pages:: -- --nocapture",
+      "result": "passed: 50 page tests, including environment drift/setup, export success/failure, storage, fixed clean plan and partial result renderers."
+    },
+    {
+      "command": "cargo test --locked --test cli workbench_environment_action_renders_human_summary -- --exact --nocapture",
+      "result": "passed: TTY navigation from home to environment diagnosis renders interpreter and status as a human summary."
+    },
+    {
+      "command": "cargo test --locked",
+      "result": "complete Rust workspace passed after environment/export/storage renderer integration and TTY environment summary coverage."
+    },
+    {
+      "command": "python3 scripts/verify_cli13_clean_cancel.py --binary target/debug/m-model --python python3 --output-dir docs/acceptance/results/cli13-clean-cancel-20261121",
+      "result": "verified: real Linux PTY rendered the fixed cleanup plan and explicit CLEAN prompt; a non-confirming response cancelled with an explicit message and left run metadata, worker.log and progress.jsonl unchanged. A second PTY run changed the completed run status to running while waiting at confirmation; applying the stale plan was rejected and preserved both files and the new status."
+    },
+    {
+      "command": "python3 scripts/verify_environment_setup.py --binary target/debug/m-model --python python3",
+      "result": "passed: offline wheelhouse acceptance created a real project venv through the interactive workbench PTY, rendered creation/validation, selected the interpreter for the session, then verified command-level reuse and lock match."
+    },
+    {
+      "command": "cargo test --locked --test cli export_training_run_copies_verified_sources_and_restores_weights -- --exact --nocapture",
+      "result": "passed: real PyTorch managed/resumed training and export workflow; workbench PTY exported a second artifact, then reported the existing-target conflict and preserved a user sentinel file."
+    },
+    {
+      "command": "cargo test --locked --test cli export_training_run_copies_verified_sources_and_restores_weights -- --exact --nocapture",
+      "result": "passed: real trained-run PTY flow exported through the workbench, cancelled an overwrite while preserving a user sentinel, then explicitly confirmed OVERWRITE; exporter reported the backup path, the sentinel was present in the backup, and the replacement export completed."
+    }
+  ],
+  "remaining": [
+    "No real user study is included in these functional PTY checks."
+  ],
+  "integration_patch": {
+    "files": [
+      "src/presentation/pages/mod.rs",
+      "src/presentation/workbench.rs"
+    ],
+    "patch": "Register three page modules. Environment action should display Doctor/env check report via environment::render and expose setup as a separate explicit command. Export flow should display Report via export::render after service completes/fails. Storage/cleanup flow should display storage report, service-generated plan, explicit cancel/confirm, and service result via storage render functions; execution takes only plan.id from service report, never selected/edited target paths.",
+    "status": "integrated; real PTY acceptance passed for environment setup, cleanup cancellation/stale-plan rejection, and export success/cancel/confirmed backup-and-replace; human usability study remains open"
+  },
+  "commit": null
+}

@@ -1,0 +1,172 @@
+{
+  "schema_version": "1.0.0",
+  "document_name": "Model-Maven TUI 视觉设计任务表（拆仓前快照）",
+  "language": "zh-CN",
+  "archive_note": "拆仓前设计记录。旧规划文件名用于历史溯源，当前开发见 Model-Maven 后端仓库根目录 todo.json。",
+  "created_on": "2026-11-19",
+  "source": {
+    "product": "product.json",
+    "product_version_at_planning": "0.13.51",
+    "cli": "clitodo.json",
+    "coordination": "moduletodo.json",
+    "visual_reference": "docs/workbench-mockup.html",
+    "reference_format": "product_refs 以 / 分隔；S4 等数组段按 id 查找。cli_refs 是 clitodo.json 的任务 ID，仅用于核对职责和后续交接。"
+  },
+  "scope": {
+    "phase": "视觉设计与评审",
+    "goal": "让用户快速认出当前项目和工作状态，从真实前向诊断读懂失败位置与契约差异，并在修改前判断影响。",
+    "deliverables": [
+      "终端布局、文字层级、状态样式及窄屏规则。",
+      "已有项目首页、首次接入、前向诊断、变体修改预览与重验反馈的设计稿。",
+      "基于仓库示例的视觉验收记录，以及交给 CLI 负责人的页面设计差异。"
+    ],
+    "out_of_scope": [
+      "Rust 或 Python 产品实现、业务服务、命令解析、JSON 协议、数据写入与依赖变更。",
+      "擅自变更现有导航、键位、取消语义或全屏模式；需要调整的部分作为设计提案交接。",
+      "本轮重绘所有训练、组件、环境、产物和评估页面。"
+    ]
+  },
+  "coordination": {
+    "authority": "产品行为按 product.json，文件归属与串行集成按 moduletodo.json 和 clitodo.json。本表只跟踪视觉任务。",
+    "claim": "视觉任务由协调人登记 owner、branch、baseline 和 owned_files 后领取。本文建立时所有任务未认领；owner 为 null、owned_files 为空。proposed_artifacts 表示交付建议，需领取时核对冲突。",
+    "workspace": "开工前检查当前 HEAD、工作树和现有交接记录。后续按总索引使用独立 worktree 与分支，只修改认领范围内的文件；保留其他人的已修改与未跟踪文件。",
+    "shared_files": "src/presentation、src/main.rs、src/cli.rs、Cargo.toml、Cargo.lock、README.md、product.json、clitodo.json、moduletodo.json 均沿用现有归属。视觉作者在自己的交接稿提出差异，页面负责人和 CLI-21 按范围接线。",
+    "status_policy": "ready 表示可以领取；pending 表示有尚未完成的视觉依赖；in_progress 表示已认领；in_review 表示交付物和证据已齐，等待评审；done 表示该视觉任务已评审通过。",
+    "handoff": [
+      "记录任务 ID、实际负责人、基线、分支、改动文件、页面负责人和相关 CLI 任务。",
+      "附上屏幕状态、显示条件、所需报告字段、已有能力和仍需协商的字段或交互。",
+      "描述证据来自静态设计稿、已有报告、实际 CLI 运行或真人观察，并记录复现方式、环境和未覆盖项。"
+    ]
+  },
+  "visual_direction": {
+    "reading_order": "结论或当前工作 → 关键证据 → 可追溯位置与范围 → 下一步。项目、所选模型和结构版本保持容易确认。",
+    "hierarchy": "每屏一个主标题和一个最明确的下一步。路径与 Shape 使用等宽排版；Shape 的实际值和预期值同行或上下对齐。长日志、原始 ID 和调用全集按需展开。",
+    "color": "低饱和青绿用于焦点与主操作，红色标记失败，其余以终端前景色与次级色区分。状态同时有文字或符号，验证成功只描述本次已观测的范围。",
+    "layout": "以 100×30 为设计参照，复核 80×24 与 40×24。宽屏有条件使用侧栏，窄屏切换为紧凑页内导航与单列内容。重排时保留结论、关键证据和下一步，长路径允许换行或按需展开。",
+    "interaction": "样稿中的键位和动作只是视觉提案；评审稿需区分现有可用操作、拟议快捷入口和当前能力受限的操作。"
+  },
+  "tasks": [
+    {
+      "id": "TUI-00",
+      "title": "盘点当前页面、状态和显示证据",
+      "status": "ready",
+      "priority": "P0",
+      "owner": null,
+      "owned_files": [],
+      "depends_on": [],
+      "product_refs": ["behavior_contracts/N-navigation", "behavior_contracts/F-feedback", "prototype_scenarios/S4"],
+      "cli_refs": ["CLI-02", "CLI-04", "CLI-06", "CLI-07", "CLI-17", "CLI-18"],
+      "proposed_artifacts": ["work/tui/page-inventory.md"],
+      "acceptance": [
+        "为开始页、项目首页、前向诊断、编辑预览列出真实入口、报告来源与视觉提案。",
+        "把当前行式界面、已有视觉样稿和所需后续接线分别记录；对每个新增显示项注明证据来源或具体缺项。"
+      ]
+    },
+    {
+      "id": "TUI-01",
+      "title": "定义终端骨架与视觉规则",
+      "status": "pending",
+      "priority": "P0",
+      "owner": null,
+      "owned_files": [],
+      "depends_on": ["TUI-00"],
+      "product_refs": ["behavior_contracts/N-navigation", "behavior_contracts/F-feedback"],
+      "cli_refs": ["CLI-02", "CLI-15", "CLI-18"],
+      "proposed_artifacts": ["work/tui/visual-system.md"],
+      "acceptance": [
+        "提供宽屏和窄屏的页头、导航、内容、操作提示排布，并定义焦点、标题、主动作与次级信息的视觉权重。",
+        "给出失败、待输入、运行中、已验证、未观测和结果过期的文字与符号示例，关闭颜色后仍能读懂。",
+        "明确中文长标签、模块路径和键位提示在窄屏的换行与截断策略。"
+      ]
+    },
+    {
+      "id": "TUI-02",
+      "title": "设计首次接入和可继续工作的项目首页",
+      "status": "pending",
+      "priority": "P0",
+      "owner": null,
+      "owned_files": [],
+      "depends_on": ["TUI-01"],
+      "product_refs": ["behavior_contracts/O-onboarding", "behavior_contracts/T-continue", "prototype_scenarios/S0", "prototype_scenarios/S4"],
+      "cli_refs": ["CLI-02", "CLI-04", "CLI-17"],
+      "proposed_artifacts": ["work/tui/home-and-onboarding.md"],
+      "acceptance": [
+        "覆盖空目录、只有模型入口、已有模型和批次、存在可续工作四种首屏；用户能判断当前位置、入口来源和下一步。",
+        "首次接入明确模型工厂必需、代表批次可选，并通过措辞区分临时查看与保存默认入口。",
+        "历史结果注明关联的模型、变体或批次。结果不存在、来源变更或无法确认的状态有相应版式。"
+      ]
+    },
+    {
+      "id": "TUI-03",
+      "title": "设计前向诊断的结论、调用与源码证据",
+      "status": "pending",
+      "priority": "P0",
+      "owner": null,
+      "owned_files": [],
+      "depends_on": ["TUI-01"],
+      "product_refs": ["behavior_contracts/G-validation", "behavior_contracts/F-feedback", "prototype_scenarios/S4"],
+      "cli_refs": ["CLI-05", "CLI-06", "CLI-15"],
+      "proposed_artifacts": ["work/tui/forward-diagnosis.md"],
+      "acceptance": [
+        "用示例的 48/32 维错配设计失败首屏，将实际输入和可证实的预期置于同一区域，模块路径与源码位置紧邻。",
+        "给出前向成功、失败、只知道最近观测位置、未执行分支、报告截断的显示示例。只有足够证据时才将失败归到具体模块。",
+        "共享 Layer 的多次调用可按调用序号区分，默认视图保留当前关心的调用与关键输入输出元数据。"
+      ]
+    },
+    {
+      "id": "TUI-04",
+      "title": "设计变体修改预览与重验反馈",
+      "status": "pending",
+      "priority": "P0",
+      "owner": null,
+      "owned_files": [],
+      "depends_on": ["TUI-03"],
+      "product_refs": ["behavior_contracts/M-layer-edit", "behavior_contracts/G-validation", "behavior_contracts/W-wait", "prototype_scenarios/S5"],
+      "cli_refs": ["CLI-06", "CLI-07", "CLI-15"],
+      "proposed_artifacts": ["work/tui/variant-preview.md"],
+      "acceptance": [
+        "修改前后值、目标路径、保存目标和权重保留或重新初始化的影响同时可见。示例中的 weight 重新初始化、bias 保留有明确来源。",
+        "覆盖待验证、验证中、验证成功待提交、验证失败、已保存五种状态；每种状态只给出当时可用的动作。",
+        "画出回到失败调用、调整计划和用原代表批次重验的入口；确认提交与看预览视觉上可区分。"
+      ]
+    },
+    {
+      "id": "TUI-05",
+      "title": "走查视觉传达与终端适配",
+      "status": "pending",
+      "priority": "P0",
+      "owner": null,
+      "owned_files": [],
+      "depends_on": ["TUI-02", "TUI-03", "TUI-04"],
+      "product_refs": ["quality_and_acceptance/usability_targets", "quality_and_acceptance/evidence_boundary", "value_validation"],
+      "cli_refs": ["CLI-18", "CLI-19", "CLI-20"],
+      "proposed_artifacts": ["work/tui/visual-review.md"],
+      "acceptance": [
+        "在 100×30、80×24、40×24 检查需要立即读到的字段是否可见；覆盖浅色、深色和纯文本示例，记录长路径及中英文混排问题。",
+        "以已有项目打开、定位失败、查看修复影响三个任务走查，并记录测试者是否能在不听解释的情况下说出当前对象、实际与预期差异、改动目标。",
+        "区分设计评审、实际终端验证与真人观察。视觉样稿的检查只作为设计证据，真实 PTY 验收归对应 CLI 任务。"
+      ]
+    },
+    {
+      "id": "TUI-06",
+      "title": "把评审后的页面差异交给现有 CLI 负责人",
+      "status": "pending",
+      "priority": "P0",
+      "owner": null,
+      "owned_files": [],
+      "depends_on": ["TUI-05"],
+      "product_refs": ["document_contract", "quality_and_acceptance/evidence_boundary"],
+      "cli_refs": ["CLI-02", "CLI-04", "CLI-06", "CLI-07", "CLI-15", "CLI-17", "CLI-18", "CLI-21"],
+      "proposed_artifacts": ["work/tui/cli-handoff.md"],
+      "acceptance": [
+        "逐页记录视觉决策、现有实现差异、报告字段需求、需接线动作、归属和验收场景。",
+        "交接稿注明可以复用的页面和仍需协调的内容；共同导航、键位、终端布局的改动由对应负责人协调，CLI-21 汇总。",
+        "设计评审关闭只表示视觉任务完成。实现、端到端验收和产品发布的状态分别由现有任务跟踪。"
+      ]
+    }
+  ],
+  "deferred": [
+    "核心路径定稿后，按 CLI-10、CLI-11、CLI-12、CLI-22 现有职责复用样式到运行、训练对照与评估。",
+    "组件、数据预览、环境和产物界面按现有 CLI 任务推进；需要重绘时由相应负责人补设计需求。"
+  ]
+}

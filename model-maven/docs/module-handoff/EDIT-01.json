@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "task_id": "EDIT-01",
+  "status": "done",
+  "baseline": "0.13.51 coordinator worktree; Linux x86_64 / Python 3.14.10 / PyTorch 2.15.0",
+  "branch": "master (uncommitted coordinator worktree)",
+  "files_changed": [
+    "src/application/config.rs",
+    "src/application/mod.rs",
+    "src/presentation/service.rs",
+    "tests/cli_assembly_ui.rs",
+    "edittodo.json",
+    "docs/module-handoff/EDIT-01.json"
+  ],
+  "implementation": [
+    "Root-model assembly edit add/set/remove remains an explicit application operation: it edits only named top-level injection seams, resolves component IDs to exact locked versions, parses parameters, and verifies saved component references.",
+    "Every candidate is constructed and validated before persistence. Dry-run does not write; failures and user cancellation retain the project configuration; successful commit uses versioned project-config history and preserves existing variant snapshots.",
+    "Interactive confirmation is now bound to the candidate base_config_revision. If another process changes project.json while the confirmation prompt is open, confirmation returns PROJECT_CONFIG_CONFLICT and leaves the concurrent configuration intact.",
+    "The final write still uses update_versioned with the candidate base revision, so a change after the confirmation retry loads its baseline is also rejected by the store CAS lock.",
+    "Assembly UI summaries show the exact seam and construction/forward evidence; project config history/selected-field restore provides the existing history-based undo/redo route."
+  ],
+  "validation": [
+    {
+      "command": "cargo test --locked --test cli_assembly_ui -- --nocapture",
+      "result": "passed: 3 PTY scenarios covering non-persisting preview, add/set/remove with failure and cancellation, and concurrent project config change during the confirmation prompt."
+    },
+    {
+      "command": "cargo test --locked --test cli assembly_show_renders_operation_readiness_and_configuration_sources -- --exact --nocapture",
+      "result": "passed: operation readiness and input/configuration provenance are shown."
+    },
+    {
+      "command": "cargo test --locked --test cli declared_model_injection_seams_are_saved_verified_and_replayed_in_variants -- --exact --nocapture",
+      "result": "passed: saved assembly seams are used by inspect/probe/try/repeat and existing variants retain their snapshot."
+    },
+    {
+      "command": "cargo clippy --all-targets --locked -- -D warnings",
+      "result": "passed."
+    },
+    {
+      "command": "python3 scripts/check_architecture.py; cargo fmt --all -- --check; git diff --check",
+      "result": "passed."
+    }
+  ],
+  "remaining": [],
+  "integration_patch": [
+    "ExecutionContext carries the candidate config revision only during the explicit confirmation retry; direct CLI commands retain their existing explicit-command behavior.",
+    "Assembly persistence remains in the configuration service because the public schema is project defaults; variant edits remain handled by the existing transactional edit service."
+  ],
+  "commit": null
+}

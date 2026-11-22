@@ -1,0 +1,259 @@
+{
+  "task_id": "CLI-17",
+  "status": "done",
+  "owner": "总协调人",
+  "branch": "integration",
+  "files_changed": [
+    ".gitignore",
+    "clitodo.json",
+    "src/presentation/contracts.rs",
+    "src/presentation/forms/fields.rs",
+    "src/presentation/mod.rs",
+    "src/presentation/pages/configuration.rs",
+    "src/presentation/pages/mod.rs",
+    "src/presentation/pages/session_restore.rs",
+    "src/presentation/pages/workbench_resume.rs",
+    "src/presentation/session_store.rs",
+    "src/presentation/terminal.rs",
+    "src/presentation/widgets/field_help.rs",
+    "src/presentation/workbench.rs",
+    "tests/cli.rs",
+    "tests/cli_components_ui.rs",
+    "tests/cli_onboarding_ui.rs"
+  ],
+  "implemented": [
+    "增加版本化 onboarding draft 存储，原子写入 .model-maven/ui-session.json，仅包含 canonical project root、模型入口和可选批次入口。",
+    "会话文件限制 64 KiB，拒绝 .model-maven/session 文件 symlink、非普通文件、损坏 JSON 和项目路径不匹配；Unix 临时文件权限为 0600。",
+    "恢复页面明确说明不会重跑模型、训练或保存业务配置；用户可恢复、丢弃或返回向导。恢复不自动执行操作。",
+    "PTY 覆盖失败操作后跨进程重开、恢复选择、不重复执行，再显式丢弃；单元测试覆盖 round-trip、secret field exclusion、symlink 和损坏内容。",
+    "会话草稿记录模型工厂和可选批次工厂对应的本地 Python 源指纹，不导入/执行源码；配置 revision 或模型/批次模块源码变化时阻止直接恢复。",
+    "无法定位为项目内本地模块的入口按“源码版本未知”处理，要求用户显式重验；重验通过后才清除草稿并进入工作台。",
+    "新增配置与输入来源摘要页，展示已保存默认、当前工作台临时值、配置 revision 和装配接缝摘要；不暴露组件参数或重放运行。",
+    "普通人类终端运行详情现在逐项展示输入来源；重复/续训来源显示已保存运行及原始来源链，避免只看到当前快照引用。",
+    "运行详情的人类输出补上输入来源链：重复/续训显示当前来源为已保存运行，并展开原始来源（如命令行或项目配置），同时显示配置 revision。",
+    "Schema 表单在每个字段校验通过后原子保存非敏感字段草稿；保存时绑定项目根和 Schema 内容 revision，文件限制 64 KiB 并拒绝 symlink、损坏、错项目或敏感键。",
+    "重开同一表单后由用户选择恢复、丢弃或返回；恢复值明确标注“上次未提交的表单草稿”，Schema 变化时不会直接恢复。",
+    "字段 writeOnly/sensitive/password/token/secret/credential/authorization 等字段及嵌套对象敏感字段递归排除；完整提交或显式 :cancel 清理当前表单草稿。",
+    "Schema 表单每通过一个字段即原子保存当前安全值；跨进程重开时用户明确选择恢复/丢弃/返回，显示草稿来源。",
+    "Schema revision 改变时不恢复旧值；完整提交与 :cancel 删除草稿；嵌套 Schema 的凭据字段递归排除。",
+    "ui-session.json 与 ui-form-drafts.json 已加入用户项目 .gitignore，避免把本机交互状态提交到模型仓库。",
+    "草稿默认跳过任意自由文本和 any 类型；有限枚举字符串可以保存，普通字符串必须显式设置 x-model-maven-draft-safe=true，防止未知内容意外包含凭据。",
+    "记录项目内最近访问的工作台分类页；重开时由用户选择恢复或丢弃。恢复只打开页面，不重放任何操作；若配置 revision 已变，提示之后使用当前项目状态。",
+    "动态键值参数表单按具体用途隔离恢复点；中断后可恢复此前输入的安全标量/数组，完成和 :cancel 清理草稿。无 Schema 的字符串、对象及敏感键永不写入草稿文件。",
+    "向导入口源码指纹递归覆盖静态可解析的项目内 Python 导入和包初始化文件；不导入/执行用户代码。检测到动态导入或 sys.path 改写时不声称指纹完整，恢复一律要求用户重新检查。"
+  ],
+  "validation": [
+    {
+      "command": "cargo test --locked --bin m-model --quiet session_store",
+      "result": "passed: 2 tests"
+    },
+    {
+      "command": "cargo test --locked --bin m-model --quiet session_restore",
+      "result": "passed: 1 test"
+    },
+    {
+      "command": "cargo test --locked --test cli_onboarding_ui -- --test-threads=1",
+      "result": "passed: 6 PTY tests"
+    },
+    {
+      "command": "cargo test --locked --quiet",
+      "result": "passed: full workspace; 115 unit tests, 54 CLI tests, all integration targets; exit code 0"
+    },
+    {
+      "command": "cargo fmt --all -- --check && git diff --check && cargo check --locked --quiet",
+      "result": "passed"
+    },
+    {
+      "command": "python scripts/check_architecture.py && python scripts/check_compatibility.py",
+      "result": "passed"
+    },
+    {
+      "command": "cargo check --locked",
+      "result": "passed"
+    },
+    {
+      "command": "cargo test --locked --bin m-model session_store -- --nocapture",
+      "result": "passed: 5 tests covering safe storage, source fingerprints for model and batch, unknown external source, symlink and corrupt session"
+    },
+    {
+      "command": "cargo test --locked --bin m-model session_restore -- --nocapture",
+      "result": "passed: 2 tests"
+    },
+    {
+      "command": "cargo test --locked --test cli_onboarding_ui -- --test-threads=1",
+      "result": "passed: 7 PTY tests, including modified local source requiring revalidation and proving no model execution on restore"
+    },
+    {
+      "command": "cargo test --locked --quiet",
+      "result": "passed: complete Rust workspace suite; 121 unit tests, 54 CLI tests, and all listed integration targets passed with exit code 0"
+    },
+    {
+      "command": "cargo fmt --all -- --check && git diff --check && python3 scripts/check_architecture.py && python3 scripts/check_worker_architecture.py && python3 scripts/check_compatibility.py",
+      "result": "passed"
+    },
+    {
+      "command": "cargo test --locked --bin m-model dynamic_parameter_draft -- --nocapture",
+      "result": "passed: 3 tests for safe-value filtering, context-specific identity, and persistence filtering"
+    },
+    {
+      "command": "cargo test --locked --bin m-model draft_fingerprint -- --nocapture",
+      "result": "passed: 3 tests for local entrypoints, optional batch source and transitive imports while ignoring unrelated files"
+    },
+    {
+      "command": "cargo test --locked --test cli_onboarding_ui onboarding_restore_requires_revalidation_after_transitive_local_model_source_changes -- --exact --nocapture",
+      "result": "passed: PTY verifies a change in an imported helper triggers an explicit recheck without executing the changed source during restore"
+    },
+    {
+      "command": "cargo test --locked --quiet",
+      "result": "passed after transitive-import fingerprint changes: full workspace, 23 test targets and 264 tests; zero failures"
+    },
+    {
+      "command": "cargo fmt --all -- --check && git diff --check && python3 scripts/check_architecture.py && python3 scripts/check_worker_architecture.py && python3 scripts/check_compatibility.py",
+      "result": "passed"
+    },
+    {
+      "command": "cargo test --locked --bin m-model run_source_summary -- --nocapture",
+      "result": "passed: 1 test verifies repeat source ancestry and revision rendering"
+    },
+    {
+      "command": "cargo test --locked --test cli managed_training_probe_persists_run_evidence_but_keeps_weights_ephemeral -- --exact --nocapture",
+      "result": "passed: human-readable repeat detail exposes saved-run source and original command-line source"
+    },
+    {
+      "command": "cargo fmt --all -- --check && git diff --check",
+      "result": "passed"
+    },
+    {
+      "command": "cargo test --locked --bin m-model run_source_summary -- --nocapture",
+      "result": "passed: lineage label/revision unit test"
+    },
+    {
+      "command": "cargo test --locked --test cli managed_training_probe_persists_run_evidence_but_keeps_weights_ephemeral -- --exact --nocapture",
+      "result": "passed: repeat run detail prints saved-run source and original command-line --model lineage"
+    },
+    {
+      "command": "cargo test --locked --test cli_onboarding_ui project_open_switches_directory_and_uses_the_saved_project_defaults -- --exact --nocapture",
+      "result": "passed in previous full workspace run: workbench config page shows default model and revision"
+    },
+    {
+      "command": "cargo fmt --all -- --check && git diff --check && python3 scripts/check_architecture.py",
+      "result": "passed"
+    },
+    {
+      "command": "cargo test --locked --bin m-model form_draft -- --nocapture",
+      "result": "passed: 2 form draft storage tests"
+    },
+    {
+      "command": "cargo test --locked --bin m-model persistent_form_values -- --nocapture",
+      "result": "passed: recursive sensitive-field exclusion test"
+    },
+    {
+      "command": "cargo test --locked --test cli_components_ui interrupted_component_schema_form_can_be_restored_and_explicitly_cancelled -- --exact --nocapture",
+      "result": "passed: PTY interrupts after one field, restarts, explicitly restores and completes; second interruption followed by :cancel deletes draft and does not run component test"
+    },
+    {
+      "command": "cargo test --locked --quiet",
+      "result": "passed: full Rust workspace; 125 unit tests, 54 CLI tests and all integration targets"
+    },
+    {
+      "command": "git diff --check && python3 scripts/check_architecture.py && python3 scripts/check_worker_architecture.py && python3 scripts/check_compatibility.py",
+      "result": "passed"
+    },
+    {
+      "command": "cargo test --locked --bin m-model form_draft -- --nocapture",
+      "result": "passed: storage round-trip, schema revision stale detection, clear, and sensitive-key refusal"
+    },
+    {
+      "command": "cargo test --locked --bin m-model persistent_form_values -- --nocapture",
+      "result": "passed: recursive sensitive-field exclusion"
+    },
+    {
+      "command": "cargo test --locked --test cli_components_ui interrupted_component_schema_form_can_be_restored_and_explicitly_cancelled -- --exact --nocapture",
+      "result": "passed: real PTY interruption, cross-process restore, successful completion, and explicit cancel cleanup"
+    },
+    {
+      "command": "cargo test --locked --quiet",
+      "result": "passed: full Rust workspace; 125 unit tests, 54 CLI tests, and all integration targets"
+    },
+    {
+      "command": "cargo fmt --all -- --check && git diff --check && python3 scripts/check_architecture.py && python3 scripts/check_worker_architecture.py && python3 scripts/check_compatibility.py",
+      "result": "passed"
+    },
+    {
+      "command": "git check-ignore -v --no-index .model-maven/ui-session.json .model-maven/ui-form-drafts.json",
+      "result": "both UI session files are ignored by .gitignore"
+    },
+    {
+      "command": "cargo test --locked --bin m-model persistent_form_values -- --nocapture",
+      "result": "passed: numeric/enum/explicitly-safe values persist; free text, any and sensitive fields are excluded"
+    },
+    {
+      "command": "cargo test --locked --test cli_components_ui interrupted_component_schema_form_can_be_restored_and_explicitly_cancelled -- --exact --nocapture",
+      "result": "passed after safe-by-default string policy"
+    },
+    {
+      "command": "cargo test --locked --quiet",
+      "result": "passed: current full Rust workspace; 125 unit tests, 54 CLI tests and all integration targets"
+    },
+    {
+      "command": "cargo test --locked --bin m-model page_selection -- --nocapture",
+      "result": "passed: page session round-trip/project binding, invalid ID, and symlink refusal"
+    },
+    {
+      "command": "cargo test --locked --test cli_onboarding_ui workbench_page_selection_can_be_resumed_or_discarded_after_restart -- --exact --nocapture",
+      "result": "passed: PTY leave/restart/resume into prior category without replay, then discard and verify file removal"
+    },
+    {
+      "command": "cargo test --locked --test cli_components_ui -- --test-threads=1",
+      "result": "passed: 5 component UI tests; test helper explicitly discards a prior page position before starting its scripted flow"
+    },
+    {
+      "command": "cargo test --locked --quiet",
+      "result": "passed: full Rust workspace; 128 unit tests, 54 CLI tests, all integration targets"
+    },
+    {
+      "command": "cargo fmt --all -- --check && git diff --check && python3 scripts/check_architecture.py && python3 scripts/check_worker_architecture.py && python3 scripts/check_compatibility.py",
+      "result": "passed"
+    },
+    {
+      "command": "cargo test --locked --bin m-model session_store -- --nocapture",
+      "result": "passed: 12 tests, including new negative fixtures ensuring runpy.run_path, importlib.util.spec_from_file_location, and module_from_spec entrypoints are treated as source-graph unknown and require explicit revalidation."
+    },
+    {
+      "command": "cargo test --locked --bin m-model session_store -- --nocapture",
+      "result": "passed on current source: 12 tests, including source fingerprints, transitive imports, dynamic-loader fail-closed, sensitive values, corrupt/symlink files and project-bound page drafts."
+    },
+    {
+      "command": "cargo test --locked --bin m-model session_restore -- --nocapture",
+      "result": "passed: 2 tests confirm no operation replay and explicit revalidation for stale sources."
+    },
+    {
+      "command": "cargo test --locked --bin m-model form_draft -- --nocapture; cargo test --locked --bin m-model persistent_form_values -- --nocapture",
+      "result": "passed: 2 draft persistence tests and 1 recursive sensitive-field exclusion test."
+    },
+    {
+      "command": "cargo test --locked --bin m-model run_source_summary -- --nocapture",
+      "result": "passed: saved-run lineage and original input source are displayed."
+    },
+    {
+      "command": "cargo test --locked --test cli_onboarding_ui onboarding_restore_requires_revalidation_after_transitive_local_model_source_changes -- --exact --nocapture",
+      "result": "passed: real PTY requires user revalidation after imported local source changes and does not execute the changed model during restore."
+    },
+    {
+      "command": "cargo test --locked --test cli_components_ui interrupted_component_schema_form_can_be_restored_and_explicitly_cancelled -- --exact --nocapture",
+      "result": "passed: cross-process PTY restore/completion and explicit cancel cleanup."
+    },
+    {
+      "command": "cargo clippy --locked --bin m-model --test cli_onboarding_ui --test cli_components_ui -- -D warnings; python3 scripts/check_architecture.py",
+      "result": "passed."
+    }
+  ],
+  "integration_patch": [
+    "初步恢复能力只接入首次接入向导；不把会话草稿当作 project.json 配置，不覆盖 active run snapshot。"
+  ],
+  "backend_requests": [],
+  "remaining": [],
+  "limitations": [
+    "Dynamic imports, runtime sys.path mutation and custom Python loaders cannot be statically closed. The product detects supported dynamic-loader patterns or unresolved local entrypoints and requires explicit revalidation before restoring the draft; it does not claim a complete source fingerprint for those projects."
+  ]
+}

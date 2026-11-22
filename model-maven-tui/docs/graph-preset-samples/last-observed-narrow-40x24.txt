@@ -1,0 +1,24 @@
+MODEL-MAVEN · Tab Details · ? Controls …
+100% · exploded slices 2/2 · OFFLINE · …
+────────────────────────────────────────
+      ⢀⠤⠒⠤⢄⡀              ⡠⠔⠂⡠⠢⡀⡀
+      ⠓⠤⢄⣀⢵⣕⠉⡰            ⢀⠤⠊⠤⣀⠈⠢⡀
+      ⡠⠒⠉⠐⠛⠵⠮⣀          ⢀⠔⠁⠉⢵⠉⠑⠊⠥⠈⠢⡀
+      ⠉⣒⠶⣤⡤⣀⡠⠊           ⠑⢄⠭⠛⠶⢖⡤⠔⡠⠊
+      ⠮⣀▓⢕▓⠁⠒⢠            ⠓⠉⠢⡀⢷⡠⠊⡲
+        ⠈⠉⠒⠢⠔⠁               ⠈⠊⠑⠊
+
+          1                   2
+› net.head   ·   Linear
+  Dimensions and parameter count unavail
+Space · 1 3D · 3 x1 · 4 x2
+PgUp / PgDn or [ ]  Pages
+L Layout off · T Mouse on · v detail · …
+
+────────────────────────────────────────
+Offline sample · Last observed · Graph
+model.head #2 · demo.py:12 · a Axes
+Observed 2×48 · Expected ?
+changing-batch-01 · truncated
+Verified edit target unavailable
+? · ↑↓ calls · Tab graph/details · q qu…

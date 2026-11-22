@@ -1,0 +1,123 @@
+{
+  "schema_version": 1,
+  "task_id": "ENV-04",
+  "status": "done",
+  "baseline": "Current shared worktree after adding explicit selected-interpreter CPU runtime smoke profiles; Linux x86_64, Python 3.14.10, PyTorch 2.15.0.",
+  "branch": "shared worktree (agent-owned files; no separate checkout available)",
+  "files_changed": [
+    "python/model_maven_worker/environment/adapters.py",
+    "python/model_maven_worker/environment/__init__.py",
+    "python/model_maven_worker/protocol.py",
+    "python/model_maven_worker/runtime/capabilities.py",
+    "python/model_maven_worker/__init__.py",
+    "src/adapters/worker_assets.rs",
+    "src/cli.rs",
+    "src/main.rs",
+    "src/application/environment.rs",
+    "src/domain/capability.rs",
+    "src/presentation/terminal.rs",
+    "docs/contracts/compatibility.json",
+    "tests/environment_adapters.rs",
+    "docs/environment-adapters.md",
+    "docs/module-handoff/ENV-04.json",
+    "python/model_maven_worker/environment/lock.py",
+    "scripts/verify_environment_setup.py",
+    "tests/environment_offline.rs",
+    "scripts/verify_environment_runtime_probe.py",
+    "scripts/verify_product_acceptance.py",
+    "docs/acceptance/results/qa02-20261120-env-runtime-final-0.13.63/environment-runtime-probe.json"
+  ],
+  "requested_behavior": "Support user-declared deep-learning/reinforcement-learning packages in the explicitly selected Python environment. Package presence must not silently install anything, change interpreter, or bind a framework/trainer. Distinguish package importability from first-party adapter support.",
+  "implementation": [
+    "Added `m-model env libraries` with repeatable `--library` filters and explicit `--venv` selection; absent `--python` follows the saved project environment if present, while explicit `--python` takes precedence.",
+    "Library discovery runs a fixed standard-library metadata query in the selected interpreter. It does not import third-party packages, invoke entry points, install dependencies, switch interpreters, or select a model/training backend.",
+    "Reports known package distribution versions and separates `installed` metadata from `adapter_status`: native PyTorch support is identified; torchvision, timm, Lightning, Transformers, Diffusers, JAX/Flax, Gymnasium, Stable-Baselines3, and Ray are package-only; arbitrary distributions are unknown.",
+    "Human terminal output and JSON reports explain selection, versions, and the no-auto-install/no-auto-bind boundary. Missing explicitly requested venv paths fail closed rather than falling back.",
+    "Added a worker capability, Rust request-feature routing, embedded worker asset, and compatibility-contract entry for `environment.library_inventory`.",
+    "Removed the implicit PyTorch requirement from environment lock validation and resolution. `env lock`, `env setup`, and wheelhouse operations now process the user-declared requirements closure; they do not add Torch or select a runtime adapter.",
+    "Kept Model-Maven model inspection fail-closed when the selected environment lacks Torch. The non-Torch regression prepares a one-package environment, verifies metadata inventory, and observes `OPERATION_CAPABILITY_UNAVAILABLE` with the PyTorch requirement explained in readiness.",
+    "Added explicit `m-model env probe --library <id>` as a separate operation from metadata-only inventory. It imports only allowlisted, user-named ML/RL candidates in the selected interpreter and reports imported/not-installed/import-failed, detected versions, exception type, and sanitized failure reason.",
+    "Registered `environment.library_probe` as an informational capability that remains available without Torch. Probe never installs packages, changes interpreters, or binds a backend/Trainer; package-only candidates remain package-only even after a successful import.",
+    "Removed the duplicated candidate-to-distribution/import mapping from the probe subprocess source. The parent now passes the pair directly from `_LIBRARIES`, so inventory, allowlisting, import names, and adapter labels share one registry and cannot silently drift apart.",
+    "Added opt-in `m-model env probe --check-runtime` as a distinct check level. PyTorch runs fixed CPU tensor arithmetic; torchvision exercises CPU NMS; JAX runs CPU array arithmetic; Gymnasium samples a bounded Box. Each library runs in a fresh subprocess, at most four per command. The report separates import status from runtime_check status (passed/failed/unsupported/not_run), keeps auto_installed/auto_bound false, and unsupported library profiles do not imply a backend."
+  ],
+  "validation": [
+    {
+      "command": "cargo test --locked --test environment_adapters -- --nocapture",
+      "result": "passed 4/4 after concurrent EDIT-05 completed the shared Train wiring."
+    },
+    {
+      "command": "cargo clippy --locked --test environment_adapters -- -D warnings",
+      "result": "passed."
+    },
+    {
+      "command": "cargo build --locked; target/debug/m-model env libraries --library torch --library gymnasium",
+      "result": "passed real CLI human-readable smoke: showed installed torch/PyTorch native path, missing gymnasium, no auto-binding or package import."
+    },
+    {
+      "command": "python3 scripts/check_architecture.py; python3 scripts/check_worker_architecture.py",
+      "result": "passed Rust architecture and 70-module worker architecture; embedded asset coverage complete."
+    },
+    {
+      "command": "python3 -m py_compile python/model_maven_worker/environment/adapters.py python/model_maven_worker/environment/__init__.py",
+      "result": "passed."
+    },
+    {
+      "command": "cargo fmt --all -- --check; git diff --check; python3 scripts/check_compatibility.py",
+      "result": "passed: compatibility contract, JSON parsing, rustfmt check, and targeted git diff check all passed."
+    },
+    {
+      "command": "cargo test --locked --test environment_offline -- --nocapture",
+      "result": "passed 2/2: PyTorch wheelhouse archive/replay regression and explicit non-Torch lock/setup, library inventory, and model-operation capability rejection."
+    },
+    {
+      "command": "cargo test --locked --test environment_adapters -- --nocapture; cargo clippy --locked --test environment_adapters -- -D warnings",
+      "result": "passed 4/4 after concurrent EDIT-05 completed the shared Train wiring."
+    },
+    {
+      "command": "python3 scripts/check_compatibility.py; cargo fmt --all -- --check; python3 -m py_compile ...; target/debug/m-model env probe --help; target/debug/m-model env probe --library gymnasium",
+      "result": "passed compatibility registry, format, Python syntax, CLI help, and human-readable missing-package smoke."
+    },
+    {
+      "command": "python3 scripts/check_compatibility.py; python3 -m py_compile ...; direct probe_environment_libraries smoke with synthetic Gymnasium module",
+      "result": "passed after isolating user package stdout/stderr and preserving import_version. Explicit import noise did not corrupt the structured probe report."
+    },
+    {
+      "command": "cargo test --locked --test environment_adapters -- --nocapture (latest rerun)",
+      "result": "passed 4/4 after concurrent EDIT-05 completed the shared Train wiring."
+    },
+    {
+      "command": "python3 scripts/check_worker_architecture.py; python3 scripts/check_architecture.py; target/debug/m-model env probe --library gymnasium",
+      "result": "passed: 71 worker modules and embedded asset coverage; Rust architecture boundaries; human-readable probe correctly reports gymnasium absent with no adapter claim."
+    },
+    {
+      "command": "Direct `probe_environment_libraries` smoke using a temporary synthetic Gymnasium distribution and import module after the registry deduplication",
+      "result": "passed: explicit interpreter path selected, fake package startup stdout remained isolated, distribution/import versions were returned, Gymnasium remained package-only, and auto_installed/auto_bound stayed false. `py_compile` and worker embedded-asset architecture check also passed."
+    },
+    {
+      "command": "cargo test --locked --test environment_adapters -- --test-threads=1",
+      "result": "passed 5/5 including fake explicit-PyTorch CPU arithmetic success/failure, unsupported package-only profile, runtime-check fanout limit, selected interpreter and no-auto-bind assertions."
+    },
+    {
+      "command": "cargo clippy --locked --test environment_adapters -- -D warnings; cargo fmt --all -- --check; python3 -m py_compile python/model_maven_worker/environment/adapters.py scripts/verify_environment_runtime_probe.py; python3 scripts/check_worker_architecture.py; python3 scripts/check_compatibility.py",
+      "result": "passed: strict targeted Clippy, formatting, Python syntax, worker module/asset boundaries and Rust/Python compatibility."
+    },
+    {
+      "command": "python3 scripts/verify_product_acceptance.py --case environment-runtime-probe --python python3 --binary target/debug/m-model --output-dir docs/acceptance/results/qa02-20261120-env-runtime-0.13.63; JSON Schema Draft 2020-12 + FormatChecker",
+      "result": "verified exit 0 in 1.529s; schema-valid evidence docs/acceptance/results/qa02-20261120-env-runtime-0.13.63/environment-runtime-probe.json records a real PyTorch 2.15.0 CPU operation returning 5.0 in the explicitly selected interpreter, with auto_installed=false and auto_bound=false."
+    },
+    {
+      "command": "cargo test --locked --test environment_adapters non_torch_runtime_profiles_execute_their_bounded_cpu_fixture_operations -- --exact --nocapture",
+      "result": "passed: disposable package fixtures exercise the torchvision NMS, JAX CPU array, and Gymnasium Box branches through the real CLI/report path. These fixtures verify profile dispatch/output only and do not claim compatibility with real third-party installations."
+    }
+  ],
+  "limitations": [
+    "Distribution metadata presence does not prove importability, native ABI health, or successful initialization; library inventory deliberately avoids executing third-party code.",
+    "Only the existing native PyTorch execution backend is first-party supported. Generic lock/setup can prepare user-declared JAX/Flax/Gymnasium/other dependencies but does not add their Model-Maven model/training loops or bind a Trainer.",
+    "Import probing intentionally executes candidate package initialization code in a subprocess with the current user permissions; it is a diagnostic, not a sandbox or a safety guarantee for third-party packages.",
+    "Opt-in CPU runtime profiles currently cover PyTorch, torchvision, JAX and Gymnasium only; other allowlisted packages report unsupported. GPU/ROCm/CUDA initialization is not claimed, and explicit package imports/runtime checks execute third-party code with the selected interpreter permissions.",
+    "Only the PyTorch 2.15.0 CPU profile has current live-package acceptance evidence. torchvision, JAX and Gymnasium runtime branches are exercised with disposable fixture packages; real installations were absent in the measured interpreter and remain unverified."
+  ],
+  "remaining": [],
+  "commit": null
+}

@@ -1,0 +1,59 @@
+{
+  "id": "MODEL-05",
+  "status": "done",
+  "product_refs": [
+    "behavior_contracts/S-supervision/semantic_marks"
+  ],
+  "baseline": "新增需求；尚未实现或验证。",
+  "owned_files": [
+    "python/model_maven_worker/model/**",
+    "src/adapters/worker_assets.rs",
+    "src/application/model.rs",
+    "src/application/readiness.rs",
+    "src/cli.rs",
+    "src/presentation/service.rs",
+    "tests/model_semantic_marks.rs",
+    "tests/test_model_semantics.py"
+  ],
+  "scope": "持久化手动语义标签；将标签稳定绑定到模块实现、端口和源码指纹；暴露 stale/rebind 状态。调用序号只作为临时证据，不能作为长期目标。",
+  "acceptance": [
+    "对真实观察到的模块端口进行标记 CRUD 和重载。",
+    "编辑源码或模块路径后检测过期，不静默迁移。",
+    "未观察、歧义、外部代码根变化及共享调用有可解释覆盖状态。",
+    "不向用户源码插入标记，不自动推断角色。"
+  ],
+  "implementation": [
+    "Probe 调用记录加入模块完全限定类型、项目内源码相对路径及 SHA-256；按 Python 类型缓存源码指纹，避免重复调用重复哈希；不输出源代码或 Tensor 值。",
+    "m-model model mark 基于一次真实 forward 手动添加角色和含义；只有已观察的模块路径/端口、非截断轨迹和项目内实现源码可持久绑定。",
+    "m-model model marks 列出标记并复核源码；附带 --model/--batch 时额外重验已执行的模块/端口与模型参数、注入、变体、已加载项目源码清单身份。覆盖不足显式显示 unverified/stale。",
+    "m-model model retag 通过全新 Probe 显式更新含义/绑定；m-model model unmark 按精确 ID 删除。sidecar 使用版本化 schema、原子替换及受限文件权限。",
+    "model.semantic_marks Worker capability 已注册并由 doctor 报告；新增、审计、列表/删除均走真实 CLI/worker 路径。"
+  ],
+  "verification": [
+    {
+      "command": "cargo test --locked --test model_semantic_marks",
+      "result": "passed: real PyTorch CLI add/list/audit/config drift/stale source/retag/remove flow and unobserved-port rejection."
+    },
+    {
+      "command": "PYTHONPATH=python python3 -m unittest tests.test_model_semantics",
+      "result": "passed: 8 state API cases including source staleness, explicit rebind, ambiguity/truncated trace rejection, unobserved ports, malformed sidecars and exact deletion."
+    },
+    {
+      "command": "cargo test --locked --test model_probe --test model_contracts --test model_semantic_marks",
+      "result": "passed: 8 tests; existing invocation identity and port-contract behavior remain intact."
+    },
+    {
+      "command": "cargo clippy --locked --all-targets -- -D warnings",
+      "result": "passed."
+    },
+    {
+      "command": "python3 scripts/check_worker_architecture.py",
+      "result": "passed: embedded worker assets complete; domain import direction valid."
+    },
+    {
+      "command": "m-model --json doctor",
+      "result": "model.semantic_marks supported; supervision rule execution explicitly reported not implemented."
+    }
+  ],
+  "remaining": []
+}

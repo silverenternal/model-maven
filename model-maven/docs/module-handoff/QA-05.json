@@ -1,0 +1,286 @@
+{
+  "schema_version": 1,
+  "task_id": "QA-05",
+  "status": "waiting_for_dependency",
+  "overall_result": "partial",
+  "baseline": "product.json 0.13.63; Linux x86_64 / Python 3.14.10; shared coordinator worktree with current provenance-bound local acceptance records.",
+  "audit_scope": "Final integration audit excluding tuitodo.json. This record reports current evidence and blockers; it does not convert implementation notes or skipped scenarios into completed gates.",
+  "verified": [
+    "TRAIN-05/CLI-23 slice: manually authored semantic marks, built-in and project-local validator/penalty rules, read-only preview, explicit managed/manual/external-loop adoption, pre-update require rejection, pinned plugin-source drift rejection, checkpointed sample summaries. Current-source evidence is in docs/acceptance/results/qa02-20261120-supervision-custom-rules-0.13.63/.",
+    "RUN-02 local Linux scope is done: PTY HUP/reconnect, detached supervisor death as unknown, immutable latest checkpoint and child-run recovery are covered by current-source evidence in docs/acceptance/results/qa02-20261120-final-local-0.13.63/supervisor-disconnect.json.",
+    "QA-03 local release-install evidence is from its recorded source snapshot: extracted Cargo package ran outside checkout and covered complex training/resume/export/restore, evaluation preview/history, interpreter errors, and offline SDK wheel install (docs/acceptance/results/qa02-20261120-final-local-0.13.63/release-install.json). Later source changes mean this record is historical, not proof for the current full tree.",
+    "CLI-16 registered-injection completion coverage and CLI-17 persistence/restore coverage remain within their handoff slices; neither substitutes for the open CLI-21 whole-workflow acceptance.",
+    "docs/acceptance/requirements.json now matches product.json 0.13.63 and its 1,108 responsible-task status entries have been synchronized from current non-TUI TODO files and corresponding handoffs (854 stale entries corrected). Product evidence/status claims were not changed by that synchronization.",
+    "CLI-04 preset discovery now provides m-model data presets [QUERY]; current-source release-install acceptance verifies search through the extracted/installed CLI outside the checkout. It does not establish onboarding completion or user value.",
+    "Worker architecture audit now passes after model probe input hashing/snapshot logic moved into the shared tensor_inputs domain; compatibility and embedded asset checks pass.",
+    "Recorded-snapshot QA-02 complex-model-workflow and edit-persistence-and-migration passed with schema-valid records in docs/acceptance/results/qa02-20261120-round2-complex-0.13.63/ and docs/acceptance/results/qa02-20261120-round2-edit-migration-0.13.63/. They do not establish current-tree completeness, real-user value, GPU/OOM stress or arbitrary model graph lowering.",
+    "Recorded-snapshot QA-03 release-install passed in docs/acceptance/results/qa02-20261120-round2-preset-release-no-torch-0.13.63/; the extracted CLI preset search ran under a clean Python venv with no torch. It predates later source changes. Remote CI, platform/GPU and license decisions remain open.",
+    "QA-02/EXT-03 Trainer timeout is no longer an untested claim: provider-conformance passed on its recorded source snapshot in docs/acceptance/results/qa02-20261120-trainer-deadline-0.13.63/provider-conformance.json; finite boundary behavior is verified, blocked-call preemption remains out of scope.",
+    "CLI-16 completion gained bounded schema-derived whole-JSON suggestions for enum values and nested required objects; current unit 7/7 and real CLI completion integration 5/5 passed. This does not close arbitrary Python/unregistered schemas or unavailable native-shell and full help-consistency gates.",
+    "ENV-04 implementation scope is complete for no-auto-bind: explicit inventory/import and opt-in CPU runtime profiles are documented. Recorded PyTorch 2.15.0 smoke evidence is in docs/acceptance/results/qa02-20261120-env-runtime-final-0.13.63/environment-runtime-probe.json, from a prior source snapshot. Live-package evidence covers PyTorch CPU only; other runtime profiles have disposable fixture-path tests. Other frameworks remain package-only; no Trainer is inferred.",
+    "Requirement traceability audit now has direct item-specific evidence_refs on 92/132 requirements (76 references added across 35 items; 3 invalid CMD-runs file references removed). No status was changed. 40 items remain without references: 23 require external evidence, 9 have missing implementation, and 8 have an implemented label but insufficient direct scope evidence. See docs/acceptance/requirements.json.",
+    "CLI-21 augment slice: `m-model augment` provides versioned train/eval CRUD, explicit batch target paths, parameter validation, seeded transforms, split-aware preview, managed/manual automatic application, and opt-in `context.transform_batch(batch)` for external loops/evaluators with fail-closed checks. Training checkpoint signatures include the transform pipeline. Real CLI and PyTorch integration tests cover train/eval output shape and all three training modes.",
+    "CLI-21 current integration slice: the matrix now distinguishes live tasks from completed archived tasks; current real-binary acceptance passes JSON inspect, a real forward probe and existing-project PTY onboarding. Evidence is docs/acceptance/results/cli-interaction-20261121-current/report.json and docs/acceptance/results/cli-interaction-20261121-current/transcript.txt. This is a narrow workflow slice, not whole-workflow completion.",
+    "CLI-22 current-source human flow: a real PTY test trains a checkpoint, opens the run from the workbench, configures and confirms evaluation, then browses the persisted evaluator-owned prediction preview from run history. The evaluation page summary and CLI-22 handoff record this scoped acceptance; usability evidence is still outstanding.",
+    "CLI-16 help/capability slice: every public command and named option has live Clap help; each operation_catalog current_cli path resolves and worker operations match the compatibility registry. Two Rust contract tests pass; current binary help renders corrected descriptions. Fish/PowerShell/Elvish native shell runtimes remain unavailable.",
+    "CLI-13 cleanup cancellation/staleness slice: real Linux PTY cancellation left run metadata/log/progress unchanged; changing run status to running while the fixed-plan confirmation was open caused stale-plan rejection without deleting files. Evidence: docs/acceptance/results/cli13-clean-cancel-20261121/report.json. Environment setup and export interaction were subsequently closed by separate current PTY evidence below.",
+    "CLI-18 current-source PTY pager acceptance passed: at 40 columns the interactive model tree (46 rows) and actual forward-call browser (46 calls) each navigated next/previous/back across two pages. Test: cargo test --locked --test cli_terminal_layout workbench_model_tree_and_probe_calls_paginate_at_40_columns -- --nocapture. Human 40-column readability remains open.",
+    "CLI-13 environment setup workbench slice: the offline wheelhouse acceptance now creates a project venv through the actual PTY workbench, checks rendered success and session interpreter selection, then checks command-level reuse/lock match. Evidence command: python3 scripts/verify_environment_setup.py --binary target/debug/m-model --python python3.",
+    "CLI-13 current-source workbench export PTY slice: real training/export flow covers fresh destination success, existing-target conflict cancellation with sentinel preservation, and exact OVERWRITE confirmation that moves the prior destination into the reported backup. Test: cargo test --locked --test cli export_training_run_copies_verified_sources_and_restores_weights -- --exact --nocapture.",
+    "QA-03 current-source local release install was re-run against the current dirty worktree and verified from an extracted Cargo package outside the checkout, including embedded worker, complex model train/resume/export/restore, evaluation preview/history, and offline SDK wheel import. Evidence: docs/acceptance/results/delivery-current-20261121/release-install.json. It remains Linux x86_64 only; remote CI, other platforms, GPU-specific behavior and legal review remain external.",
+    "QA-02 current-source sweep: all 12 runnable scenarios in scripts/verify_product_acceptance.py passed against one shared worktree fingerprint; all records passed JSON Schema validation. Evidence records: docs/acceptance/results/delivery-current-20261121-qa02/complex-model-workflow.json, docs/acceptance/results/delivery-current-20261121-qa02/external-loop.json, docs/acceptance/results/delivery-current-20261121-qa02/supervision-rules.json, docs/acceptance/results/delivery-current-20261121-qa02/extension-package.json, docs/acceptance/results/delivery-current-20261121-qa02/provider-extension.json, docs/acceptance/results/delivery-current-20261121-qa02/environment-offline-setup.json, docs/acceptance/results/delivery-current-20261121-qa02/environment-runtime-probe.json, docs/acceptance/results/delivery-current-20261121-qa02/project-artifact-reference-graph.json, docs/acceptance/results/delivery-current-20261121-qa02/supervisor-disconnect.json, docs/acceptance/results/delivery-current-20261121-qa02/independent-export-restore.json, docs/acceptance/results/delivery-current-20261121-qa02/provider-conformance.json, docs/acceptance/results/delivery-current-20261121-qa02/edit-persistence-and-migration.json. This still does not cover the external human-value, remote/platform/GPU or real host/network failure gates.",
+    "CLI-13 export interaction now includes explicit backup-and-replace confirmation: real trained-run workbench PTY covered successful export, conflict cancellation preserving a sentinel, and exact OVERWRITE confirmation moving the sentinel to the reported backup before replacement. Test: cargo test --locked --test cli export_training_run_copies_verified_sources_and_restores_weights -- --exact --nocapture. Human usability evidence remains external.",
+    "Provenance boundary: the 12-scenario QA-02 batch references worktree fingerprint 5a7c7698… and predates the latest CLI-13 workbench overwrite-confirmation change. That change has its own current targeted trained-run PTY evidence; the old sweep is not claimed to cover the later full tree.",
+    "CLI-04 current-source onboarding: Tiny CNN real-image probe/managed trial and ResNet18 dependency preflight are covered; tests/cli_resnet18_onboarding.rs now also verifies positive ResNet18 onboarding, real forward, and one managed loss/backward step. Target-user research remains external.",
+    "QA-03 fresh Linux release evidence from fingerprinted source snapshot: extracted Cargo package install and out-of-checkout CLI/runtime passed with fingerprint de5606e64fd1f0fb4e3c13d5dcb5f88992bb3ee872296cb02a79781479079099. Report: docs/acceptance/results/qa03-current-20261121/release-install.json. Remote CI, other platforms/GPU, and licensing/third-party decisions remain external. Later CLI-14 source changes are covered by focused tests but are not included in that package fingerprint; refresh package acceptance before release.",
+    "QA-02 fresh current-tree sweep: 13/13 runnable scenarios verified; external human-value-validation was skipped and retained as a blocker. All 14 records pass evidence schema validation in docs/acceptance/results/qa02-current-tree-20261121-1/. Three per-scenario fingerprints were recorded because documentation/evidence writes occurred during the run; this is not one frozen-fingerprint batch.",
+    "CLI-14 current-source workbench interaction: 13/13 onboarding/workbench PTY tests pass, including a real slow background preview that returns to editing, renders its result, confirms the run plan and completes a one-step managed trial from the same batch factory/parameters; cancellation persists `cancelled`.",
+    "CLI-14 background preview has real PTY/PyTorch evidence for edit-while-running, wait, cancellation, confirmed trial, and the superseded-generation race; the current page will not offer a trial unless the report is published. H2 user study remains open.",
+    "CLI 菜单兼容性修复后，QA-02 五个此前受菜单序号影响的真实场景在当前来源快照定向复验通过：external-loop、environment-offline-setup、independent-export-restore、provider-conformance、edit-persistence-and-migration。证据位于 docs/acceptance/results/qa02-menu-regression-fix-20261121/；仅为定向复验，不代表 QA-02 全量通过。",
+    "扩展 callable 自有训练状态迁移已实现并由 extensions_state 集成测试验证（1.0.0→2.0.0 managed checkpoint 恢复）；组件 manifest.state_schema 仍是仅元数据校验，未接入通用运行时 callable 或多跳迁移协议，不能将二者混为一个缺口。",
+    "Current worktree Rust workspace acceptance completed: `cargo test --locked --quiet` passed all unit and integration targets. The stale empty-requirements PTY fixture now asserts ENVIRONMENT_RESOLUTION_EMPTY and no virtualenv is created; actual populated-environment setup remains covered by environment acceptance.",
+    "Current non-TUI Python unit subset passed with `PYTHONPATH=python`: 18/18 capability, custom supervision, model semantics, and supervision preview tests.",
+    "QA-03 current-tree release/install rerun passed in docs/acceptance/results/qa03-delivery-rerun-20261121/; extracted package ran outside checkout and exercised complex train/resume/export/restore, evaluation persistence, preset search without torch and SDK wheel install/import. It does not close remote CI, other-platform/GPU, or legal gates.",
+    "CLI-15 E4 dependency recovery routes structured diagnostics to the real project EnvironmentCommand::Setup service and requires explicit `setup`; at this earlier snapshot successful install/retry was still open, later closed by the hash-locked wheelhouse setup/retry PTY recorded below.",
+    "CLI-15 E4/E5 recovery route at the initial slice: dependency diagnostics lead to confirmed setup; checkpoint-write failure opens scoped storage review and safe cleanup preview. The later PTY evidence below closes setup-through-retry and cleanup-through-retraining; E3 explicit exclusion is covered by a real PTY flow.",
+    "CLI-15 E3 now has a user-facing class-folder recovery loop: real PTY confirms explicit damaged-image exclusion without file mutation, verifies the content-bound protocol is applied by classification_batch, repairs the image, fully verifies and clears the protocol, and confirms the repaired sample returns. JSON inspection returns CLASS_SAMPLES_DAMAGED without applying exclusions. Focused Python tests cover stale protocol rejection and clearing. E1/E2 companion flows are covered in tests/cli_recovery_data.rs.",
+    "CLI-15 E5 storage reports available/total capacity; failed probes remain explicitly unknown without affecting occupancy. Initial probe/render evidence was later extended to the same-environment confirmed cleanup and successful retraining PTY below.",
+    "CLI-15 E1/E2 now have real PTY evidence: CLASS_DATASET_ROOT_INVALID and DATA_SPLIT_EMPTY each route to editable preview settings; corrected configuration reruns classification_batch and persists succeeded preview state (tests/cli_recovery_data.rs, 2/2).",
+    "CLI-15 E1/E2 data-root and split recovery, E3 damaged-image exclusion, E5 filesystem capacity/cleanup-through-retraining, E4 successful setup-through-retry, and cross-project recovery have current-source tests. H1 user studies remain external.",
+    "CLI-15 E5 now has a full real recovery loop: checkpoint-write failure, explicitly confirmed fixed cleanup, then successful managed retraining in the same project. The PTY asserts checkpoint publication, failed-run log/progress cleanup, and preservation of an unrelated marker (tests/cli_recovery_storage.rs, 1/1).",
+    "CLI-15 E4 now verifies a real missing-dependency preview failure, explicit opt-in project venv policy, real local hash-locked wheel installation while inheriting the installed PyTorch runtime, and retry of the same preview request to generation 2 with matching signature (tests/environment_system_site.rs, 3/3).",
+    "Fresh current-source QA-02 sweep after E4 environment inheritance and retry work: 13/13 runnable scenarios verified; 1 human-value scenario explicitly skipped. All 14 records validate and share one source/worktree fingerprint. Evidence: docs/acceptance/results/qa02-current-tree-20261121-4/.",
+    "CLI-15/CLI-21 project switching is now reachable from the existing project-configuration category; a real PTY confirms active preview recovery remains bound to its originating project after opening another project, with no target-project preview or mixed-model training side effects (tests/cli_recovery_project.rs, 1/1).",
+    "CLI-21 whole journey now passes in tests/cli_custom_model_journey.rs: real existing-project onboarding, observed shape failure and validated Layer repair, repaired probe, background preview, confirmed training, checkpoint evaluation and prediction browsing, two real try runs compared, and export; original model source remains unchanged.",
+    "CLI-04 positive ResNet18 onboarding passes with a real torchvision fixture: generated the two-class project, observed 76 real module calls and logits [2,2], then completed a managed step with finite loss and nonzero gradient observations (tests/cli_resnet18_onboarding.rs, 1/1).",
+    "CLI-14 generation race is fixed and verified: the workbench only offers a training trial for published previews; a real slow PTY preview superseded by a second CLI generation stays historical and cannot seed a trial (tests/cli_preview_generation.rs, 1/1)."
+  ],
+  "remaining_local_tasks": [
+    {
+      "id": "CLI-04",
+      "status": "in_review",
+      "remaining": "Real user comprehension and time/value observation remain external."
+    },
+    {
+      "id": "CLI-12",
+      "status": "in_review",
+      "remaining": "The CLI-21 comparison journey has a real integrated PTY path; target-user readability observation remains external."
+    },
+    {
+      "id": "CLI-13",
+      "status": "in_review",
+      "remaining": "PTY acceptance now covers cleanup cancellation/stale-plan rejection, first-time environment setup, and export success/cancel/confirmed backup-and-replace. Human usability evidence remains open."
+    },
+    {
+      "id": "CLI-14",
+      "status": "in_progress",
+      "remaining": "Preview wait/back/recovery/trial and superseded-generation page behavior pass real PTY; H2 user evidence remains external."
+    },
+    {
+      "id": "CLI-15",
+      "status": "in_review",
+      "remaining": "H1 user understanding of error recovery and training stop/resume remains external.",
+      "result": "E1/E2/E3 recovery, E5 capacity and cleanup-through-retraining, E4 setup-through-retry, cross-project recovery, and stop/retry behaviors have current-source evidence; user-value evidence remains external."
+    },
+    {
+      "id": "CLI-16",
+      "status": "in_progress",
+      "remaining": "Arbitrary factory/unregistered schemas and free-form JSON remain unsupported; complete help/capability matrix and native Fish/PowerShell/Elvish shell validation remain open."
+    },
+    {
+      "id": "CLI-18",
+      "status": "in_review",
+      "remaining": "Model-tree and forward-call pager PTY navigation now passes at 40 columns; human readability observation remains open."
+    },
+    {
+      "id": "CLI-21",
+      "status": "in_progress",
+      "remaining": "The combined custom-model workflow and CLI-14 generation race now pass real PTY journeys; H2 target-user comprehension/efficiency and platform/accelerator evidence remain open."
+    },
+    {
+      "id": "CLI-22",
+      "status": "in_review",
+      "remaining": "Interactive path from completed run to evaluator/data setup and evaluation history."
+    }
+  ],
+  "external_gates": [
+    {
+      "id": "QA-02",
+      "status": "in_review",
+      "remaining": "已验证 runner-owned cooperative Trainer deadline 的有限 step-boundary conformance；仍需真实 SSH/网络/主机故障、GPU/规模/其他平台和用户配对证据。阻塞的 Python/CUDA 调用不可协作中断，watchdog 强杀前不保证 checkpoint。"
+    },
+    {
+      "id": "QA-03",
+      "status": "in_review",
+      "remaining": "Remote CI/review artifact workflow, non-Linux/GPU evidence and maintainer license/third-party redistribution decisions; local extracted-package install is verified."
+    },
+    {
+      "id": "QA-04",
+      "status": "waiting_for_external_evidence",
+      "remaining": "Real target users have not completed paired complex-model tasks; repository fixtures cannot substitute."
+    }
+  ],
+  "validation": [
+    {
+      "command": "python3 scripts/verify_product_acceptance.py --case all --python python3 --binary target/debug/m-model --output-dir docs/acceptance/results/qa02-20261120-supervision-0.13.57",
+      "result": "10/10 runnable scenarios verified; user-value case explicitly blocked; command returns the runner’s partial exit code 2 by design."
+    },
+    {
+      "command": "JSON Schema Draft 2020-12 + FormatChecker over docs/acceptance/results/qa02-20261120-supervision-0.13.57/*.json",
+      "result": "passed: 11 records validate; same recorded source fingerprint."
+    },
+    {
+      "command": "python3 scripts/verify_product_acceptance.py --case all --python python3 --binary target/debug/m-model --output-dir docs/acceptance/results/qa02-20261120-final-cli16-0.13.57",
+      "result": "10/10 runnable scenarios verified on the final CLI-16 injection-completion source; human-value scenario explicitly blocked. 11 result files pass JSON Schema validation and share one fingerprint."
+    },
+    {
+      "command": "cargo test --locked --bin m-model presentation::completion::tests -- --nocapture; cargo test --locked --test cli_completion -- --nocapture; cargo clippy --locked --bin m-model --test cli_completion -- -D warnings",
+      "result": "passed: completion unit 6/6, live CLI completion integration 4/4, strict Clippy."
+    },
+    {
+      "command": "python3 scripts/verify_product_acceptance.py --case supervision-rules --python python3 --binary target/debug/m-model --output-dir docs/acceptance/results/qa02-20261120-supervision-verified-0.13.58; JSON Schema Draft 2020-12 + FormatChecker",
+      "result": "passed: current-batch localization, explicit managed training, pre-update sample-level rejection, target axis mismatch rejection; provenance record validates at product 0.13.58. Full product QA remains partial."
+    },
+    {
+      "command": "python3 scripts/verify_product_acceptance.py --case supervision-rules --case supervisor-disconnect --case release-install --python python3 --binary target/debug/m-model --output-dir docs/acceptance/results/qa02-20261120-final-local-0.13.63",
+      "result": "passed at product 0.13.63: all three selected cases verified; their records share worktree fingerprint de418def0ffdf8cefbfaa03b1f7e731b57d49fa78ee4ddf1308c437857e7251a and individually pass Draft 2020-12 evidence-schema validation. The release verifier builds the SDK wheel from a temporary copy and leaves no egg-info in the source tree."
+    },
+    {
+      "command": "Synchronize docs/acceptance/requirements.json responsible_tasks.task_status from current non-TUI TODO/handoff states",
+      "result": "passed: 854 of 1,108 status mappings corrected; 0 task IDs were unmapped. Requirement evidence statuses and evidence_refs were left unchanged."
+    },
+    {
+      "command": "JSON Schema Draft 2020-12 + FormatChecker on docs/acceptance/results/qa02-20261120-final-local-0.13.63/*.json; compare requirement task statuses against TODOs and handoff fallbacks",
+      "result": "passed: 3/3 records validate and share fingerprint de418def0ffdf8cefbfaa03b1f7e731b57d49fa78ee4ddf1308c437857e7251a. Requirement mapping audit: 1,108 rows, 0 unknown task IDs, 0 stale status mappings using TODO-first/handoff fallback; 5/132 items had item-specific refs at that audit snapshot; this is historical. Current count is 55/132, and references do not convert the other 77 items to verified."
+    },
+    {
+      "command": "python3 scripts/verify_product_acceptance.py --case release-install --python python3 --output-dir docs/acceptance/results/qa02-20261121-preset-release-0.13.63; python3 scripts/check_worker_architecture.py; python3 scripts/check_compatibility.py",
+      "result": "passed: release-install evidence validates and includes extracted-package preset search; worker architecture and Rust/Python compatibility checks pass. This does not close remote CI, platform/GPU, license, TUI integration or real-user evidence gates."
+    },
+    {
+      "command": "python3 scripts/verify_product_acceptance.py --case complex-model-workflow --case edit-persistence-and-migration --case release-install --python python3 --binary target/debug/m-model; JSON Schema Draft 2020-12 + FormatChecker",
+      "result": "all three cases passed in independently recorded evidence directories; each record has zero schema errors and a source fingerprint. Coverage remains scoped per record and does not close real-user, platform/GPU, license, trainer-deadline or TUI gates."
+    },
+    {
+      "command": "cargo test --locked --test cli augment_command_persists_ordered_train_and_eval_pipelines -- --exact --nocapture",
+      "result": "passed: real CLI init, add/set/move/remove, train/eval persistence, and RandomResizedCrop --scale edit."
+    },
+    {
+      "command": "cargo test --locked --test data_transforms random_resized_crop_is_seeded_and_reports_output_shape -- --exact --nocapture",
+      "result": "passed: deterministic seeded crop and [3,8,10] output contract."
+    },
+    {
+      "command": "cargo test --locked --test data_preview cli_preview_samples_project_batch_and_publishes_real_artifacts -- --exact --nocapture",
+      "result": "passed in the installed PyTorch/Pillow interpreter: project-saved train augment was loaded by preview and returned an observed [3,8,8] tensor output."
+    },
+    {
+      "command": "cargo clippy --locked --test cli --test data_preview --test data_transforms --test train_modes -- -D warnings; Python py_compile; compatibility, worker architecture, cargo fmt and git diff checks",
+      "result": "passed: strict Clippy, Python syntax, Rust/Python compatibility, embedded worker architecture (84 modules), formatting and whitespace checks."
+    },
+    {
+      "command": "cargo test --locked --test train_modes saved_train_augmentation_targets_the_selected_batch_input_during_real_training -- --exact --nocapture",
+      "result": "passed: real PyTorch execution verifies saved target transforms in managed-step, manual-step, external-loop context.transform_batch, and evaluator context.transform_batch. Train and evaluation metrics observe the transformed 4x4 input; report marks augmentation applied."
+    },
+    {
+      "command": "cargo test --locked --test extensions_component_state --test extensions_conformance --test component_transform_conformance --test extensions_trainer_conformance -- --nocapture",
+      "result": "passed: 7 focused conformance integration tests. Layer source-drift/conditional capability behavior, state roundtrip, Provider/transform/trainer paths all passed."
+    },
+    {
+      "command": "cargo clippy --locked --test extensions_component_state -- -D warnings",
+      "result": "passed strict Clippy for the changed Layer component conformance integration target."
+    },
+    {
+      "command": "python3 scripts/verify_product_acceptance.py --case extension-package --python python3 --binary target/debug/m-model --output-dir docs/acceptance/results/qa02-20261121-extension-conformance-final-0.13.63",
+      "result": "passed in 23.188s: current-source isolated extension package acceptance."
+    },
+    {
+      "command": "python3 scripts/verify_product_acceptance.py --case release-install --python python3 --output-dir docs/acceptance/results/qa02-20261121-release-conformance-final-0.13.63",
+      "result": "passed in 60.083s: current Cargo package install and out-of-checkout runtime acceptance."
+    },
+    {
+      "command": "Validate every docs/acceptance/requirements.json evidence_refs path and anchor; JSON parse; git diff --check",
+      "result": "passed after adding 76 direct references across 35 requirements and removing 3 stale CMD-runs references. 92/132 items now have at least one item-specific reference; 40 remain unreferenced. Statuses were not changed; unsupported, external, and incomplete-scope items retain no fabricated proof."
+    },
+    {
+      "command": "cargo test --locked --quiet",
+      "result": "passed: all Rust workspace unit and integration targets on current worktree; the prior stale empty-requirements expectation was corrected to match explicit resolver rejection and no-write behavior."
+    },
+    {
+      "command": "PYTHONPATH=python python3 -m pytest -q tests/test_capabilities.py tests/test_custom_supervision.py tests/test_model_semantics.py tests/test_supervision_preview.py",
+      "result": "passed: 18 tests; two pytest plugin deprecation warnings only."
+    },
+    {
+      "command": "cargo clippy --locked --all-targets -- -D warnings",
+      "result": "passed on current worktree after addressing collapsible-match and documenting the deliberately flat Clap DataCommand field layout."
+    },
+    {
+      "command": "cargo test --locked --test cli augment_command_persists_ordered_train_and_eval_pipelines -- --exact --nocapture; cargo fmt --all -- --check; git diff --check",
+      "result": "passed: augmentation CLI integration remains valid after lint cleanup; formatting and whitespace are clean."
+    },
+    {
+      "command": "cargo test --locked --test cli_onboarding_ui environment_dependency_failure_routes_to_confirmed_project_setup -- --exact --nocapture; cargo test --locked --test cli_onboarding_ui failed_background_preview_can_edit_and_retry_without_blocking_the_workbench -- --exact --nocapture; cargo clippy --locked --all-targets -- -D warnings",
+      "result": "passed: E4 environment route, existing failed preview edit/retry, and strict all-target Clippy."
+    },
+    {
+      "command": "cargo test --locked --test cli_onboarding_ui environment_dependency_failure_routes_to_confirmed_project_setup -- --exact --nocapture; cargo test --locked --test cli_onboarding_ui checkpoint_write_failure_opens_storage_and_safe_cleanup_preview -- --exact --nocapture; cargo clippy --locked --all-targets -- -D warnings",
+      "result": "passed: real E4 and E5 PTY routes and strict all-target Clippy."
+    },
+    {
+      "command": "cargo test --locked --test cli_custom_model_journey -- --exact --nocapture",
+      "result": "passed 1/1 on current source: single real PTY journey covers custom-project onboarding, Layer repair, data preview, managed training, checkpoint evaluation, prediction browsing, two-run comparison and export; Python source preserved."
+    },
+    {
+      "command": "cargo fmt --all -- --check; cargo clippy --locked --all-targets -- -D warnings; python3 scripts/check_compatibility.py; python3 scripts/check_worker_architecture.py; python3 scripts/verify_cli_interaction.py --binary target/debug/m-model --python python3 --output-dir docs/acceptance/results/cli-interaction-20261121-current",
+      "result": "passed: formatting, strict Clippy, Rust/Python compatibility, worker architecture and current CLI interaction matrix."
+    },
+    {
+      "command": "cargo test --locked --test cli_preview_generation -- --exact --nocapture",
+      "result": "passed 1/1: independent second CLI request supersedes a live slow workbench request; stale request is historical, never seeds a trial, and generation 2 stays published."
+    },
+    {
+      "command": "cargo test --locked --test cli_resnet18_onboarding -- --exact --nocapture",
+      "result": "passed 1/1: real ResNet18 onboarding/probe plus managed loss and backward with finite/nonzero gradient evidence."
+    }
+  ],
+  "audit_blockers": [
+    "CLI-04/12/13/14/15/16/18/21 remain open only for stated H1/H2 user studies, platform-shell or broader platform/accelerator evidence. CLI-04 ResNet18 positive onboarding, CLI-14 generation race and CLI-21 whole-workflow journey have current PTY evidence. CLI-22 implementation and evaluation-history PTY are covered; its human usability study remains open.",
+    "Requirement traceability remains incomplete: 40 of 132 items lack direct evidence_refs (23 external, 9 missing, 8 insufficient direct evidence). References do not establish user value or broader gates.",
+    "Remote CI, cross-platform/GPU certification, maintainer licensing/redistribution decisions, and real target-user paired observation remain external.",
+    "Augmentation execution is wired through project config, managed/manual training, explicit external-loop/evaluator context methods, and split-aware previews. TUI page exposure remains outside this non-TUI scope."
+  ],
+  "next_action": "准备 CLI-04/12/13/14/15/18/21/22 目标用户配对观察；QA-04 真人用户证据、远端 CI/平台/GPU和许可证决策仍需外部条件。",
+  "evidence": [
+    "docs/acceptance/results/qa02-20261121-extension-conformance-final-0.13.63/extension-package.json",
+    "docs/acceptance/results/qa02-20261121-release-conformance-final-0.13.63/release-install.json",
+    "docs/acceptance/results/cli-interaction-20261121-current/report.json",
+    "docs/acceptance/results/cli-interaction-20261121-current/transcript.txt",
+    "docs/cli-handoff/CLI-16.json",
+    "docs/cli-acceptance-matrix.json",
+    "src/cli.rs",
+    "docs/contracts/operations.json",
+    "scripts/verify_cli13_clean_cancel.py",
+    "docs/acceptance/results/cli13-clean-cancel-20261121/report.json",
+    "docs/acceptance/results/cli13-clean-cancel-20261121/transcript.txt",
+    "docs/acceptance/requirements.json",
+    "docs/acceptance/results/qa02-menu-regression-fix-20261121/",
+    "docs/acceptance/results/qa03-delivery-rerun-20261121/",
+    "docs/acceptance/results/cli15-incremental-20261121/complex-model-workflow.json",
+    "docs/acceptance/results/cli15-incremental-20261121/logs/complex-model-workflow.stdout.log",
+    "docs/acceptance/results/cli15-incremental-20261121/logs/complex-model-workflow.stderr.log",
+    "tests/cli_onboarding_ui.rs",
+    "tests/test_data_index.py",
+    "src/adapters/runs.rs",
+    "src/presentation/pages/storage.rs",
+    "tests/cli_recovery_data.rs",
+    "tests/cli_recovery_storage.rs",
+    "tests/environment_system_site.rs",
+    "docs/environment-portability.md",
+    "docs/cli-guide.md",
+    "docs/acceptance/results/qa02-current-tree-20261121-4/",
+    "tests/cli_recovery_project.rs",
+    "src/presentation/pages/environment.rs",
+    "tests/cli_custom_model_journey.rs",
+    "tests/cli_preview_generation.rs",
+    "tests/cli_resnet18_onboarding.rs"
+  ]
+}

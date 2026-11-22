@@ -1,0 +1,69 @@
+{
+  "schema_version": 1,
+  "task_id": "TRAIN-04",
+  "status": "done",
+  "baseline": "0.13.40 coordinator worktree",
+  "branch": "master (uncommitted coordinator worktree)",
+  "files_changed": [
+    "python/model_maven_worker/train/device.py",
+    "python/model_maven_worker/train/__init__.py",
+    "python/model_maven_worker/train/managed.py",
+    "python/model_maven_worker/train/manual.py",
+    "python/model_maven_worker/train/external.py",
+    "python/model_maven_worker/train/checkpoint.py",
+    "python/model_maven_worker/train/probe.py",
+    "python/model_maven_worker/train/runner.py",
+    "src/adapters/worker_assets.rs",
+    "src/cli.rs",
+    "src/application/train.rs",
+    "tests/train_device.rs",
+    "docs/device-support.json",
+    "traintodo.json",
+    "docs/module-handoff/TRAIN-04.json"
+  ],
+  "implementation": [
+    "Added explicit cpu, auto, cuda, and cuda:N selection. auto selects the first GPU visible through the PyTorch CUDA-compatible API (CUDA or ROCm) and falls back to CPU; ambiguous plain cuda selection is rejected when multiple GPUs are visible.",
+    "Managed and manual training move supported nested mapping/list/tuple/namedtuple batch tensors to the selected device. External loops receive context.device and context.to_device(batch); custom objects are not guessed or mutated.",
+    "Runtime reports record requested/selected device, backend, device name, and measured memory. CPU reports process peak RSS; GPU reports allocated/reserved/peak/free/total memory where available.",
+    "Checkpoint resume validates selected device/backend identity and captures device RNG state. Repeated runs inherit device selection unless explicitly overridden.",
+    "OOM errors preserve training phase and report available measured resources with actionable structured diagnostics; no OOM prediction guarantee is claimed."
+  ],
+  "validation": [
+    {
+      "command": "cargo test --locked --test train_device -- --nocapture",
+      "result": "passed: 8 tests, including explicit CPU and auto fallback, unavailable/ambiguous GPU rejection, actual ROCm single-GPU managed/manual/external execution, checkpoint save/resume, device drift rejection and injected OOM reporting."
+    },
+    {
+      "command": "cargo test --locked --test train_modes --test train_resume --test data_presets -- --nocapture",
+      "result": "passed: 13 tests across data preset training, managed/manual/external modes, checkpoint device RNG and resume integrity."
+    },
+    {
+      "command": "python3 scripts/check_worker_architecture.py",
+      "result": "passed: 66 worker modules, complete embedded asset coverage, imports follow domain direction."
+    },
+    {
+      "command": "python3 scripts/check_compatibility.py",
+      "result": "passed: Rust/Python protocol, API, state formats and required features match."
+    },
+    {
+      "command": "cargo check --locked",
+      "result": "passed."
+    },
+    {
+      "command": "cargo fmt --all; git diff --check",
+      "result": "passed."
+    }
+  ],
+  "hardware_evidence": "See docs/device-support.json. Verified on Linux x86_64 with AMD Radeon RX 7800 XT / ROCm; one local profile only.",
+  "integration_patch": [
+    "CLI --device is persisted with training inputs and inherited on repeat/resume; explicitly changing the device for a checkpoint resume is rejected.",
+    "Device runtime module is included in embedded worker assets and protocol compatibility checks pass.",
+    "Product documentation advertises only the tested single-GPU profile and leaves CUDA/NVIDIA unverified."
+  ],
+  "remaining": [
+    "No NVIDIA CUDA hardware was available; NVIDIA support remains unverified.",
+    "OOM handling used an injected OOM exception; no physical memory-exhaustion stress test was performed.",
+    "No distributed or multi-GPU training is implemented in this task."
+  ],
+  "commit": null
+}

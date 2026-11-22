@@ -1,0 +1,191 @@
+{
+  "task_id": "CORE-03",
+  "owner": "总协调人",
+  "baseline": "bc5a297",
+  "branch": "master",
+  "status": "done",
+  "files_changed": [
+    "src/app.rs",
+    "src/cli.rs",
+    "src/main.rs",
+    "src/ports.rs",
+    "src/presentation/service.rs",
+    "src/presentation/terminal.rs",
+    "src/application/mod.rs",
+    "src/application/config.rs",
+    "src/application/edit.rs",
+    "src/application/environment.rs",
+    "src/application/extensions.rs",
+    "src/application/run.rs",
+    "src/application/model.rs",
+    "src/application/train.rs",
+    "src/application/artifacts.rs",
+    "src/application/run_query.rs",
+    "src/application/replay_tests.rs",
+    "src/ports/backend.rs",
+    "src/ports/project_config.rs",
+    "src/ports/edit.rs",
+    "src/ports/runs.rs",
+    "src/ports/artifacts.rs",
+    "src/ports/components.rs",
+    "src/application/data.rs",
+    "src/application/run_lifecycle.rs",
+    "src/application/run_inputs.rs",
+    "src/application/run_prepare.rs",
+    "src/application/run_request.rs",
+    "src/domain/worker.rs",
+    "src/domain.rs",
+    "src/ports/services.rs",
+    "scripts/check_architecture.py"
+  ],
+  "contracts_changed": [
+    "Application.run_with_context accepts explicit progress/confirmation policy; application no longer owns terminal input or TTY detection. Presentation gathers missing fields, and assembly confirmation occurs after candidate validation.",
+    "Added the ExecutionProgress port so application code reports worker start events while Presentation owns terminal output."
+  ],
+  "implemented": [
+    "Kept app::Application as a compatibility re-export over the application module.",
+    "Moved environment/doctor dispatch to application/environment.rs.",
+    "Moved project defaults, init and assembly use cases to application/config.rs.",
+    "Moved variant commands to application/edit.rs and component lifecycle commands to application/extensions.rs.",
+    "Moved run dispatch and run-record helpers to application/run.rs.",
+    "Removed UserInteraction and all prompt/readiness calls from application and ports. Application now returns structured missing-input errors; ApplicationUiServices clones the command, gathers missing interactive inputs and passes the explicit command onward.",
+    "Moved TTY checks and progress display policy into presentation; removed terminal detection and prompt methods from application ports.",
+    "Preserved assembly safety: validate candidate first, ask for confirmation in presentation, revalidate and commit only on yes; no leaves project config unchanged.",
+    "Moved Model inspect/probe/verify job construction to application/model.rs and Layer command/atomic-plan construction to application/edit.rs.",
+    "Moved Try/Train job construction, repeat/resume source resolution and training input validation into application/train.rs; diagnostics flow back as Result<Job, Report>.",
+    "Moved run list/show/attach/stop/clean use cases to application/run_query.rs and training export to application/artifacts.rs.",
+    "Split ports into backend, project_config, edit, runs, artifacts and components contracts while preserving crate::ports re-exports.",
+    "Added a serializable recording/replay Backend test; a doctor request/report round-trips through a transcript without a Python backend or terminal dependency.",
+    "新增 application/data.rs，统一批次入口、参数与 binding 的应用层解析，并将无效参数转换为结构化诊断。",
+    "将监督身份检查/活动运行选择归入 application/run_query.rs，将训练试跑 repeat 与训练 resume 记录解析归入 application/train.rs；运行状态规则与对应查询/训练用例同域维护。",
+    "将编辑成功后的源码补丁校验、事务提交与失败回滚、变体持久化及响应整理封装为 application/edit.rs 的编辑用例处理；source edit lock 生命周期仍由共享执行路径覆盖整个 backend 调用与提交。",
+    "新增 application/run_lifecycle.rs，负责运行记录脱敏输入与持久化、训练文件路径预配、监督进程身份登记、后台 worker 启动和最终报告保存；detached 条件缺少 run id 时返回结构化诊断而不是 panic。",
+    "新增 application/run_inputs.rs，承接项目配置默认值合并、变体编辑时恢复项目接缝和正式训练输入检查；错误仍返回既有结构化诊断。",
+    "模型参数解析、注入组件解析及锁内组件清单校验归入 application/model.rs；源码编辑目标冲突、模型前置条件、undo/redo 与注册 Provider 解析归入 application/edit.rs。run.rs 保留高层编排。",
+    "新增 PreparedRunInputs 与 application/run_prepare.rs，统一准备模型/批次/变体输入；变体和源码编辑锁由准备结果持有，覆盖 Backend 调用和编辑结果提交，维持事务原有锁范围。",
+    "新增 domain::WorkerRequest 作为 Python worker protocol v1 的显式字段契约，并由 application/run_request.rs 做 run_name 校验和序列化；Backend 仍接收兼容 Value，生命周期路径字段在运行记录创建后注入。",
+    "Removed the last application-layer eprintln; Presentation now handles human progress through the ExecutionProgress port, while JSON mode installs no terminal observer.",
+    "Added scripts/check_architecture.py and a human/JSON differential test that compares reports and backend requests through the actual run_command/ApplicationUiServices bridge."
+  ],
+  "validation": [
+    {
+      "command": "cargo fmt && git diff --check && cargo check --locked",
+      "result": "passed",
+      "scope": "format, diff hygiene and warning-free Rust compile."
+    },
+    {
+      "command": "cargo test --locked",
+      "result": "passed",
+      "scope": "46 unit tests + 33 CLI integration tests; 0 failed."
+    },
+    {
+      "command": "cargo build --locked",
+      "result": "passed",
+      "scope": "build executable used for terminal flow checks."
+    },
+    {
+      "command": "PTY: m-model init with model, blank optional batch and blank injection",
+      "result": "passed",
+      "scope": "prompts appeared in presentation; config created successfully."
+    },
+    {
+      "command": "PTY: m-model assembly add encoder --factory fixture:build_encoder; answer yes",
+      "result": "passed",
+      "scope": "candidate construction and forward validation passed; confirmation wrote the binding."
+    },
+    {
+      "command": "PTY: same assembly edit; answer no",
+      "result": "passed",
+      "scope": "candidate validated; cancellation left project config unchanged."
+    },
+    {
+      "command": "search application/ports for UserInteraction, interaction, prompt, is_interactive and IsTerminal",
+      "result": "passed",
+      "scope": "no application or port references remain."
+    },
+    {
+      "command": "cargo fmt && git diff --check && cargo check --locked && cargo test --locked",
+      "result": "passed",
+      "scope": "warning-free compile; 46 unit tests + 33 CLI integration tests; 0 failed after request-construction extraction."
+    },
+    {
+      "command": "cargo fmt && git diff --check && cargo check --locked && cargo test --locked",
+      "result": "passed",
+      "scope": "warning-free compile; 46 unit tests + 33 CLI integration tests; 0 failed after training job extraction."
+    },
+    {
+      "command": "cargo fmt --check && git diff --check && cargo check --locked && cargo test --locked",
+      "result": "passed",
+      "scope": "warning-free compile; 47 unit tests + 33 CLI integration tests; 0 failed, including application recording/replay."
+    },
+    {
+      "command": "source boundary scan: application and ports for crate::presentation, crate::adapters::python, UserInteraction, prompt, IsTerminal",
+      "result": "passed",
+      "scope": "no direct terminal/presentation/PythonBackend dependency in application or ports."
+    },
+    {
+      "command": "cargo fmt --check && git diff --check && cargo check --locked && cargo test --locked",
+      "result": "passed",
+      "scope": "warning-free compile; 49 unit tests + 33 CLI integration tests; 0 failed after batch input planning extraction."
+    },
+    {
+      "command": "cargo fmt && git diff --check && cargo check --locked; application boundary scan",
+      "result": "passed",
+      "scope": "warning-free compile; application has no presentation, PythonBackend or terminal prompt dependency. Runtime tests were not run in this checkpoint."
+    },
+    {
+      "command": "cargo fmt && git diff --check && cargo check --locked",
+      "result": "passed",
+      "scope": "format and diff hygiene; warning-free Rust compile. Runtime tests were not run in this checkpoint."
+    },
+    {
+      "command": "cargo fmt --check && git diff --check && cargo check --locked",
+      "result": "passed",
+      "scope": "format and diff hygiene; warning-free Rust compile. Runtime tests were not run in this checkpoint."
+    },
+    {
+      "command": "cargo fmt --check && git diff --check && cargo check --locked",
+      "result": "passed",
+      "scope": "format and diff hygiene; warning-free Rust compile. Runtime tests were not run in this checkpoint."
+    },
+    {
+      "command": "cargo fmt && git diff --check && cargo check --locked && cargo test --locked",
+      "result": "passed",
+      "scope": "warning-free compile; 49 unit tests + 33 CLI integration tests; 0 failed after model/edit preparation extraction."
+    },
+    {
+      "command": "cargo fmt --check && git diff --check && cargo check --locked && cargo test --locked",
+      "result": "passed",
+      "scope": "warning-free compile; 49 unit tests + 33 CLI integration tests; 0 failed after variant preparation/lock lifecycle extraction."
+    },
+    {
+      "command": "cargo fmt --check && git diff --check && cargo check --locked && cargo test --locked",
+      "result": "passed",
+      "scope": "warning-free compile; 49 unit tests + 33 CLI integration tests; 0 failed after typed protocol request builder."
+    },
+    {
+      "command": "python3 scripts/check_architecture.py",
+      "result": "passed",
+      "scope": "domain/ports/application/adapters dependency direction; no direct terminal output in app/ports."
+    },
+    {
+      "command": "cargo test --locked",
+      "result": "passed",
+      "scope": "50 unit tests + 33 CLI integration tests; 0 failed, including human/JSON report and backend request comparison."
+    },
+    {
+      "command": "cargo fmt --check && git diff --check && cargo check --locked",
+      "result": "passed",
+      "scope": "format, diff hygiene and warning-free compile."
+    }
+  ],
+  "integration_patch": [
+    "Removed the Application interaction field from main construction; presentation service owns CLI prompts, terminal checks, progress context and confirmation."
+  ],
+  "remaining": [],
+  "external_dependencies": [
+    "CORE-02 worker-module migration remains an independent prerequisite for downstream MODEL/DATA/TRAIN/EDIT/RUN/EXT/ENV module tasks.",
+    "CORE-04/CORE-05 own activation of readiness, capability and operation-event service contracts."
+  ],
+  "commit": "3bd64eb"
+}

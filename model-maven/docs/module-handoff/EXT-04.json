@@ -1,0 +1,77 @@
+{
+  "schema_version": 1,
+  "task_id": "EXT-04",
+  "status": "done",
+  "baseline": "0.13.51 coordinator worktree; Linux x86_64, Python 3.14.10, PyTorch 2.15.0",
+  "files_changed": [
+    "docs/module-handoff/EXT-04.json",
+    "python/model_maven_worker/extensions/lifecycle.py",
+    "tests/extensions_lifecycle.rs",
+    "python/model_maven_worker/extensions/catalog.py",
+    "python/model_maven_worker/extensions/bundle.py",
+    "extensiontodo.json",
+    "README.md"
+  ],
+  "implementation": [
+    "Kept extension wheels built into a temporary wheel directory and installed with pip --target into a temporary directory under .model-maven/extensions before atomic rename to the wheel SHA-256 directory. Installation continues to use --no-deps and validates runtime requirements against the selected environment and project lock before installation.",
+    "Fixed failed rediscovery of an existing hash directory: a retry now reports the invalid package without deleting files that predate that invocation. Newly staged, invalid installs remain eligible for cleanup because that staging directory is owned by the current install operation.",
+    "Added real CLI integration coverage for project-local hash-directory installation, unchanged selected-Python distribution inventory, retry failure preserving pre-existing files, and uninstall preview reporting project configuration references before force is allowed.",
+    "Confirmed the extension bundle planner already computes registered extension distribution dependency closure, file hashes and external PyTorch runtime requirements; the artifact export application already passes its result to the export adapter. Export source fingerprints are verified by the existing provenance verifier before package planning.",
+    "Added a real extension export closure integration test. A locally scaffolded extension wheel declares pydantic; export records the wheel plus pydantic and its PEP 508 transitive dependency closure, verifies dependency provenance, imports every vendored dependency with python -S (site packages disabled), then runs restore_model.py successfully in the selected PyTorch runtime.",
+    "Fixed both uninstall test fixtures to use valid run-* IDs, so the reference-preview and unknown/active-run guards reach their intended assertions."
+  ],
+  "validation": [
+    {
+      "command": "cargo test --test extensions_lifecycle -- --nocapture",
+      "result": "passed: 2 tests, including a real scaffold/build/install against the selected PyTorch Python, hash-directory assertion, and before/after installed distribution inventory equality."
+    },
+    {
+      "command": "retry corrupted installed extension through m-model component install",
+      "result": "passed within the real CLI test: retry failed as expected and a sentinel file in the pre-existing content-addressed directory remained intact."
+    },
+    {
+      "command": "uninstall preview with .model-maven/project.json reference",
+      "result": "passed within focused CLI test: requires_force=true, exact reference path reported, --apply without --force blocked, and registration remained."
+    },
+    {
+      "command": "python3 -m py_compile extensions/lifecycle.py extensions/bundle.py; rustfmt --check tests/extensions_lifecycle.rs; git diff --check",
+      "result": "passed for current EXT-04 source and test syntax."
+    },
+    {
+      "command": "direct lifecycle regression using an isolated temporary project and fake process/discovery runtime",
+      "result": "passed: simulated failed rediscovery preserved a sentinel in a pre-existing wheel-hash directory; no existing directory was removed."
+    },
+    {
+      "command": "cargo test --locked --test extensions_lifecycle -- --nocapture (current successful compile and test execution)",
+      "result": "compiled and ran 4 tests: 2 passed (selected-Python inventory unchanged after hash-directory install; transitive dependency bundle import under python -S plus restore), 2 failed. uninstall_preview_lists_configuration_references_before_force and uninstall_apply_is_blocked_when_run_state_is_active_or_unknown both received COMPONENT_RUN_STATE_UNAVAILABLE / \"运行 ID 格式无效\" before their expected assertions. Their hand-written fixture IDs are old-run and uncertain-run, but FileRunStore accepts only IDs prefixed with run-. No TUI compile errors remain in this attempt; no source/TUI files were changed."
+    },
+    {
+      "command": "cargo test --locked --test extensions_lifecycle -- --nocapture",
+      "result": "passed: 4/4 tests, including uninstall reference preview, unknown/active run blocking, selected-Python install inventory preservation, and transitive dependency export/restore."
+    },
+    {
+      "command": "cargo test --locked --test extensions_lifecycle -- --nocapture",
+      "result": "passed 5/5: selected-environment install and real component test; configuration-reference and active/unknown run guards; source import and syntax-error scans require force; explicit force removes the unreferenced wheel; source drift blocks export; transitive dependency closure restores with site disabled; external symlink policy rejects host resources."
+    },
+    {
+      "command": "Fresh isolated Python 3.14 venv: install torch 2.15.0+cpu, torchvision 0.29.1+cpu and wheel; run real ResNet18 forward/backward; run project-local extension install and component test under MODEL_MAVEN_TEST_PYTHON",
+      "result": "passed: venv had no system site packages, ResNet18 CPU loss/gradients finite, scaffolded extension installed into project hash storage and component test constructed nn.Module without changing the venv distribution inventory."
+    },
+    {
+      "command": "cargo test --locked --test extensions_lifecycle extension_bundle_rejects_external_symlink_resources_with_an_explicit_policy -- --exact --nocapture; python3 -m py_compile python/model_maven_worker/extensions/catalog.py python/model_maven_worker/extensions/bundle.py",
+      "result": "passed: symlinked host trust resource produces EXTENSION_BUNDLE_EXTERNAL_RESOURCE_UNSUPPORTED; no ambient host resource is copied."
+    }
+  ],
+  "remaining": [],
+  "integration_patch": [
+    "The actual component test path exercised the installed extension with a fresh isolated PyTorch runtime; project-local install leaves the runtime distribution inventory unchanged.",
+    "Bundle closure remains wired through the existing artifact exporter and now reports an explicit external-resource error for escaping symlinks."
+  ],
+  "commit": null,
+  "blockers": [],
+  "limitations": [
+    "Extension uninstall uses --force to remove registered components still referenced by project configuration or source; source and configuration are not rewritten.",
+    "Bundle export deliberately rejects distribution files that symlink outside their package root. Host CA stores, OS libraries, datasets, and accelerator drivers must be provided externally; no host file is copied implicitly.",
+    "The fresh runtime was Linux x86_64 CPU. Other operating systems, accelerators, and native shared-library dependency closure still need release-platform evidence."
+  ]
+}
