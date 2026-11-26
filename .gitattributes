@@ -1,0 +1,2 @@
+# Workspace files are hashed byte-for-byte across launcher and native builds.
+*.lua text eol=lf

@@ -76,6 +76,7 @@ function M.open(state, document, source, renderer)
     if api.nvim_buf_is_valid(header) then header_text(view.source) end
     require('model_maven.model_preview').reflow_aux()
   end
+  view.reposition = position
   local function close()
     if view.closed then return end
     view.closed = true

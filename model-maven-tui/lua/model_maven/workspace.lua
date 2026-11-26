@@ -21606,8 +21606,26 @@ function M.open(options)
   map('s', function()
     locale.choose(function()
       for _, session in pairs(sessions) do
-        if not session.closed and vim.api.nvim_buf_is_valid(session.panel) then
+        -- This table also owns shared helper functions, not just sessions.
+        if type(session) == 'table' and not session.closed and type(session.panel) == 'number'
+            and vim.api.nvim_buf_is_valid(session.panel) then
           if session.refresh_keymap_descriptions then session.refresh_keymap_descriptions() else render(session) end
+          local preview = require('model_maven.model_preview')
+          if session.model_preview and session.model_preview.live then
+            -- The renderer receives its locale at launch. Restart it so the
+            -- visible 3D controls use the newly selected language as well.
+            local old = session.model_preview
+            local row, col, width, height = old.row, old.col, old.width, old.height
+            preview.close(session)
+            preview.open(session)
+            local fresh = session.model_preview
+            if fresh and fresh.live and fresh.reposition then
+              fresh.row, fresh.col, fresh.width, fresh.height = row, col, width, height
+              fresh.reposition()
+            end
+          else
+            preview.refresh(session)
+          end
         end
       end
     end)
