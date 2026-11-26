@@ -1526,7 +1526,7 @@ pub(super) fn run(
 
 fn run_inner(
     view: &mut ModelView<'_>,
-    locale: Locale,
+    mut locale: Locale,
     mut editor: Option<Editor>,
     mut offline: Option<&mut Offline>,
     handoff: &mut crate::welcome::Handoff,
@@ -1620,7 +1620,8 @@ fn run_inner(
             let version = std::fs::metadata(path).ok()
                 .and_then(|meta| meta.modified().ok().map(|modified| (modified, meta.len())));
             if version.is_some() && version != live_version {
-                if let Ok(mut next) = super::preview::load(path) {
+                if let Ok((mut next, next_locale)) = super::preview::load(path) {
+                    if let Some(next_locale) = next_locale { locale = next_locale; }
                     let selected = view.layers.get(view.selected).map(|layer| layer.path.clone());
                     next.camera = view.camera;
                     next.viewport = view.viewport;
@@ -1632,6 +1633,8 @@ fn run_inner(
                     search = None; matrix = None; candidates = None;
                     failure_visible = false; diff_visible = false; pair_details = None;
                     scene = make_scene(view, offline.as_deref(), size.0, panes, pixel_mode, 0.0, locale);
+                    chrome.clear();
+                    chrome_size = None;
                     dirty = true;
                     projection_pending = false;
                     live_version = version;

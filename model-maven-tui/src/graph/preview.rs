@@ -3,16 +3,19 @@ use super::{Edit, GraphDocument, Inlet, LayoutCache, ModelView, Operator, Operat
 use serde_json::{Value, json};
 use std::{borrow::Cow, collections::HashMap, io::{self, Read}};
 
-pub(super) fn load(path: &std::path::Path) -> io::Result<ModelView<'static>> {
+pub(super) fn load(path: &std::path::Path) -> io::Result<(ModelView<'static>, Option<crate::terminal::locale::Locale>)> {
     let file = std::fs::File::open(path)?;
     if file.metadata()?.len() > 2_500_000 { return Err(io::Error::other("preview request too large")); }
     let request: Value = serde_json::from_reader(file).map_err(io::Error::other)?;
-    from_graph(&request["document"])
+    let locale = request["locale"].as_str()
+        .and_then(crate::terminal::locale::LanguageChoice::parse)
+        .map(crate::terminal::locale::LanguageChoice::resolve);
+    Ok((from_graph(&request["document"])?, locale))
 }
 
 #[cfg(unix)]
 pub(crate) fn interactive(path: &std::path::Path, locale: crate::terminal::locale::Locale) -> io::Result<()> {
-    let mut view = load(path)?;
+    let (mut view, _) = load(path)?;
     super::interaction::show_live_preview(&mut view, path, locale)
 }
 

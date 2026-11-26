@@ -17,7 +17,7 @@ function M.open(state, document, source, renderer)
   local width = clamp(math.floor(vim.o.columns * .53), 24, vim.o.columns - 46)
   view.row, view.col, view.width, view.height = 1, math.max(1, vim.o.columns - width - 2), width, height
   local function write(doc, label)
-    local ok, raw = pcall(vim.json.encode, {document=doc, source=label})
+    local ok, raw = pcall(vim.json.encode, {document=doc, source=label, locale=require('model_maven.locale').current()})
     if not ok or #raw > 2500000 then return false end
     local key = vim.fn.sha256(raw)
     if key == view.document_key then return true end
