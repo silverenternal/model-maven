@@ -510,7 +510,7 @@ impl Canvas {
         }
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     pub fn layer_at(&self, column: usize, row: usize) -> Option<usize> {
         self.cell(column, row)
             .into_iter()

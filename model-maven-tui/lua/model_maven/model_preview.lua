@@ -1,6 +1,9 @@
 -- A read-only view of the graph declaration, independent of runtime probing.
 local M, api = {}, vim.api
 local tr = require('model_maven.locale').text
+local function supports_live_renderer()
+  return vim.fn.has('unix') == 1 or vim.fn.has('win32') == 1
+end
 function M.layout(limit, boundary)
   local available = vim.o.columns
   if type(boundary) == 'function' then
@@ -89,7 +92,13 @@ local function lines(state)
     return result
   end
   result[#result+1] = source
-  if vim.o.columns < 70 or vim.o.lines < 15 then
+  if not supports_live_renderer() then
+    result[#result+1] = tr('Interactive 3D unavailable here',
+      '此平台暂不支持交互 3D', '此平台暫不支援互動 3D')
+  elseif state.model_preview_live_unavailable then
+    result[#result+1] = tr('Interactive 3D unavailable',
+      '交互 3D 不可用', '互動 3D 無法使用')
+  elseif vim.o.columns < 70 or vim.o.lines < 15 then
     result[#result+1] = tr('Compact · enlarge for 3D', '紧凑预览 · 放大启用 3D', '緊湊預覽 · 放大啟用 3D')
   end
   local view = state.model_preview
@@ -158,7 +167,7 @@ function M.refresh(state)
   end
   local renderer = vim.env.MODEL_MAVEN_TUI_RENDERER
   if not renderer or renderer == '' then renderer = vim.fn.exepath('m-model-tui') end
-  if document and #document.nodes > 0 and renderer and renderer ~= '' and vim.fn.has('unix') == 1
+  if document and #document.nodes > 0 and renderer and renderer ~= '' and supports_live_renderer()
       and vim.o.columns >= 70 and vim.o.lines >= 15 and not view.upgrade_pending and not state.model_preview_live_unavailable then
     view.upgrade_pending = true
     vim.schedule(function()
@@ -213,7 +222,7 @@ function M.open(state)
   local document, source = graph(state)
   local renderer = vim.env.MODEL_MAVEN_TUI_RENDERER
   if not renderer or renderer == '' then renderer = vim.fn.exepath('m-model-tui') end
-  if document and #document.nodes > 0 and renderer and renderer ~= '' and vim.fn.has('unix') == 1
+  if document and #document.nodes > 0 and renderer and renderer ~= '' and supports_live_renderer()
       and vim.o.columns >= 70 and vim.o.lines >= 15 and not state.model_preview_live_unavailable then
     local live = require('model_maven.model_live_preview').open(state, document, source, renderer)
     if live then state.model_preview = live; M.reflow_aux(); return end

@@ -4,7 +4,7 @@ use super::{
     Action, Comparison, DetailMode, DraftError, EVIDENCE_TRACE_KEY, Offline, PreferenceNotice,
     Stage,
 };
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use super::{DETAIL_EXPAND_KEY, FullDetail};
 use crate::terminal::layout::Background;
 use crate::terminal::locale::Locale;
@@ -63,7 +63,7 @@ impl DetailsOutput {
 }
 
 impl Offline {
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     pub(in crate::graph) fn failure_details(
         &self,
         input: usize,
@@ -99,7 +99,7 @@ impl Offline {
         }
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     pub(in crate::graph) fn scroll_full_detail(
         &mut self,
         forward: bool,
@@ -125,7 +125,7 @@ impl Offline {
         true
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     pub(in crate::graph) fn render_full_detail(
         &self,
         locale: Locale,
@@ -187,7 +187,7 @@ impl Offline {
         Some(out)
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     fn full_detail_text(&self, detail: FullDetail, locale: Locale, width: usize) -> String {
         let lines = match detail {
             FullDetail::Call {
@@ -236,7 +236,7 @@ impl Offline {
         out
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     fn full_preview_lines(&self, locale: Locale) -> Vec<String> {
         let Stage::Preview(draft) = self.stage else {
             return Vec::new();
@@ -283,7 +283,7 @@ impl Offline {
         lines
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     pub(in crate::graph) fn graph_hint(
         &self,
         view: &super::super::ModelView<'_>,
@@ -327,7 +327,7 @@ impl Offline {
         )
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     pub(in crate::graph) fn graph_wide_hint(
         &self,
         view: &super::super::ModelView<'_>,
@@ -352,7 +352,7 @@ impl Offline {
         )
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     fn graph_controls(&self, locale: Locale) -> [String; 9] {
         use super::Shortcut;
         let mut select = "↑↓".to_owned();
@@ -537,7 +537,7 @@ impl Offline {
             }
             _ => {}
         }
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         if self.mode == DetailMode::GraphHelp {
             push(&mut out, &divider.repeat(width.min(100)), width);
             push(
@@ -946,7 +946,7 @@ impl Offline {
             .replace("{preview}", &key(Action::Preview))
             .replace("{pass}", &key(Action::Recheck(RecheckSample::Passing)))
             .replace("{fail}", &key(Action::Recheck(RecheckSample::Failing)));
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         let actions = if !transcript
             && self.preferences.preset == Preset::Shortcuts
             && matches!(self.stage, Stage::Evidence)
@@ -988,7 +988,7 @@ impl Offline {
         } else {
             actions
         };
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         let actions = if !transcript && matches!(self.stage, Stage::Preview(_)) {
             let full = format!(
                 "{} {}",
@@ -1147,7 +1147,7 @@ impl Offline {
                 )
             ));
         }
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         if !transcript && !tracing {
             let full = format!(
                 "{} {}",
@@ -1448,7 +1448,7 @@ impl Offline {
     }
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn detail_page_rows(height: usize) -> usize {
     height.saturating_sub(2).max(1)
 }

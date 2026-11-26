@@ -113,12 +113,12 @@ enum DiagnosisCase {
 fn main() -> ExitCode {
     let options = Options::parse();
     if let Some(path) = options.live_model_preview.as_deref() {
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         return match graph::preview::interactive(path, options.lang.map_or_else(workbench::preferred_locale, Locale::from)) {
             Ok(()) => ExitCode::SUCCESS,
             Err(error) => { eprintln!("Model preview: {error}"); ExitCode::FAILURE }
         };
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         { let _ = path; eprintln!("Interactive model preview is unavailable on this platform."); return ExitCode::FAILURE; }
     }
     if options.render_model_preview {

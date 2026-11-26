@@ -109,7 +109,7 @@ impl Background {
         }
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     pub fn parse_osc(bytes: &[u8]) -> Option<Self> {
         let value = std::str::from_utf8(bytes).ok()?.strip_prefix("11;rgb:")?;
         let mut rgb = [0; 3];
@@ -127,7 +127,7 @@ impl Background {
     }
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub fn motion_enabled() -> bool {
     std::env::var_os("MODEL_MAVEN_REDUCE_MOTION").is_none_or(|value| value != "1")
 }

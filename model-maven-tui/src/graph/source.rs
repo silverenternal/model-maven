@@ -130,7 +130,7 @@ pub(super) struct Project {
     output_boundaries: BTreeMap<Outlet, Outlet>,
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub(super) struct SearchMatch {
     pub path: String,
     pub kind: String,
@@ -142,7 +142,7 @@ pub(super) struct SearchMatch {
 
 impl Scope {
     /// Predict the exact sockets and internal edges materialized by `expand`.
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     fn searchable_ports(&self, path: &str) -> BTreeMap<Port, Vec<Wire>> {
         let id = |name: &str| operator_id(&format!("{path}.{name}"));
         let mut ports = BTreeMap::<Port, Vec<Wire>>::new();
@@ -338,7 +338,7 @@ impl Manifest {
 }
 
 impl Project {
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     pub(super) fn search(&self, view: &ModelView<'_>, query: &str) -> Vec<SearchMatch> {
         fn visit(
             project: &Project,
@@ -456,7 +456,7 @@ impl Project {
         found
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     pub(super) fn reveal(view: &mut ModelView<'_>, parents: &[OperatorId]) -> io::Result<()> {
         let Some(mut project) = view.source_project.take() else {
             return Err(io::Error::other("Source project is no longer available"));
@@ -640,7 +640,7 @@ fn operator_id(path: &str) -> OperatorId {
 mod tests {
     use super::*;
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     #[test]
     fn capture_drifting_visual_review_samples_when_requested() {
         let Some(root) = std::env::var_os("MODEL_MAVEN_PRESET_CAPTURE_DIR") else {
@@ -769,7 +769,7 @@ mod tests {
         capture_presets(attention, "qkv");
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     #[test]
     fn drifting_root_and_attention_crossing_counts_are_comparable_across_presets() {
         let mut view = bundled_manifest().unwrap().view().unwrap();
@@ -846,7 +846,7 @@ mod tests {
         assert_eq!(attention_counts, (1, 4));
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     #[test]
     fn expanding_a_nested_scope_preserves_visible_root_order_and_selection() {
         let mut view = bundled_manifest().unwrap().view().unwrap();
@@ -905,7 +905,7 @@ mod tests {
         assert_eq!(visible(&view), before);
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     #[test]
     fn search_reveals_only_selected_lazy_source_path_and_preserves_history() {
         use super::super::search::{Search, Target};
@@ -933,7 +933,7 @@ mod tests {
         assert_eq!(view.bookmark().focus, before.focus);
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     #[test]
     fn lazy_port_search_matches_materialized_slots_fanout_and_history() {
         use super::super::search::{Search, Target};
@@ -974,7 +974,7 @@ mod tests {
         assert!(view.bookmark() == before);
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     #[test]
     fn planned_scope_sockets_match_expansion_in_drifting_attention() {
         let manifest = bundled_manifest().unwrap();
@@ -1086,7 +1086,7 @@ mod tests {
                 assert!(view.document.operator(child).is_none());
                 view.zoom(view.indices[&parent]);
                 assert!(view.document.operator(child).is_some());
-                #[cfg(unix)]
+                #[cfg(any(unix, windows))]
                 if parent == stack {
                     view.explosion = 1;
                     let scene = view.scene(120, 36, false, None);
@@ -1380,7 +1380,7 @@ mod tests {
         );
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     #[test]
     fn nested_boundaries_project_the_original_connection_and_restore_the_local_view() {
         let node = |name: &str, scope: Option<&str>| Node {

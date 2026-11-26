@@ -12,12 +12,12 @@ use model_maven_tui::graph_document::Shape;
 use std::{borrow::Cow, collections::BTreeMap};
 
 mod display;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub(super) use display::{axis_bars, axis_label};
 
 pub(super) const ROWS: usize = 7;
 const EVIDENCE_TRACE_KEY: u8 = b'u';
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 const DETAIL_EXPAND_KEY: u8 = b'v';
 
 #[derive(Clone, Copy)]
@@ -59,7 +59,7 @@ enum DetailMode {
         input: usize,
         trace_unavailable: bool,
     },
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     Full {
         detail: FullDetail,
         offset: usize,
@@ -77,12 +77,12 @@ enum DetailMode {
     },
     Samples,
     Help,
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     GraphHelp,
     Receipts,
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 #[derive(Clone, Copy, PartialEq)]
 enum FullDetail {
     Call {
@@ -102,7 +102,7 @@ struct InputEvidence<'a> {
     expected: Option<(&'a Shape, Origin)>,
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum Shortcut {
     Previous,
@@ -111,7 +111,7 @@ pub(super) enum Shortcut {
     Expand,
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 impl Shortcut {
     const ALL: [Self; 4] = [Self::Previous, Self::Next, Self::SwitchPane, Self::Expand];
 
@@ -312,7 +312,7 @@ impl Offline {
             && char::from(key.to_ascii_lowercase()) == Action::Welcome.key(self.preferences.preset)
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     pub(super) fn shortcut(&self, key: u8, details_focused: bool) -> Option<Shortcut> {
         if self.preferences.preset != Preset::Shortcuts || self.modal_open() {
             return None;
@@ -323,19 +323,19 @@ impl Offline {
         })
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     pub(super) fn graph_help_open(&self) -> bool {
         self.mode == DetailMode::GraphHelp
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     pub(super) fn close_graph_help(&mut self) {
         if self.graph_help_open() {
             self.mode = DetailMode::Main;
         }
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     pub(super) fn open_graph_panel(&mut self, key: u8) -> bool {
         let key = char::from(key.to_ascii_lowercase());
         let settings = Action::Settings;
@@ -613,7 +613,7 @@ impl Offline {
         self.reveal(view);
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     pub fn select_graph_call(&mut self, view: &ModelView<'_>) {
         if !matches!(self.stage, Stage::Evidence) {
             return;
@@ -634,7 +634,7 @@ impl Offline {
 
     pub fn cancel(&mut self, view: &mut ModelView<'_>) -> bool {
         let mode = std::mem::replace(&mut self.mode, DetailMode::Main);
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         if let DetailMode::Full { detail, .. } = mode {
             self.mode = match detail {
                 FullDetail::Call {
@@ -688,7 +688,7 @@ impl Offline {
 
     pub fn input(&mut self, key: u8, view: &mut ModelView<'_>) -> bool {
         let key = key.to_ascii_lowercase();
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         if self.full_detail_open() {
             if matches!(key, b'b' | DETAIL_EXPAND_KEY) {
                 self.cancel(view);
@@ -728,7 +728,7 @@ impl Offline {
             }
             return key != 27;
         }
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         if self.mode == DetailMode::GraphHelp {
             if matches!(key, b'?' | b'b') {
                 self.mode = DetailMode::Main;
@@ -1001,12 +1001,12 @@ impl Offline {
         self.mode != DetailMode::Main
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     pub(super) fn full_detail_open(&self) -> bool {
         matches!(self.mode, DetailMode::Full { .. })
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     pub(super) fn open_full_detail(&mut self, key: u8) -> bool {
         if key.to_ascii_lowercase() != DETAIL_EXPAND_KEY {
             return false;
@@ -1073,7 +1073,7 @@ impl Offline {
         }
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     pub fn axis_view(&self) -> Option<super::axes::Comparison> {
         let DetailMode::Axes { zoom } = self.mode else {
             return None;
@@ -1171,7 +1171,7 @@ impl Offline {
         (report, &report.calls[self.selected])
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     pub(super) fn failure_path(&self) -> super::failure::Path {
         use super::failure::{Input, Path, Stop};
         let (report, call) = self.evidence_call();
@@ -1207,7 +1207,7 @@ impl Offline {
         )
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     pub(super) fn repair_diff(
         &self,
         view: &ModelView<'_>,
@@ -1624,7 +1624,7 @@ mod tests {
                 .collect();
             assert_eq!(keys.len(), Action::ALL.len());
             assert!(!keys.contains(&'q'));
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             if preset == Preset::Shortcuts {
                 let shortcuts: BTreeSet<_> = Shortcut::ALL.into_iter().map(Shortcut::key).collect();
                 assert_eq!(shortcuts.len(), Shortcut::ALL.len());
@@ -1644,7 +1644,7 @@ mod tests {
         }
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     #[test]
     fn failure_path_preserves_call_evidence_and_stops_at_unknown_boundaries() {
         let mut offline = Offline::new(Case::Mismatch);
@@ -1673,7 +1673,7 @@ mod tests {
         assert!(text.contains("Source not recorded"));
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     #[test]
     fn failure_path_exposes_conflicting_sources_without_asserting_graph_wiring() {
         let mut offline = Offline::new(Case::Mismatch);
@@ -1706,7 +1706,7 @@ mod tests {
         assert!(view.selected_wire.is_none());
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     #[test]
     fn repair_diff_tracks_preview_commit_and_recheck_without_mutating_the_graph() {
         let mut offline = Offline::new(Case::Mismatch);
@@ -1775,7 +1775,7 @@ mod tests {
         assert!(details.contains("changing-batch-01"));
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     #[test]
     fn preview_overlay_and_target_survive_graph_preset_changes() {
         let mut offline = Offline::new(Case::Mismatch);
@@ -1809,7 +1809,7 @@ mod tests {
         assert_eq!(view.document.revision(), 1);
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     #[test]
     fn repair_diff_keeps_rejected_rewire_and_original_revision_distinct() {
         let mut offline = Offline::new(Case::Mismatch);
@@ -1942,7 +1942,7 @@ mod tests {
         assert!(!details.contains("u Producer"));
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     #[test]
     fn trace_restores_the_camera_and_the_prior_selected_wire() {
         let mut offline = Offline::new(Case::Large);
@@ -2018,7 +2018,7 @@ mod tests {
         assert!(matches!(offline.stage, Stage::Evidence));
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     #[test]
     fn preview_from_a_leaf_shows_the_candidate_at_the_same_socket_and_restores_the_view() {
         let mut offline = Offline::new(Case::TwinMerge);
@@ -2277,7 +2277,7 @@ mod tests {
         ));
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     #[test]
     fn comparison_from_a_leaf_marks_the_same_input_and_returns_to_that_view() {
         let mut offline = Offline::new(Case::Mismatch);
@@ -2323,7 +2323,7 @@ mod tests {
         assert_eq!(view.document.revision(), 2);
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     #[test]
     fn graph_keeps_committed_hit_targets_while_showing_an_alternate_wire() {
         let mut offline = Offline::new(Case::Mismatch);

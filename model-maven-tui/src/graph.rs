@@ -118,15 +118,15 @@ mod solid;
 use solid::{Camera, Canvas, Cuboid, SliceKey};
 mod flow_layout;
 use flow_layout::FlowLayout;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 mod candidates;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub(crate) mod diff;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 mod failure;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 mod matrix;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 mod search;
 mod tensor;
 use tensor::{Alignment, Continuation, Handoff, Interface, Shape};
@@ -135,11 +135,11 @@ pub(crate) use source::{show as show_source, show_demo as show_drifting_demo};
 
 const DEMO_CONNECTIONS: &[[usize; 2]] = &[[0, 1], [0, 2], [1, 4], [2, 4], [4, 5]];
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 mod axes;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 mod editor;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 mod pixels;
 
 struct Layer<'a> {
@@ -173,15 +173,15 @@ fn hop_progress(time: f64, operator: OperatorId) -> f64 {
     (arc * std::f64::consts::PI).sin().powi(2)
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 const SCENE_HEADER: usize = 3;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 const GRAPH_TOOLBAR: &str = "[-][+][<][>][^][v][R][E]";
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 const GRAPH_TOOLBAR_MIN_WIDTH: usize = 36;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 const GRAPH_MODE_TOOLBAR_MIN_WIDTH: usize = 92;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 const GRAPH_MODE_TOOLBAR_WIDTH: usize = 12;
 
 struct Scene {
@@ -194,27 +194,27 @@ struct Scene {
     labels: Vec<Vec<char>>,
     captions: Vec<Vec<(usize, String)>>,
     solids: Vec<Cuboid>,
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     links: Vec<Curve>,
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     handoffs: Vec<Handoff>,
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     observed_routes: Vec<ObservedRoute>,
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     candidate: Option<Handoff>,
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     edit_mark: Option<PortMark>,
     focus_mark: Option<PortMark>,
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     groups: Vec<Group>,
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     axes: Option<axes::Drawing>,
     outline_cursor: usize,
     page_size: usize,
     page_start: usize,
     lane_page: bool,
     vertical_flow: bool,
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     previous_page: usize,
     item_count: usize,
 }
@@ -237,33 +237,33 @@ impl Scene {
             labels: vec![vec![' '; width]; rows],
             captions: vec![Vec::new(); rows],
             solids: Vec::new(),
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             links: Vec::new(),
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             handoffs: Vec::new(),
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             observed_routes: Vec::new(),
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             candidate: None,
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             edit_mark: None,
             focus_mark: None,
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             groups: Vec::new(),
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             axes: None,
             outline_cursor: 0,
             page_size: 1,
             page_start: 0,
             lane_page: false,
             vertical_flow: false,
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             previous_page: 0,
             item_count: 0,
         }
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     fn for_axes(
         appearance: Appearance,
         width: usize,
@@ -295,7 +295,7 @@ impl Scene {
         scene
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     fn render_axes(&self, locale: Locale, color: bool, pixels: bool) -> String {
         let mut out = String::new();
         let title = locale.text("Tensor cross-sections", "张量截面对齐", "張量截面對齊");
@@ -347,7 +347,7 @@ impl Scene {
         }
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     fn handoffs_available(&self) -> bool {
         !self.handoffs.is_empty()
     }
@@ -356,13 +356,13 @@ impl Scene {
         [self.width as f64, ((self.labels.len() - 1) * 2) as f64]
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     fn art_row_at(&self, column: usize, row: usize) -> Option<usize> {
         let row = row.checked_sub(SCENE_HEADER + self.tooltip_rows)?;
         (column < self.width && row < self.labels.len() - 1).then_some(row)
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     fn layer_at(&self, column: usize, row: usize) -> Option<usize> {
         let row = self.art_row_at(column, row)?;
         self.canvas.layer_at(column, row).or_else(|| {
@@ -372,7 +372,7 @@ impl Scene {
         })
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     fn handoffs_at(&self, column: usize, row: usize) -> Vec<Wire> {
         let Some(art_row) = self.art_row_at(column, row) else {
             return Vec::new();
@@ -404,7 +404,7 @@ impl Scene {
             .collect()
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     fn displayed_wire(&self, wire: Wire, active: usize, cell: Option<(usize, usize)>) -> Wire {
         let routes = self.handoffs.iter().filter(|handoff| handoff.wire == wire);
         let near = cell.and_then(|(column, row)| {
@@ -486,7 +486,7 @@ struct ModelView<'a> {
     selected_pair: Option<Wire>,
     focus: Option<usize>,
     trail: Vec<Bookmark>,
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     last_search: Option<search::Search>,
     camera: Camera,
     viewport: Viewport,
@@ -503,7 +503,7 @@ struct ModelView<'a> {
     saved_camera: Option<Camera>,
     saved_viewport: Option<Viewport>,
     flat_viewport: Option<Viewport>,
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     live_axes_zoom: Option<u8>,
 }
 
@@ -518,23 +518,23 @@ struct LiveEvidence {
     invocation_id: Option<String>,
     expected: Option<Shape>,
     raw_report: String,
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     route_cache: std::cell::OnceCell<Vec<(String, String, String)>>,
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     inputs: Vec<failure::Input>,
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     selected_input: Option<usize>,
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     show_input: bool,
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     graph_target_unresolved: bool,
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     projection: Option<ObservedProjection>,
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     diagnostics: Vec<(String, String)>,
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 struct ObservedProjection {
     source: Option<String>,
     counts: HashMap<OperatorId, usize>,
@@ -605,7 +605,7 @@ struct GraphScope {
 #[derive(Clone, Default)]
 struct ModuleLayout {
     offsets: HashMap<(GraphScope, OperatorId), [f64; 2]>,
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     generation: u64,
 }
 
@@ -617,7 +617,7 @@ impl ModuleLayout {
             .unwrap_or_default()
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     fn set_offset(&mut self, scope: GraphScope, operator: OperatorId, offset: [f64; 2]) {
         if self.offset(scope, operator) == offset {
             return;
@@ -630,7 +630,7 @@ impl ModuleLayout {
         self.generation = self.generation.wrapping_add(1);
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     fn reset_scope(&mut self, scope: GraphScope) {
         let previous = self.offsets.len();
         self.offsets.retain(|&(saved, _), _| saved != scope);
@@ -701,7 +701,7 @@ impl Viewport {
         ]
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     fn zoom(&mut self, factor: f64, anchor: [f64; 2]) {
         let next = (self.scale * factor).clamp(0.65, 2.5);
         let ratio = next / self.scale;
@@ -768,14 +768,14 @@ struct Curve {
 }
 
 /// A visual association with partial object-identity evidence, never a Wire.
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 struct ObservedRoute {
     points: Vec<[f64; 2]>,
     target: usize,
     external: bool,
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 impl ObservedRoute {
     fn draw(&self, mut segment: impl FnMut([f64; 2], [f64; 2])) {
         for pair in self.points.windows(2) {
@@ -1315,7 +1315,7 @@ impl<'a> Layer<'a> {
 
 impl<'a> ModelView<'a> {
     fn observed_match_count(&self, id: OperatorId) -> usize {
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         {
             self.live_evidence
                 .as_ref()
@@ -1325,7 +1325,7 @@ impl<'a> ModelView<'a> {
                 .copied()
                 .unwrap_or(0)
         }
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         {
             let _ = id;
             0
@@ -1520,7 +1520,7 @@ impl<'a> ModelView<'a> {
             selected_pair: None,
             focus: None,
             trail: Vec::new(),
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             last_search: None,
             camera: Camera::default(),
             viewport: Viewport::default(),
@@ -1537,7 +1537,7 @@ impl<'a> ModelView<'a> {
             saved_camera: None,
             saved_viewport: None,
             flat_viewport: None,
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             live_axes_zoom: None,
         }
     }
@@ -1585,7 +1585,7 @@ impl<'a> ModelView<'a> {
         replacement.hover = hover.and_then(get_index);
         replacement.focus = focus.and_then(get_index);
         replacement.trail = std::mem::take(&mut self.trail);
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         {
             replacement.last_search = self.last_search.take();
         }
@@ -1632,7 +1632,7 @@ impl<'a> ModelView<'a> {
         replacement.saved_camera = self.saved_camera;
         replacement.saved_viewport = self.saved_viewport;
         replacement.flat_viewport = self.flat_viewport;
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         {
             replacement.live_axes_zoom = self.live_axes_zoom;
         }
@@ -1784,7 +1784,7 @@ impl<'a> ModelView<'a> {
             .map(|entry| &entry.layout)
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     fn toggle_hierarchy(&mut self) {
         if self.available_flow().is_none() {
             return;
@@ -1840,7 +1840,7 @@ impl<'a> ModelView<'a> {
         }
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     fn page(&mut self, scene: &Scene, forward: bool) {
         let step = scene.page_size;
         if step >= scene.item_count {
@@ -1947,7 +1947,7 @@ impl<'a> ModelView<'a> {
         }
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     fn follow_wire(&mut self, scene: &Scene, downstream: bool, cell: Option<(usize, usize)>) {
         if let Some(pair) = self.selected_pair {
             let port = if downstream {
@@ -2085,7 +2085,7 @@ impl<'a> ModelView<'a> {
         }
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     pub(super) fn toolbar_text(&self, width: usize) -> String {
         if !self.mouse_capture || width < GRAPH_TOOLBAR_MIN_WIDTH {
             return String::new();
@@ -2126,7 +2126,7 @@ impl<'a> ModelView<'a> {
         )
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     fn live_axis_view(&self) -> Option<axes::Comparison> {
         let evidence = self.live_evidence.as_ref()?;
         Some(axes::Comparison::from_shapes(
@@ -2670,13 +2670,13 @@ impl<'a> ModelView<'a> {
             candidate.vertical = vertical;
             Some(candidate)
         });
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         let observed_routes = if flow.is_some() {
             self.observed_routes(&nodes, vertical)
         } else {
             Vec::new()
         };
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         for route in observed_routes.iter().filter(|route| route.external) {
             let [x, y] = route.points[0];
             if x >= 0.0
@@ -2709,7 +2709,7 @@ impl<'a> ModelView<'a> {
                     );
                 }
             }
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             for route in &observed_routes {
                 route.draw(|from, to| {
                     canvas.connector(from, to, (route.target == active, LinkInk::Unknown))
@@ -2756,7 +2756,7 @@ impl<'a> ModelView<'a> {
         scene.page_start = page_start;
         scene.lane_page = lane_page;
         scene.item_count = item_count;
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         {
             scene.links = links;
             scene.handoffs = handoffs;
@@ -2773,7 +2773,7 @@ impl<'a> ModelView<'a> {
         scene
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     fn observed_routes(&self, nodes: &[RouteNode], vertical: bool) -> Vec<ObservedRoute> {
         let Some(projection) = self
             .live_evidence
@@ -3002,7 +3002,7 @@ impl<'a> ModelView<'a> {
     }
 
     fn render(&self, scene: &Scene, locale: Locale, color: bool, pixels: bool) -> String {
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         if scene.axes.is_some() {
             let mut output = scene.render_axes(locale, color, pixels);
             if let Some(evidence) = self
@@ -3054,15 +3054,15 @@ impl<'a> ModelView<'a> {
         };
         let flow = self.flow_layout();
         let unconnected_layout = flow.is_some() && self.available_flow().is_none();
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         let projection = self
             .live_evidence
             .as_ref()
             .and_then(|evidence| evidence.projection.as_ref())
             .filter(|projection| !projection.hidden);
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         let projection_visible = projection.is_some();
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         let projection_visible = false;
         let mut out = String::new();
         let mode = if self.flat_flow {
@@ -3089,7 +3089,7 @@ impl<'a> ModelView<'a> {
                 "MODEL-MAVEN 模型結構"
             )
         );
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         let title = if !self.toolbar_text(width).is_empty() {
             let toolbar = self.toolbar_text(width);
             let budget = width - toolbar.len();
@@ -3334,7 +3334,7 @@ impl<'a> ModelView<'a> {
             })
         });
         let describe_handoff = |wire: Wire| {
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             let displayed = scene.displayed_wire(
                 wire,
                 if self.selected_wire == Some(wire) {
@@ -3344,7 +3344,7 @@ impl<'a> ModelView<'a> {
                 },
                 None,
             );
-            #[cfg(not(unix))]
+            #[cfg(not(any(unix, windows)))]
             let displayed = wire;
             let producer = &self.layers[self.indices[&displayed.from.operator]];
             let consumer = &self.layers[self.indices[&displayed.to.operator]];
@@ -3572,7 +3572,7 @@ impl<'a> ModelView<'a> {
                     expected.map_or_else(|| "?".to_owned(), |value| value.to_string())
                 )
             });
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         let observed_details = projection.and_then(|projection| {
             projection.counts.get(&layer.id).map(|count| {
                 let source = projection
@@ -3607,7 +3607,7 @@ impl<'a> ModelView<'a> {
                 )
             })
         });
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         let observed_details: Option<String> = None;
         let shared_details = (self.selected_wire.is_none() && self.hover_handoff.is_none())
             .then_some(&layer.data["instance_id"])
@@ -3660,12 +3660,12 @@ impl<'a> ModelView<'a> {
                     },
                 )
             });
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         let unresolved = self
             .live_evidence
             .as_ref()
             .is_some_and(|evidence| evidence.graph_target_unresolved);
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         let unresolved = false;
         let details = if unresolved {
             locale.text(
@@ -3788,14 +3788,14 @@ impl<'a> ModelView<'a> {
         } else {
             provenance
         };
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         let module_details_available = self.selected_pair.is_none()
             && self.selected_port.is_none()
             && self.selected_wire.is_none()
             && scene.axes.is_none();
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         let module_details_available = false;
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         let provenance = if let Some(projection) = self
             .live_evidence
             .as_ref()
@@ -3823,12 +3823,12 @@ impl<'a> ModelView<'a> {
                 "空格 · 开关动画",
                 "空白鍵 · 開關動畫",
             );
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             let projection_controls = self
                 .live_evidence
                 .as_ref()
                 .is_some_and(|evidence| evidence.projection.is_some());
-            #[cfg(not(unix))]
+            #[cfg(not(any(unix, windows)))]
             let projection_controls = false;
             let line = if self.selected_pair.is_some() || projection_controls {
                 format!("{provenance}   │   {motion}")
@@ -3909,16 +3909,16 @@ impl<'a> ModelView<'a> {
         } else {
             modes
         };
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         let wire_list = if scene.handoffs_available() {
             format!(" · W {}", locale.text("Wires", "连线", "連線"))
         } else {
             String::new()
         };
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         let wire_list = "";
         push(&mut out, &format!("{modes}{wire_list} · {controls}"), width);
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         if self.offline && scene.handoffs_available() && !scene.short {
             push(
                 &mut out,
@@ -4042,9 +4042,9 @@ fn center_caption(
     row.push((column, caption));
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 mod interaction;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub(crate) use interaction::show_editor_demo;
 
 mod offline;
@@ -4061,9 +4061,9 @@ pub(crate) fn show(
     match modules.filter(|modules| !modules.is_empty()) {
         Some(modules) => {
             let mut view = ModelView::new(Some(modules));
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             return interaction::show_view_for_edit(&mut view, locale);
-            #[cfg(not(unix))]
+            #[cfg(not(any(unix, windows)))]
             {
                 show_view_static(&view, locale)?;
                 Ok(None)
@@ -4097,17 +4097,17 @@ pub(crate) fn show_focused(
         .filter(|layer| layer.path == path && layer.kind == "Linear")
         .and_then(|layer| layer.data["editable_params"]["in_features"].as_u64())
         .map(Shape::Features);
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     let mut inputs = failure::observed_inputs(&call["inputs"], expected.as_ref());
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     if let Ok(report) = serde_json::from_str::<Value>(raw_report) {
         failure::attach_observed_matches(&mut inputs, call, &report);
     }
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     let matched_input = input_selection
         .filter(|&index| index < inputs.len())
         .or_else(|| input_query.and_then(|query| failure::unique_input_match(&inputs, query)));
-    #[cfg(not(unix))]
+    #[cfg(not(any(unix, windows)))]
     let _ = (input_query, input_selection);
     view.live_evidence = Some(LiveEvidence {
         path: path.to_owned(),
@@ -4128,20 +4128,20 @@ pub(crate) fn show_focused(
         invocation_id: call["invocation_id"].as_str().map(str::to_owned),
         expected,
         raw_report: raw_report.to_owned(),
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         route_cache: std::cell::OnceCell::new(),
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         inputs,
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         selected_input: matched_input.or_else(|| previous.and_then(|state| state.selected_input)),
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         show_input: matched_input.is_some()
             || (input_query.is_none() && previous.is_some_and(|state| state.show_input)),
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         graph_target_unresolved: false,
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         projection: None,
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         diagnostics: serde_json::from_str::<Value>(raw_report)
             .ok()
             .and_then(|report| report["diagnostics"].as_array().cloned())
@@ -4163,21 +4163,21 @@ pub(crate) fn show_focused(
         view.layout_edit = previous.layout_edit;
         view.style = previous.style;
         view.background = previous.background;
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         {
             view.live_axes_zoom = previous.live_axes_zoom;
         }
         view.restore_view(previous.bookmark);
         view.trail = previous.trail.clone();
     }
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     let edit = if allow_edit {
         interaction::show_view_for_edit(&mut view, locale)?
     } else {
         interaction::show_view_borrowed(&mut view, locale)?;
         None
     };
-    #[cfg(not(unix))]
+    #[cfg(not(any(unix, windows)))]
     let edit = {
         let _ = allow_edit;
         show_view_static(&view, locale)?;
@@ -4194,14 +4194,14 @@ pub(crate) fn show_focused(
         layout_edit: view.layout_edit,
         style: view.style,
         background: view.background,
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         live_axes_zoom: view.live_axes_zoom,
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         selected_input: view
             .live_evidence
             .as_ref()
             .and_then(|evidence| evidence.selected_input),
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         show_input: view
             .live_evidence
             .as_ref()
@@ -4209,7 +4209,7 @@ pub(crate) fn show_focused(
     })
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub(crate) struct InputCandidate {
     pub index: usize,
     pub path: String,
@@ -4217,7 +4217,7 @@ pub(crate) struct InputCandidate {
     pub shape: String,
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub(crate) fn matching_call_inputs(call: &Value, query: &str) -> (Vec<InputCandidate>, bool) {
     let inputs = failure::observed_inputs(&call["inputs"], None);
     let (indices, incomplete) = failure::matching_input_indices(&inputs, query);
@@ -4250,22 +4250,22 @@ pub(crate) struct FocusedViewState {
     layout_edit: bool,
     style: Style,
     background: Background,
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     live_axes_zoom: Option<u8>,
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     selected_input: Option<usize>,
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     show_input: bool,
 }
 
 fn show_view(view: ModelView<'_>, locale: Locale) -> std::io::Result<()> {
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     return interaction::show_view(view, locale);
-    #[cfg(not(unix))]
+    #[cfg(not(any(unix, windows)))]
     show_view_static(&view, locale)
 }
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 pub(crate) fn show_editor_demo(locale: Locale) -> std::io::Result<()> {
     show_view_static(&ModelView::new(None), locale)
 }
@@ -4277,16 +4277,16 @@ pub(crate) fn show_diagnosis(
 ) -> std::io::Result<()> {
     use crate::welcome::{self, ProjectState};
     let fullscreen = !line_mode && {
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         {
             crate::terminal::menu::supported()
         }
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         {
             false
         }
     };
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     let _interrupt = fullscreen.then(crate::terminal::interrupt::Guard::install);
     let project = std::path::Path::new("offline-demo");
     let state = ProjectState::Configured;
@@ -4303,13 +4303,13 @@ pub(crate) fn show_diagnosis(
     let mut offline = offline::Offline::new(case);
     let mut view = offline.view();
     loop {
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         let exit = if fullscreen {
             interaction::run(&mut view, locale, None, Some(&mut offline), &mut handoff)?
         } else {
             offline.run_line(&mut view, locale)?
         };
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         let exit = offline.run_line(&mut view, locale)?;
         match exit {
             offline::Exit::Quit => return Ok(()),
@@ -4532,7 +4532,7 @@ mod tests {
         );
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     #[test]
     fn exploded_slices_keep_module_identity_and_connectors_attached() {
         let mut view = ModelView::new(None);
@@ -4648,7 +4648,7 @@ mod tests {
         }
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     #[test]
     fn exploded_vertical_flow_uses_available_rank_height_for_stacked_modules() {
         let root = OperatorId(100);
@@ -4775,7 +4775,7 @@ mod tests {
         }
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     #[test]
     fn exploded_fanout_keeps_parallel_branches_distinct_and_preserves_selection() {
         let root = OperatorId(1);
@@ -5366,7 +5366,7 @@ mod tests {
         assert_eq!(view.scene(40, 24, false, None).page_size, 16);
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     #[test]
     fn flat_flow_preserves_wires_selection_and_the_spatial_camera() {
         let mut view = ModelView::new(None);
@@ -5415,7 +5415,7 @@ mod tests {
         assert!(view.viewport == spatial_viewport);
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     #[test]
     fn numeric_graph_presets_select_exact_mode_and_preserve_graph_identity() {
         let mut view = ModelView::new(None);
@@ -5468,7 +5468,7 @@ mod tests {
         );
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     #[test]
     fn flat_flow_separates_parallel_port_routes_stably() {
         let offline = offline::Offline::new(model_maven_tui::diagnosis::Case::CrossedPorts);
@@ -5526,7 +5526,7 @@ mod tests {
         }
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     #[test]
     fn narrow_flat_flow_arranges_ranks_vertically_and_routes_ports() {
         let mut view = ModelView::new(None);
@@ -5581,24 +5581,24 @@ mod tests {
             last_observed: true,
             from_calls: false,
             reused: false,
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             selected_input: None,
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             show_input: false,
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             graph_target_unresolved: false,
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             projection: None,
             input: Shape::parse(&json!([2, 48])),
             invocation: Some(2),
             invocation_id: None,
             expected: Some(Shape::Features(32)),
             raw_report: String::new(),
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             route_cache: std::cell::OnceCell::new(),
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             inputs: Vec::new(),
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             diagnostics: Vec::new(),
         });
         let frame = detailed(&view, 80);
@@ -5613,7 +5613,7 @@ mod tests {
             cached_frame.contains("Reused · no new forward"),
             "{cached_frame}"
         );
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         {
             let original = view.bookmark();
             view.live_axes_zoom = Some(8);
@@ -5676,7 +5676,7 @@ mod tests {
         assert!(second.contains("heads: 8"));
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     #[test]
     fn layer_hover_shows_interface_and_counts_while_a_wire_is_selected() {
         let mut view = ModelView::new(None);
@@ -5704,7 +5704,7 @@ mod tests {
         assert!(wire_details.contains("encoder.attention → merge"));
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     #[test]
     fn hover_preview_never_replaces_the_pinned_wire_evidence() {
         let mut view = offline::Offline::new(model_maven_tui::diagnosis::Case::CrossedPorts).view();
@@ -5745,7 +5745,7 @@ mod tests {
         }
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     #[test]
     fn curves_follow_floating_stacks_without_moving_captions() {
         let mut view = ModelView::new(None);
@@ -5916,7 +5916,7 @@ mod tests {
         assert!(!details.contains("parameter_count: -1"));
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     #[test]
     fn tensor_ports_keep_their_position_on_each_hopping_layer() {
         let view = ModelView::new(None);
@@ -5942,7 +5942,7 @@ mod tests {
         }
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     #[test]
     fn editing_one_of_two_merge_inputs_updates_only_its_wire() {
         let mut view = ModelView::new(None);
@@ -5988,7 +5988,7 @@ mod tests {
         assert!(after.handoffs.iter().any(|edge| edge.wire == neighbor));
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     #[test]
     fn parallel_wires_keep_distinct_sockets_when_the_model_rotates() {
         let mut view = ModelView::new(None);
@@ -6189,7 +6189,7 @@ mod tests {
         assert!(frame.lines().all(|line| text::display_width(line) <= 40));
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     #[test]
     fn shared_sequential_aliases_keep_registered_positions_and_instance_identity() {
         let modules = vec![
@@ -6264,7 +6264,7 @@ mod tests {
         );
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     #[test]
     fn shared_sequential_nested_aliases_expand_without_mixing_scopes() {
         let modules = vec![
@@ -6309,7 +6309,7 @@ mod tests {
         );
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     #[test]
     fn named_sequential_uses_only_complete_explicit_child_order() {
         let mut modules = vec![
@@ -6382,7 +6382,7 @@ mod tests {
         );
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     #[test]
     fn sequential_contract_marks_mismatch_and_ignores_undeclared_flow() {
         let mut modules = vec![
@@ -6427,7 +6427,7 @@ mod tests {
         assert!(ModelView::new(Some(&modules)).flow_layout().is_none());
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     #[test]
     fn demo_carries_tensor_handoffs_across_page_boundaries() {
         let mut view = ModelView::new(None);
@@ -6521,7 +6521,7 @@ mod tests {
         assert_eq!((view.focus, view.selected), (Some(0), 26));
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     #[test]
     fn following_a_cross_group_socket_restores_scope_port_and_camera() {
         use model_maven_tui::diagnosis::Case;
@@ -6572,7 +6572,7 @@ mod tests {
         assert_eq!(after.page_start, before.page_start);
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     #[test]
     fn changing_style_and_background_preserves_socket_geometry() {
         let mut view = offline::Offline::new(model_maven_tui::diagnosis::Case::Mismatch).view();
@@ -6635,7 +6635,7 @@ mod tests {
         }
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     #[test]
     fn thousand_operator_graph_keeps_layout_and_rendering_local() {
         let mut edits = Vec::new();

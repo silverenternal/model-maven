@@ -229,7 +229,7 @@ impl Handoff {
             .then_some(parts)
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     pub fn socket_distance_at(&self, point: [f64; 2], layer: Option<usize>) -> Option<f64> {
         let [x, y] = point;
         [
@@ -247,7 +247,7 @@ impl Handoff {
         .min_by(f64::total_cmp)
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     pub fn nearby_socket_distance_at(&self, point: [f64; 2]) -> Option<f64> {
         [
             (self.from, Continuation::Incoming),
@@ -260,7 +260,7 @@ impl Handoff {
         .min_by(f64::total_cmp)
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     pub fn distance_at(&self, point: [f64; 2]) -> Option<f64> {
         let [[ax, ay], [bx, by]] = [self.from, self.to];
         let [x, y] = point;
@@ -430,7 +430,7 @@ impl Handoff {
 mod tests {
     use super::*;
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     #[test]
     fn orthogonal_routes_share_their_geometry_with_hit_testing() {
         let shape = Shape::Features(32);
@@ -468,7 +468,7 @@ mod tests {
         }
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     #[test]
     fn rotated_handoffs_draw_and_hit_in_both_directions() {
         let shape = Shape::Features(32);
@@ -491,7 +491,7 @@ mod tests {
         }
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     #[test]
     fn nearby_socket_hit_expands_the_target_without_inventing_offscreen_ports() {
         let shape = Shape::Features(32);
@@ -633,7 +633,7 @@ mod tests {
             assert!(!drawn_near_intersection(&routes[1], None));
             assert!(!drawn_near_intersection(&routes[0], Some(other)));
             assert!(drawn_near_intersection(&routes[1], Some(other)));
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             assert!(
                 routes
                     .iter()

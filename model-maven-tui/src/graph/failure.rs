@@ -1151,7 +1151,7 @@ mod tests {
     use super::*;
 
     #[test]
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     fn declared_route_requires_unique_reported_seam_binding_and_is_not_a_flow_edge() {
         let report = serde_json::json!({"data":{"origin":{
             "params":{"input_routes":{"b_encoder":"a", "other":"b"}},
@@ -1179,7 +1179,7 @@ mod tests {
             invocation_id: Some("f:1".into()),
             expected: None,
             raw_report: report.to_string(),
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             route_cache: std::cell::OnceCell::new(),
             inputs: Vec::new(),
             selected_input: None,
@@ -1260,14 +1260,14 @@ mod tests {
             invocation_id: Some("f1:4".into()),
             expected: None,
             raw_report: report.to_string(),
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             route_cache: std::cell::OnceCell::new(),
             inputs: Vec::new(),
             selected_input: None,
             show_input: true,
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             graph_target_unresolved: false,
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             projection: None,
             diagnostics: Vec::new(),
         });
@@ -1450,16 +1450,16 @@ mod tests {
             reused: false,
             selected_input: None,
             show_input: false,
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             graph_target_unresolved: false,
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             projection: None,
             input: Some(Shape::Dimensions(vec![Some(2), Some(48)])),
             invocation: Some(2),
             invocation_id: None,
             expected: Some(Shape::Features(32)),
             raw_report: "{\"diagnostics\":[{\"code\":\"FORWARD_FAILED\"}]}".into(),
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             route_cache: std::cell::OnceCell::new(),
             inputs: Vec::new(),
             diagnostics: Vec::new(),
@@ -1539,16 +1539,16 @@ mod tests {
             reused: false,
             selected_input: None,
             show_input: false,
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             graph_target_unresolved: false,
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             projection: None,
             input: None,
             invocation: Some(2),
             invocation_id: None,
             expected: None,
             raw_report,
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             route_cache: std::cell::OnceCell::new(),
             inputs: Vec::new(),
             diagnostics: Vec::new(),

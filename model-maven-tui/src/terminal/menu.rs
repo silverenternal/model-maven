@@ -2,14 +2,17 @@
 use crate::terminal::interrupt;
 use std::{
     io::{self, IsTerminal, Write},
-    os::fd::AsRawFd,
 };
+#[cfg(unix)]
+use std::os::fd::AsRawFd;
 
+#[cfg(unix)]
 pub(crate) struct Terminal {
     fd: libc::c_int,
     original: libc::termios,
 }
 
+#[cfg(unix)]
 impl Terminal {
     pub(crate) fn open() -> io::Result<Self> {
         let fd = io::stdin().as_raw_fd();
@@ -62,10 +65,77 @@ impl Terminal {
     }
 }
 
+#[cfg(unix)]
 impl Drop for Terminal {
     fn drop(&mut self) {
         // SAFETY: original was obtained from this terminal descriptor.
         unsafe { libc::tcsetattr(self.fd, libc::TCSANOW, &self.original) };
+    }
+}
+
+// Preserve the existing graph event loop: translate native Windows console
+// events into the same VT byte stream that the Unix input reader consumes.
+#[cfg(windows)]
+pub(crate) struct Terminal {
+    pending: std::cell::RefCell<std::collections::VecDeque<u8>>,
+}
+
+#[cfg(windows)]
+impl Terminal {
+    pub(crate) fn open() -> io::Result<Self> {
+        use crossterm::event::{EnableFocusChange, EnableMouseCapture};
+        crossterm::terminal::enable_raw_mode()?;
+        if let Err(error) = crossterm::execute!(io::stderr(), EnableMouseCapture, EnableFocusChange) {
+            let _ = crossterm::terminal::disable_raw_mode();
+            return Err(error);
+        }
+        Ok(Self { pending: std::cell::RefCell::new(std::collections::VecDeque::new()) })
+    }
+
+    pub(crate) fn read(&self, timeout_ms: i32) -> io::Result<Option<u8>> {
+        use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind};
+        if let Some(byte) = self.pending.borrow_mut().pop_front() { return Ok(Some(byte)); }
+        if !event::poll(std::time::Duration::from_millis(timeout_ms.max(0) as u64))? { return Ok(None); }
+        let bytes = match event::read()? {
+            Event::Key(key) if key.kind != KeyEventKind::Release => match key.code {
+                KeyCode::Char('c' | 'C') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    interrupt::request(); Vec::new()
+                },
+                KeyCode::Char(c) if key.modifiers.contains(KeyModifiers::CONTROL) && c.is_ascii_alphabetic() =>
+                    vec![(c.to_ascii_lowercase() as u8) - b'a' + 1],
+                KeyCode::Char(c) => { let mut raw = [0; 4]; c.encode_utf8(&mut raw).as_bytes().to_vec() },
+                KeyCode::Enter => vec![b'\r'], KeyCode::Tab => vec![b'\t'],
+                KeyCode::BackTab => b"\x1b[Z".to_vec(), KeyCode::Esc => vec![27],
+                KeyCode::Backspace => vec![127], KeyCode::Up => b"\x1b[A".to_vec(),
+                KeyCode::Down => b"\x1b[B".to_vec(), KeyCode::Right => b"\x1b[C".to_vec(),
+                KeyCode::Left => b"\x1b[D".to_vec(), KeyCode::PageUp => b"\x1b[5~".to_vec(),
+                KeyCode::PageDown => b"\x1b[6~".to_vec(), _ => Vec::new(),
+            },
+            Event::Mouse(mouse) => {
+                let (flag, end) = match mouse.kind {
+                    MouseEventKind::Down(MouseButton::Left) => (0, 'M'),
+                    MouseEventKind::Up(MouseButton::Left) => (0, 'm'),
+                    MouseEventKind::Drag(MouseButton::Left) => (32, 'M'),
+                    MouseEventKind::Moved => (35, 'M'), MouseEventKind::ScrollUp => (64, 'M'),
+                    MouseEventKind::ScrollDown => (65, 'M'), MouseEventKind::ScrollLeft => (66, 'M'),
+                    MouseEventKind::ScrollRight => (67, 'M'), _ => return Ok(None),
+                };
+                format!("\x1b[<{flag};{};{}{end}", u32::from(mouse.column) + 1, u32::from(mouse.row) + 1).into_bytes()
+            }
+            Event::FocusGained => b"\x1b[I".to_vec(), Event::FocusLost => b"\x1b[O".to_vec(),
+            _ => Vec::new(),
+        };
+        self.pending.borrow_mut().extend(bytes);
+        Ok(self.pending.borrow_mut().pop_front())
+    }
+}
+
+#[cfg(windows)]
+impl Drop for Terminal {
+    fn drop(&mut self) {
+        use crossterm::event::{DisableFocusChange, DisableMouseCapture};
+        let _ = crossterm::execute!(io::stderr(), DisableFocusChange, DisableMouseCapture);
+        let _ = crossterm::terminal::disable_raw_mode();
     }
 }
 
@@ -319,6 +389,8 @@ pub(crate) fn supported() -> bool {
 }
 
 pub(crate) fn rows() -> usize {
+    #[cfg(unix)]
+    {
     let mut size = libc::winsize {
         ws_row: 0,
         ws_col: 0,
@@ -333,4 +405,7 @@ pub(crate) fn rows() -> usize {
     } else {
         24
     }
+    }
+    #[cfg(windows)]
+    { crossterm::terminal::size().map(|(_, rows)| usize::from(rows)).unwrap_or(24) }
 }

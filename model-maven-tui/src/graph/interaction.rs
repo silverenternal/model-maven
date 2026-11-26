@@ -4491,13 +4491,13 @@ fn recorded_call_focus_selects_the_unique_module_without_adding_wires() {
         invocation_id: Some("f1:1".into()),
         expected: None,
         raw_report: String::new(),
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         route_cache: std::cell::OnceCell::new(),
         inputs: Vec::new(),
         selected_input: None,
         show_input: false,
         graph_target_unresolved: false,
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         projection: None,
         diagnostics: Vec::new(),
     });

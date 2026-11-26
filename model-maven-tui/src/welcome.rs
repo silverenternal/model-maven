@@ -105,26 +105,26 @@ impl WelcomeContent {
 
 #[derive(Default)]
 pub(crate) struct Handoff {
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     screen: Option<crate::terminal::menu::Screen>,
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     motion: Option<bool>,
 }
 
 impl Handoff {
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     pub(crate) fn motion_enabled(&self) -> bool {
         self.motion.unwrap_or_else(layout::motion_enabled)
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     pub(crate) fn toggle_motion(&mut self) -> bool {
         let enabled = !self.motion_enabled();
         self.motion = Some(enabled);
         enabled
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     pub(crate) fn enter_screen(&mut self) -> io::Result<()> {
         if self.screen.is_none() {
             self.screen = Some(crate::terminal::menu::Screen::open()?);

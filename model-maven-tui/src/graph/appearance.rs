@@ -52,7 +52,7 @@ impl Appearance {
         }
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     pub fn feedback_ms(self) -> u64 {
         match self.style {
             Style::Default => 220,
@@ -61,7 +61,7 @@ impl Appearance {
         }
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     pub fn focused_stroke(self) -> f32 {
         match self.style {
             Style::Default => 0.24,
@@ -119,7 +119,7 @@ impl Appearance {
     }
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub(super) fn xterm_rgb(index: u8) -> [u8; 3] {
     let shades = [0, 95, 135, 175, 215, 255];
     let index = index - 16;

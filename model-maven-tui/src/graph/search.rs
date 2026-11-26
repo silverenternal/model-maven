@@ -826,16 +826,16 @@ mod tests {
             reused: false,
             selected_input: None,
             show_input: false,
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             graph_target_unresolved: false,
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             projection: None,
             input: None,
             invocation: Some(2),
             invocation_id: Some("forward:call-2".into()),
             expected: None,
             raw_report,
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             route_cache: std::cell::OnceCell::new(),
             inputs: super::super::failure::observed_inputs(
                 &serde_json::json!({"kind":"dict","items":{"kwargs":{"kind":"dict","items":{"mask":{"kind":"tensor","shape":[2,7],"dtype":"torch.bool"}}}}}),

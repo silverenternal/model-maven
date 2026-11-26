@@ -13,7 +13,7 @@ pub(super) fn load(path: &std::path::Path) -> io::Result<(ModelView<'static>, Op
     Ok((from_graph(&request["document"])?, locale))
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub(crate) fn interactive(path: &std::path::Path, locale: crate::terminal::locale::Locale) -> io::Result<()> {
     let (mut view, _) = load(path)?;
     super::interaction::show_live_preview(&mut view, path, locale)
