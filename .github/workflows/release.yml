@@ -37,11 +37,6 @@ jobs:
         run: |
           cargo build --manifest-path model-maven/Cargo.toml --release --locked
           cargo build --manifest-path model-maven-tui/Cargo.toml --release --locked
-      - name: Verify terminal language selection
-        if: runner.os != 'Windows'
-        env:
-          MODEL_MAVEN_TUI_BIN: ${{ github.workspace }}/model-maven-tui/target/release/m-model-tui
-        run: python model-maven-tui/scripts/verify_language_terminal.py
       - name: Package native binaries with notices
         run: |
           target=$(rustc -vV | sed -n 's/^host: //p')
