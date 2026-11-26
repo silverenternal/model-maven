@@ -3,11 +3,12 @@ on: workflow_dispatch
 jobs:
   preview:
     runs-on: windows-2022
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: python -m pip install pynvim
+      - run: python -m pip install pywinpty
       - run: python model-maven-tui/scripts/fetch_windows_neovim.py
-      - run: python model-maven-tui/scripts/probe_embed.py
+      - run: python model-maven-tui/scripts/probe_realtty.py
