@@ -1818,6 +1818,7 @@ fn run_inner(
                 panel_dirty = false;
             }
         } else if dirty || tick || marker_changed || refined {
+            #[cfg(windows)] crate::debug_trace("cell frame start");
             let frame = frame(
                 view,
                 &scene,
@@ -1833,6 +1834,7 @@ fn run_inner(
                 locale,
                 render_mode,
             );
+            #[cfg(windows)] crate::debug_trace("cell frame ready");
             let mut frame = frame;
             toolbar.decorate(&mut frame, view, scene.width, locale);
             if dirty {
@@ -1840,6 +1842,7 @@ fn run_inner(
                 let screen = frame.strip_suffix('\n').unwrap_or(&frame);
                 write!(output, "\x1b[?2026h\x1b[H\x1b[2J{screen}\x1b[?2026l")?;
                 output.flush()?;
+                #[cfg(windows)] crate::debug_trace("cell frame flushed");
             } else {
                 repaint_moving_rows(&mut output, &chrome, &frame)?;
             }
