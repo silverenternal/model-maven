@@ -2,7 +2,7 @@ import os,time,threading,tempfile,json
 from winpty import PtyProcess
 out=os.path.join(tempfile.gettempdir(),'mm-preview-result.json')
 os.environ['MM_PROBE_OUT']=out
-lua=os.path.abspath('model-maven-tui/scripts/probe_preview_realtty.lua')
+lua=os.path.abspath('model-maven-tui/scripts/verify_live_preview_windows.lua')
 proc=PtyProcess.spawn([os.environ['MM_CI_NVIM'],'-u','NONE','-n','-c','luafile '+lua],dimensions=(45,180))
 output=[]
 def drain():

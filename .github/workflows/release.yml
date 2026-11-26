@@ -2,7 +2,11 @@ name: Windows 3D diagnostic
 on: workflow_dispatch
 jobs:
   preview:
-    runs-on: windows-2022
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [windows-2025, windows-11-arm]
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@master
@@ -20,4 +24,4 @@ jobs:
           MODEL_MAVEN_TUI_SOURCE: ${{ github.workspace }}/model-maven-tui
           MODEL_MAVEN_TUI_BIN: ${{ github.workspace }}/model-maven-tui/target/release/m-model-tui.exe
           MODEL_MAVEN_REDUCE_MOTION: '1'
-        run: python model-maven-tui/scripts/probe_preview_realtty.py
+        run: python model-maven-tui/scripts/verify_live_preview_windows.py
