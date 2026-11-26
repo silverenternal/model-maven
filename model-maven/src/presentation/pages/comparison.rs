@@ -40,7 +40,10 @@ pub fn render(data: &Value) -> Vec<String> {
     }
     for (key, label) in [
         ("source_code", "源码"),
-        ("runtime_device", "设备与运行时"),
+        ("requested_device", "请求的设备"),
+        ("runtime_device", "观察到的设备（名称不证明物理身份）"),
+        ("optimizer_factory", "自定义优化器声明"),
+        ("supervision", "监督配置声明"),
         ("weights", "权重"),
     ] {
         if let Some(dimension) = data["dimensions"]
@@ -78,6 +81,16 @@ pub fn render(data: &Value) -> Vec<String> {
         .and_then(|dimensions| dimensions.iter().find(|item| item["name"] == "metrics"))
     {
         lines.extend(metric_comparison::render(metrics));
+    }
+    if let Some(metrics) = data["dimensions"]
+        .as_array()
+        .and_then(|dimensions| dimensions.iter().find(|item| item["name"] == "training_mean_metrics"))
+    {
+        let mut rendered = metric_comparison::render(metrics);
+        if let Some(title) = rendered.first_mut() {
+            *title = title.replacen("指标", "训练平均指标", 1);
+        }
+        lines.extend(rendered);
     }
     lines.push(String::new());
     lines.push("样本身份来自训练代码显式报告；工具不校验它与批次内容是否一致。".into());

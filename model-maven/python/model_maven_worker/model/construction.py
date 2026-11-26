@@ -18,12 +18,13 @@ def validate_model_injections(value):
             factory = specification.get("factory")
             params = specification.get("params", {})
             reference = specification.get("component_ref")
-            if not isinstance(params, dict) or not isinstance(reference, dict):
+            if (not isinstance(params, dict) or set(specification) - {"factory", "params", "component_ref"}
+                    or ("component_ref" in specification and not isinstance(reference, dict))):
                 raise UserError(
                     "MODEL_INJECTION_INVALID",
-                    f"接缝 {slot} 的注册组件需要 params 对象和 component_ref 锁。",
+                    f"接缝 {slot} 的工厂参数或组件锁格式无效。",
                 )
-            if (
+            if reference is not None and (
                 not isinstance(reference.get("id"), str)
                 or not isinstance(reference.get("version"), str)
                 or not isinstance(reference.get("sha256"), str)
@@ -41,11 +42,12 @@ def validate_model_injections(value):
             part.isidentifier() for part in attribute.split(".")
         ):
             raise UserError("MODEL_INJECTION_INVALID", f"接缝 {slot} 的工厂入口格式无效：{factory}")
-        injections[slot] = (
-            {"factory": factory, "params": params, "component_ref": reference}
-            if reference is not None
-            else factory
-        )
+        if isinstance(specification, dict):
+            injections[slot] = {"factory": factory, "params": params}
+            if reference is not None:
+                injections[slot]["component_ref"] = reference
+        else:
+            injections[slot] = factory
     return injections
 
 
@@ -112,22 +114,24 @@ def construct_model(factory, params, project_root, injections=None, *, torch_mod
                     "MODEL_INJECTION_TYPE_INVALID",
                     f"接缝 {slot} 的工厂 {reference} 返回 {type(component).__name__}，需要 nn.Module。",
                 )
-            if any(component is existing for existing in components.values()):
-                raise UserError(
-                    "MODEL_INJECTION_INSTANCE_SHARED",
-                    f"多个接缝工厂返回了同一个模块实例：{reference}。",
-                    "每个接缝工厂应返回独立的新 nn.Module，避免初始化和状态所有权歧义。",
-                )
             components[slot] = component
         if components:
             try:
-                inspect.signature(factory).bind(**params, **components)
-            except (TypeError, ValueError) as error:
-                raise UserError(
-                    "MODEL_INJECTION_SEAM_UNDECLARED",
-                    f"根模型工厂没有声明所需的组件接缝：{error}",
-                    "让工厂显式接受同名关键字参数，例如 build_model(encoder): return Model(encoder)。",
-                ) from error
+                factory_signature = inspect.signature(factory)
+            except (TypeError, ValueError):
+                # Native and dynamically wrapped callables may be callable even
+                # when Python cannot expose a signature. Let the actual call
+                # decide instead of misreporting an undeclared seam.
+                factory_signature = None
+            if factory_signature is not None:
+                try:
+                    factory_signature.bind(**params, **components)
+                except TypeError as error:
+                    raise UserError(
+                        "MODEL_INJECTION_SEAM_UNDECLARED",
+                        f"根模型工厂没有声明所需的组件接缝：{error}",
+                        "让工厂显式接受同名关键字参数，例如 build_model(encoder): return Model(encoder)。",
+                    ) from error
         model = factory(**params, **components)
     finally:
         module_type.__init__ = original_init
@@ -165,8 +169,14 @@ def construct_model(factory, params, project_root, injections=None, *, torch_mod
                 "module_type": type(component).__name__,
                 "registered_paths": aliases[id(component)],
                 "status": "registered",
+                # Fact about this construction only. A factory may return a
+                # different instance on the next reconstruction.
+                "shared_with_slots": sorted(
+                    other_slot for other_slot, other in components.items()
+                    if other_slot != slot and other is component
+                ),
             })
-            if isinstance(specification, dict):
+            if isinstance(specification, dict) and "component_ref" in specification:
                 injection_evidence[-1]["component_ref"] = specification["component_ref"]
     return model, injection_evidence, source_locations, source_site_counts
 

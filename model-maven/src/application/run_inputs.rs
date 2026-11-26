@@ -6,7 +6,7 @@ impl<B: Backend> Application<B> {
         cli: &Cli,
         root: &Path,
         job: &mut Job,
-    ) -> Result<(), Report> {
+    ) -> Result<Option<Option<String>>, Report> {
         if job.repeat_of.is_some()
             || (job.parent_run_id.is_some() && job.migration_checkpoint_input.is_none())
         {
@@ -16,16 +16,19 @@ impl<B: Backend> Application<B> {
                 ("batch_binding", "--batch-binding"),
             ] {
                 if job.repeat_overrides.iter().any(|item| item == key) {
+                    let automatically_cleared = (key == "batch" && job.inputs.batch.is_none())
+                        || (key == "batch_binding" && job.inputs.batch_binding.is_none());
                     set_source(
                         job,
                         key,
-                        crate::domain::operation::InputSourceKind::CommandLine,
-                        reference,
+                        if automatically_cleared { crate::domain::operation::InputSourceKind::Generated }
+                        else { crate::domain::operation::InputSourceKind::CommandLine },
+                        if automatically_cleared { "batch context cleared after mode or factory change" } else { reference },
                         None,
                     );
                 }
             }
-            return Ok(());
+            return Ok(None);
         }
         if job.inputs.model.is_none()
             && let Some(variant) = cli.variant.as_deref()
@@ -41,7 +44,10 @@ impl<B: Backend> Application<B> {
                     .map(str::to_owned),
             );
         }
-        if job.inputs.model.is_some() {
+        if job.inputs.no_project_model && job.repeat_of.is_none() && job.parent_run_id.is_none() {
+            set_source(job, "model", crate::domain::operation::InputSourceKind::CommandLine,
+                "--no-model", None);
+        } else if job.inputs.model.is_some() {
             set_source(
                 job,
                 "model",
@@ -70,21 +76,28 @@ impl<B: Backend> Application<B> {
         }
         let loop_owns_data = matches!(job.operation, "training_probe" | "train")
             && job.training_mode == Some("external-loop");
-        let needs_model = job.inputs.model.is_none() && cli.variant.is_none() && !loop_owns_data;
+        // An external loop owns its data, but can still consume the project's
+        // selected model. Absence of a project model remains valid for it.
+        let needs_model = job.inputs.model.is_none() && cli.variant.is_none() && !job.inputs.no_project_model;
         let needs_batch = job.inputs.batch.is_none() && !loop_owns_data;
-        let needs_binding = job.inputs.batch_binding.is_none() && !loop_owns_data;
-        let needs_injections = cli.variant.is_none()
+        let needs_binding = job.inputs.batch_binding.is_none() && needs_batch;
+        let needs_injections = cli.variant.is_none() && !job.inputs.no_project_model
             && job.inputs.injections.is_empty()
             && job.inputs.injection_params.is_empty();
-        let needs_model_params =
-            cli.variant.is_none() && job.repeat_of.is_none() && job.parent_run_id.is_none();
-        let needs_config = needs_model || needs_batch || needs_binding || needs_injections;
+        let needs_model_params = cli.variant.is_none() && !job.inputs.no_project_model
+            && job.repeat_of.is_none() && job.parent_run_id.is_none();
+        let needs_config = needs_model || needs_batch || needs_binding || needs_injections
+            || job.inputs.no_project_model;
         if !(needs_config || needs_model_params) {
-            return Ok(());
+            return Ok(None);
         }
         match self.project_config.load(root) {
             Ok(Some(config)) => {
-                let revision = crate::domain::input::content_revision(&config).ok();
+                let revision = Some(crate::domain::input::content_revision(&config).map_err(|error| {
+                    Report::error(job.operation, "PROJECT_CONFIG_REVISION_FAILED", error,
+                        "无法核对项目配置；请检查配置后重新运行。")
+                })?);
+                let observed_revision = revision.clone();
                 job.config_revision = revision.clone();
                 if needs_model_params
                     && (needs_model || config["model"].as_str() == job.inputs.model.as_deref())
@@ -173,6 +186,7 @@ impl<B: Backend> Application<B> {
                     let binding = match config["batch_binding"].as_str() {
                         Some("envelope") => Some(BatchBinding::Envelope),
                         Some("single") => Some(BatchBinding::Single),
+                        Some("single-raw") => Some(BatchBinding::SingleRaw),
                         Some("args") => Some(BatchBinding::Args),
                         Some("kwargs") => Some(BatchBinding::Kwargs),
                         _ => None,
@@ -200,10 +214,10 @@ impl<B: Backend> Application<B> {
                         revision,
                     );
                 }
-                Ok(())
+                Ok(Some(observed_revision))
             }
-            Ok(None) => Ok(()),
-            Err(_) if !needs_config => Ok(()),
+            Ok(None) => Ok(Some(None)),
+            Err(_) if !needs_config => Ok(None),
             Err(error) => Err(Report::error(
                 job.operation,
                 "PROJECT_CONFIG_INVALID",
@@ -222,6 +236,7 @@ impl<B: Backend> Application<B> {
             Ok(Some(config)) => {
                 let revision = crate::domain::input::content_revision(&config).ok();
                 job.config_revision = revision.clone();
+                let use_project_batch_binding = job.inputs.batch.is_none();
                 if job.inputs.model.is_none() {
                     if let Some(configured) = config["model_params"].as_object() {
                         let mut merged = configured.clone();
@@ -288,10 +303,11 @@ impl<B: Backend> Application<B> {
                         revision.clone(),
                     );
                 }
-                if job.inputs.batch_binding.is_none() {
+                if job.inputs.batch_binding.is_none() && use_project_batch_binding {
                     let binding = match config["batch_binding"].as_str() {
                         Some("envelope") => Some(BatchBinding::Envelope),
                         Some("single") => Some(BatchBinding::Single),
+                        Some("single-raw") => Some(BatchBinding::SingleRaw),
                         Some("args") => Some(BatchBinding::Args),
                         Some("kwargs") => Some(BatchBinding::Kwargs),
                         _ => None,
@@ -362,7 +378,7 @@ impl<B: Backend> Application<B> {
             "batch_params",
             "model_injections",
         ] {
-            if job.repeat_overrides.iter().any(|item| item == key) {
+            if job.repeat_overrides.iter().any(|item| item == key) || job.input_sources.contains_key(key) {
                 continue;
             }
             let upstream = prior_inputs["input_sources"][key].clone();

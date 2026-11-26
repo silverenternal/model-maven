@@ -108,12 +108,20 @@ impl<B: Backend> Application<B> {
                 );
             }
         };
-        let python_executable = run_record["report"]["data"]["runtime"]["python_executable"]
+        let recorded_python = run_record["report"]["data"]["runtime"]["python_executable"]
             .as_str()
-            .or_else(|| run_record["inputs"]["runtime"]["python_executable"].as_str())
-            .unwrap_or("python3");
-        let environment = if run_record["report"]["data"]["environment_snapshot"].is_object() {
+            .filter(|value| !value.is_empty())
+            .or_else(|| run_record["inputs"]["runtime"]["python_executable"].as_str().filter(|value| !value.is_empty()));
+        // A project/PATH fallback is not evidence of the historical runtime.
+        // Only an explicit user choice can substitute for a missing record.
+        let python_executable = recorded_python.or_else(|| {
+            cli.python_explicit.then(|| cli.python.as_deref()).flatten().filter(|value| !value.is_empty())
+        });
+        let mut environment = if run_record["report"]["data"]["environment_snapshot"].is_object() {
             run_record["report"]["data"]["environment_snapshot"].clone()
+        } else if python_executable.is_none() {
+            json!({"status":"unavailable", "capture_timing":"not_attempted",
+                "reason":"历史运行未记录 Python；未自动选择当前环境。"})
         } else {
             let environment_report = self.backend.execute(&json!({
                 "protocol_version":PROTOCOL_VERSION,
@@ -124,12 +132,17 @@ impl<B: Backend> Application<B> {
                 }
             }));
             if environment_report.success() {
-                environment_report.data
+                let mut data = environment_report.data;
+                if let Some(fields) = data.as_object_mut() {
+                    fields.insert("capture_python_source".into(), json!(if recorded_python.is_some() { "recorded" } else { "explicit_export_override" }));
+                }
+                data
             } else {
                 json!({
                     "status":"unavailable",
                     "capture_timing":"export_time",
                     "python_executable":python_executable,
+                    "capture_python_source":if recorded_python.is_some() { "recorded" } else { "explicit_export_override" },
                     "diagnostics":environment_report.diagnostics
                 })
             }
@@ -149,6 +162,11 @@ impl<B: Backend> Application<B> {
         let (extension_packages, runtime_requirements) = if extension_manifests.is_empty() {
             (Vec::new(), Vec::new())
         } else {
+            if python_executable.is_none() {
+                return Report::error("export", "EXPORT_PYTHON_REQUIRED",
+                    "历史运行未记录 Python，无法核验扩展包。",
+                    "明确使用 --python 选择用于核验扩展的解释器后重试；这不证明其与历史环境相同。");
+            }
             let package_plan = self.backend.execute(&json!({
                 "protocol_version":PROTOCOL_VERSION,
                 "operation":"extension_bundle_plan",
@@ -182,6 +200,15 @@ impl<B: Backend> Application<B> {
                     .unwrap_or_default(),
             )
         };
+        if !extension_packages.is_empty() {
+            if let Some(fields) = environment.as_object_mut() {
+                fields.insert("extension_verification_python".into(), json!({
+                    "executable": python_executable,
+                    "source": if recorded_python.is_some() { "recorded" } else { "explicit_export_override" },
+                    "same_as_training_environment": "unverified"
+                }));
+            }
+        }
         match self.exporter.export_training_run(TrainingExportRequest {
             project_root: &root,
             destination: directory,

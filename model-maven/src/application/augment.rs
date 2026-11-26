@@ -7,8 +7,7 @@ fn parse_parameters(raw: &[String]) -> Result<Map<String, Value>, String> {
         let Some((name, encoded)) = item.split_once('=') else {
             return Err(format!("参数须为 NAME=JSON：{item}"));
         };
-        let name = name.trim();
-        if name.is_empty() || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+        if name.is_empty() || name.chars().any(char::is_control) {
             return Err(format!("参数名无效：{name}"));
         }
         let value: Value = serde_json::from_str(encoded)
@@ -35,11 +34,7 @@ pub(super) fn valid_target(target: &str) -> bool {
         && !target.ends_with('.')
         && target.split('.').all(|part| {
             !part.is_empty()
-                && (part.bytes().all(|byte| byte.is_ascii_digit())
-                    || ((part.as_bytes()[0].is_ascii_alphabetic() || part.as_bytes()[0] == b'_')
-                        && part
-                            .bytes()
-                            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')))
+                && (part.bytes().all(|byte| byte.is_ascii_digit()) || python_identifier(part))
         })
 }
 
@@ -149,6 +144,26 @@ fn validate_step(
         _ => {}
     }
     Ok(())
+}
+
+// Describes the same built-ins validated above; callers must still submit a
+// conditional edit because metadata does not validate runtime tensor values.
+fn catalog() -> Value {
+    json!([
+        {"kind":"Resize","parameters":[
+            {"name":"size","required":true,"example":"224 or [224,224]"},
+            {"name":"interpolation","required":false,"example":"\"bilinear\""}]},
+        {"kind":"RandomResizedCrop","parameters":[
+            {"name":"size","required":true,"example":"224 or [224,224]"},
+            {"name":"scale","required":true,"example":"[0.08,1.0]"}]},
+        {"kind":"ToTensor","parameters":[]},
+        {"kind":"Normalize","parameters":[
+            {"name":"mean","required":true,"example":"[0.5,0.5,0.5]"},
+            {"name":"std","required":true,"example":"[0.5,0.5,0.5]"}]},
+        {"kind":"RandomHorizontalFlip","parameters":[
+            {"name":"p","required":false,"example":"0.5"}]},
+        {"kind":"custom","parameters":[],"custom_parameters":true,"requires_entrypoint":true}
+    ])
 }
 
 fn fail(operation: &'static str, code: &'static str, message: impl Into<String>) -> Report {
@@ -325,7 +340,7 @@ impl<B: Backend> Application<B> {
             AugmentCommand::List { .. } => {
                 return Report::ok(
                     operation,
-                    json!({"split":split,"steps":steps,"config_revision":revision}),
+                    json!({"split":split,"steps":steps,"config_revision":revision,"catalog":catalog()}),
                 );
             }
             AugmentCommand::Add {

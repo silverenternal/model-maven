@@ -10,7 +10,7 @@ from pathlib import Path
 from ..protocol import UserError
 
 
-RENDERER_VERSION = 1
+RENDERER_VERSION = 2
 MAX_GRID_SAMPLES = 64
 THUMBNAIL_SIZE = (224, 224)
 
@@ -61,10 +61,10 @@ def render_auto(samples, output_directory, title="Data preview"):
 
 
 def render_summary(samples, output_directory, title="Data preview"):
-    """Render a safe metadata-only HTML summary for non-image modalities."""
+    """Render bounded structure metadata; sample labels and IDs may be included."""
     output_directory = Path(output_directory)
     output_directory.mkdir(parents=True, exist_ok=True)
-    descriptors = [_sample_descriptor(sample, index) for index, sample in enumerate(samples)]
+    descriptors = [_sample_descriptor(sample, index, include_structure=True) for index, sample in enumerate(samples)]
     html_path = output_directory / "preview.html"
     html_path.write_text(_build_html(title, descriptors, None), encoding="utf-8")
     return {
@@ -72,7 +72,7 @@ def render_summary(samples, output_directory, title="Data preview"):
         "renderer_version": RENDERER_VERSION,
         "sample_count": len(samples),
         "rendered_image_count": 0,
-        "truncated": False,
+        "truncated": len(samples) > MAX_GRID_SAMPLES,
         "artifacts": [{"kind": "preview_document", "path": html_path.name, "media_type": "text/html; charset=utf-8"}],
     }
 
@@ -144,14 +144,16 @@ def _build_html(title, descriptors, image_bytes):
 body{{font:15px system-ui,sans-serif;max-width:1100px;margin:32px auto;padding:0 20px;color:#172033;background:#f7f8fa}}
 h1{{font-size:1.5rem}} .grid{{max-width:100%;height:auto;border:1px solid #d9dee8;background:white}}
 ul{{padding:0;list-style:none}} li{{background:white;border:1px solid #e1e5ec;border-radius:8px;padding:10px 12px;margin:7px 0;display:flex;gap:16px;flex-wrap:wrap}}
-li span{{color:#536174;font-family:ui-monospace,monospace;font-size:.9rem}}
+li span{{color:#536174;font-family:ui-monospace,monospace;font-size:.9rem;white-space:pre-wrap}}
 </style></head><body><h1>{title}</h1>{image}<h2>Samples</h2>{truncated}<ul>{rows}</ul></body></html>""".format(
         title=html.escape(title), image=image, truncated=truncated, rows=rows
     )
 
 
-def _sample_descriptor(sample, index):
-    value = _sample_value(sample)
+def _sample_descriptor(sample, index, include_structure=False):
+    # Summary mode describes the whole user-provided structure and should not
+    # recursively guess which nested tensor might represent an image.
+    value = sample if include_structure else _sample_value(sample)
     descriptor = {"index": index + 1}
     if isinstance(sample, dict):
         if sample.get("label") is not None:
@@ -164,7 +166,48 @@ def _sample_descriptor(sample, index):
             descriptor["label"] = str(label)
     kind, shape, dtype = _describe(value)
     descriptor.update({"kind": kind, "shape": shape, "dtype": dtype})
+    if include_structure:
+        descriptor["structure"] = _structure_summary(sample)
     return descriptor
+
+
+def _structure_summary(value):
+    """Describe nested inputs without retaining values; bound work and output."""
+    lines = []
+    remaining = [40]
+    active = set()
+
+    def visit(item, path, depth):
+        if remaining[0] <= 0:
+            return
+        remaining[0] -= 1
+        kind, shape, dtype = _describe(item)
+        details = [kind]
+        if shape is not None:
+            details.append("shape=" + "×".join(map(str, shape[:16])) + ("…" if len(shape) > 16 else ""))
+        if dtype:
+            details.append("dtype=" + dtype[:128])
+        lines.append(path + ": " + " · ".join(details))
+        if not isinstance(item, (dict, list, tuple)):
+            return
+        if id(item) in active:
+            lines.append(path + ": <cycle>")
+            return
+        if depth >= 4:
+            lines.append(path + ": <further fields omitted>")
+            return
+        active.add(id(item))
+        entries = item.items() if isinstance(item, dict) else enumerate(item)
+        for key, child in entries:
+            if remaining[0] <= 0:
+                lines.append(path + ": <further fields omitted>")
+                break
+            name = key[:96] if isinstance(key, str) else str(key) if isinstance(key, int) else "<key>"
+            visit(child, path + "[" + name.replace("\n", " ").replace("\r", " ") + "]", depth + 1)
+        active.remove(id(item))
+
+    visit(value, "$", 0)
+    return "\n".join(lines)
 
 
 def _sample_value(sample):
@@ -289,4 +332,6 @@ def _metadata_text(descriptor):
         details.append("dtype=" + descriptor["dtype"])
     if descriptor.get("sample_id"):
         details.append("id=" + descriptor["sample_id"][:48])
+    if descriptor.get("structure"):
+        details.append("structure (values omitted):\n" + descriptor["structure"])
     return " · ".join(details)

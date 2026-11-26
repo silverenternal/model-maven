@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from ..protocol import UserError
+from .initialization_rng import validate_rng_devices
 
 
 @dataclass(frozen=True)
@@ -15,18 +16,65 @@ class EditValidationRuntime:
 
 
 def valid_edit_operation(runtime, operation):
-    if not isinstance(operation, dict) or operation.get("action") not in runtime.valid_edit_actions:
+    if (
+        not isinstance(operation, dict)
+        or not isinstance(operation.get("action"), str)
+        or operation["action"] not in runtime.valid_edit_actions
+    ):
         return False
+    action = operation["action"]
+    if action in {"add", "replace"}:
+        component = operation.get("component")
+        layer_type = operation.get("layer_type")
+        if (
+            not isinstance(operation.get("params", {}), dict)
+            or (component is not None and (not isinstance(component, str) or not component))
+            or (layer_type is not None and (not isinstance(layer_type, str) or not layer_type))
+            or (component is None and layer_type is None)
+            or (component is not None and layer_type is not None)
+        ):
+            return False
+        if action == "add":
+            if not isinstance(operation.get("parent"), str) or not operation["parent"]:
+                return False
+            for field in ("name", "before", "after"):
+                if operation.get(field) is not None and not isinstance(operation[field], str):
+                    return False
+            if operation.get("before") and operation.get("after"):
+                return False
+        elif not isinstance(operation.get("path"), str) or not operation["path"]:
+            return False
+    elif action == "set":
+        if (
+            not isinstance(operation.get("path"), str)
+            or not operation["path"]
+            or not isinstance(operation.get("params"), dict)
+            or not operation["params"]
+        ):
+            return False
+    elif action == "remove":
+        if not isinstance(operation.get("path"), str) or not operation["path"]:
+            return False
+        strategy = operation.get("strategy", "remove")
+        if not isinstance(strategy, str) or strategy not in {"remove", "bypass"}:
+            return False
     if "initialization_seed" in operation and (
         type(operation["initialization_seed"]) is not int
         or not 0 <= operation["initialization_seed"] < 2**64
     ):
         return False
-    if operation["action"] == "custom":
+    if "rng_devices" in operation:
+        if operation["action"] not in {"add", "replace"}:
+            return False
+        try:
+            validate_rng_devices(operation["rng_devices"])
+        except UserError:
+            return False
+    if action == "custom":
         return isinstance(operation.get("provider"), str) and isinstance(
             operation.get("payload", {}), dict
         )
-    if operation["action"] == "sharing":
+    if action == "sharing":
         mode = operation.get("mode")
         if mode == "clone-selected":
             return isinstance(operation.get("path"), str) and bool(operation["path"])
@@ -77,6 +125,13 @@ def validate_variant(runtime, variant):
                 raise ValueError("edit action")
         for key in ("origin", "seed", "torch_version", "source_manifest"):
             variant[key]
+        if variant.get("device_policy", "legacy_cpu") not in {"legacy_cpu", "factory"}:
+            raise ValueError("device_policy")
+        if "base_rng_devices" in variant:
+            try:
+                validate_rng_devices(variant["base_rng_devices"])
+            except UserError as error:
+                raise ValueError("base_rng_devices") from error
         origin = variant["origin"]
         if not isinstance(origin, dict) or not isinstance(origin.get("model"), str) or not isinstance(origin.get("params"), dict) or not isinstance(origin.get("project_root"), str):
             raise ValueError("origin")

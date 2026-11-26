@@ -1,5 +1,7 @@
 """Resolve a user batch factory and bind its result to a model call."""
 
+import secrets
+
 from ..protocol import UserError
 
 
@@ -8,6 +10,9 @@ def make_batch(request, torch_module, resolve_entrypoint):
     dataset_request = request.get("dataset")
     if source and dataset_request:
         raise UserError("DATA_SOURCE_AMBIGUOUS", "一次 probe 只能选择 batch 工厂或 Dataset 工厂。")
+    if dataset_request and request.get("batch_binding") == "single-raw":
+        raise UserError("BATCH_BINDING_CONFLICT", "显式 Dataset 采样与 single-raw 整体绑定互斥。",
+                        "如需传入数据集对象，请使用返回该对象的 batch 工厂。")
     if dataset_request:
         batch = _dataset_batch(request, dataset_request, torch_module, resolve_entrypoint)
     elif not source:
@@ -20,7 +25,7 @@ def make_batch(request, torch_module, resolve_entrypoint):
         except Exception as error:
             raise UserError("BATCH_CONSTRUCTION_FAILED", str(error)) from error
     binding = request.get("batch_binding")
-    if not dataset_request and _is_dataset(batch, torch_module):
+    if not dataset_request and binding != "single-raw" and _is_dataset(batch, torch_module):
         sampled = _sample_dataset_instance(
             source,
             batch,
@@ -42,13 +47,13 @@ def make_batch(request, torch_module, resolve_entrypoint):
         if not isinstance(batch, dict) or not isinstance(batch.get("args"), (list, tuple)) or not isinstance(batch.get("kwargs"), dict):
             raise UserError("BATCH_BINDING_INVALID", "envelope 需要 {args: [...], kwargs: {...}}。")
         return tuple(batch["args"]), batch["kwargs"], batch
-    if binding == "single" or (binding is None and isinstance(batch, torch_module.Tensor)):
+    if binding in {"single", "single-raw"} or (binding is None and isinstance(batch, torch_module.Tensor)):
         return (batch,), {}, batch
     if binding == "args" and isinstance(batch, (tuple, list)):
         return tuple(batch), {}, batch
     if binding == "kwargs" and isinstance(batch, dict):
         return (), batch, batch
-    raise UserError("BATCH_BINDING_REQUIRED", "无法无歧义地将批次绑定到 forward。", "显式选择 --batch-binding single|args|kwargs，或返回 args/kwargs envelope。")
+    raise UserError("BATCH_BINDING_REQUIRED", "无法无歧义地将批次绑定到 forward。", "显式选择 --batch-binding single|single-raw|args|kwargs，或返回 args/kwargs envelope。")
 
 
 def _dataset_batch(request, specification, torch_module, resolve_entrypoint):
@@ -70,10 +75,17 @@ def _dataset_batch(request, specification, torch_module, resolve_entrypoint):
         adapter = DatasetAdapter(source, factory, parameters)
         count = specification.get("samples", 1)
         seed = specification.get("seed")
+        seed_source = "dataset_specification" if seed is not None else None
         if seed is None:
             seed = request.get("seed")
+            if seed is not None:
+                seed_source = "request"
         if seed is None:
-            seed = 0
+            if request.get("operation") in {"train", "training_probe"}:
+                # Older recorded runs used zero when their request had no seed.
+                seed, seed_source = 0, "legacy_training_default"
+            else:
+                seed, seed_source = secrets.randbits(64), "generated_for_sampling"
         collate = _dataset_collate(torch_module)
         sampled = adapter.sample(
             count=count,
@@ -87,27 +99,35 @@ def _dataset_batch(request, specification, torch_module, resolve_entrypoint):
         raise
     except Exception as error:
         raise UserError("DATASET_CONSTRUCTION_FAILED", str(error)) from error
-    _save_observation(request, sampled)
+    _save_observation(request, sampled, seed_source)
     return sampled.batch
 
 
 def _sample_dataset_instance(source, dataset, request, torch_module, parameters=None):
     DatasetAdapter = _dataset_adapter()
     adapter = DatasetAdapter(source or "batch-factory", lambda **_: dataset, parameters)
+    seed = request.get("seed")
+    seed_source = "request" if seed is not None else "generated_for_sampling"
+    if seed is None:
+        if request.get("operation") in {"train", "training_probe"}:
+            seed, seed_source = 0, "legacy_training_default"
+        else:
+            seed = secrets.randbits(64)
     sampled = adapter.sample_instance(
         dataset,
         count=request.get("data_samples", 1),
-        seed=request.get("seed") if request.get("seed") is not None else 0,
+        seed=seed,
         split=request.get("data_split"),
         fingerprint=request.get("data_fingerprint"),
         collate=_dataset_collate(torch_module),
     )
-    _save_observation(request, sampled)
+    _save_observation(request, sampled, seed_source)
     return sampled.batch
 
 
-def _save_observation(request, sampled):
+def _save_observation(request, sampled, seed_source):
     request["_data_observation"] = sampled.observation.to_dict()
+    request["_data_observation"]["sampling"]["seed_source"] = seed_source
     request["_data_state"] = sampled.state
 
 

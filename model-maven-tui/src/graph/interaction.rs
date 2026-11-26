@@ -751,6 +751,12 @@ pub(super) fn show_view_borrowed(view: &mut ModelView<'_>, locale: Locale) -> io
     Ok(())
 }
 
+pub(super) fn show_live_preview(view: &mut ModelView<'_>, path: &std::path::Path, locale: Locale) -> io::Result<()> {
+    let _interrupt = interrupt::Guard::install();
+    run_inner(view, locale, None, None, &mut crate::welcome::Handoff::default(), Some(path))?;
+    Ok(())
+}
+
 pub(super) fn show_view_for_edit(
     view: &mut ModelView<'_>,
     locale: Locale,
@@ -1511,9 +1517,20 @@ fn frame(
 pub(super) fn run(
     view: &mut ModelView<'_>,
     locale: Locale,
+    editor: Option<Editor>,
+    offline: Option<&mut Offline>,
+    handoff: &mut crate::welcome::Handoff,
+) -> io::Result<Exit> {
+    run_inner(view, locale, editor, offline, handoff, None)
+}
+
+fn run_inner(
+    view: &mut ModelView<'_>,
+    locale: Locale,
     mut editor: Option<Editor>,
     mut offline: Option<&mut Offline>,
     handoff: &mut crate::welcome::Handoff,
+    live_path: Option<&std::path::Path>,
 ) -> io::Result<Exit> {
     let terminal = menu::Terminal::open()?;
     handoff.enter_screen()?;
@@ -1590,11 +1607,37 @@ pub(super) fn run(
     let mut confirmation: Option<ConfirmationClock> = None;
     let mut motion = Motion::default();
     let mut projection_pending = false;
+    let mut live_version = live_path.and_then(|path| std::fs::metadata(path).ok())
+        .and_then(|meta| meta.modified().ok().map(|modified| (modified, meta.len())));
+    let mut live_checked = Instant::now();
     loop {
         if interrupt::take() {
             return Ok(Exit::Quit);
         }
         let now = Instant::now();
+        if let Some(path) = live_path.filter(|_| now.duration_since(live_checked) >= Duration::from_millis(250)) {
+            live_checked = now;
+            let version = std::fs::metadata(path).ok()
+                .and_then(|meta| meta.modified().ok().map(|modified| (modified, meta.len())));
+            if version.is_some() && version != live_version {
+                if let Ok(mut next) = super::preview::load(path) {
+                    let selected = view.layers.get(view.selected).map(|layer| layer.path.clone());
+                    next.camera = view.camera;
+                    next.viewport = view.viewport;
+                    next.style = view.style;
+                    next.background = view.background;
+                    if let Some(path) = selected { next.focus_path(&path); }
+                    *view = next;
+                    pointer = Pointer::default();
+                    search = None; matrix = None; candidates = None;
+                    failure_visible = false; diff_visible = false; pair_details = None;
+                    scene = make_scene(view, offline.as_deref(), size.0, panes, pixel_mode, 0.0, locale);
+                    dirty = true;
+                    projection_pending = false;
+                    live_version = version;
+                }
+            }
+        }
         view.focus_pulse = if motion_enabled {
             motion.focus_feedback(now)
         } else {

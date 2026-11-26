@@ -32,9 +32,9 @@ fn entrypoint_is_valid(value: &Value) -> bool {
 }
 
 fn identifier_is_valid(value: &str) -> bool {
-    let mut bytes = value.bytes();
-    matches!(bytes.next(), Some(b'a'..=b'z' | b'A'..=b'Z' | b'_'))
-        && bytes.all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+    let mut chars = value.chars();
+    chars.next().is_some_and(|ch| ch == '_' || unicode_ident::is_xid_start(ch))
+        && chars.all(|ch| unicode_ident::is_xid_continue(ch))
 }
 
 fn injection_entrypoint_is_valid(value: &Value) -> bool {
@@ -58,6 +58,11 @@ fn validate(config: &Value) -> Result<(), String> {
             config["schema_version"]
         ));
     }
+    if let Some(python) = config.get("runtime_python").filter(|value| !value.is_null()) {
+        if python.as_str().is_none_or(|value| value.is_empty() || value.len() > 4096 || value.chars().any(char::is_control)) {
+            return Err("runtime_python 必须是非空解释器路径或命令，且不能包含控制字符。".into());
+        }
+    }
     if !entrypoint_is_valid(&config["model"])
         || !(config["batch"].is_null() || entrypoint_is_valid(&config["batch"]))
     {
@@ -65,11 +70,11 @@ fn validate(config: &Value) -> Result<(), String> {
     }
     if !matches!(
         config["batch_binding"].as_str(),
-        None | Some("envelope" | "single" | "args" | "kwargs")
+        None | Some("envelope" | "single" | "single-raw" | "args" | "kwargs")
     ) || (config["batch"].is_null() && !config["batch_binding"].is_null())
     {
         return Err(
-            "batch_binding 必须是 envelope/single/args/kwargs，且只能和 batch 一起保存。".into(),
+            "batch_binding 必须是 envelope/single/single-raw/args/kwargs，且只能和 batch 一起保存。".into(),
         );
     }
     if let Some(params) = config.get("batch_params") {
@@ -84,6 +89,31 @@ fn validate(config: &Value) -> Result<(), String> {
         .is_some_and(|params| !params.is_object())
     {
         return Err("model_params 必须是对象。".into());
+    }
+    if let Some(paths) = config.get("runtime_paths").filter(|paths| !paths.is_null()) {
+        let object = paths.as_object().ok_or("runtime_paths 必须是对象。")?;
+        if object.keys().any(|key| key != "working_directory" && key != "project_import_roots") {
+            return Err("runtime_paths 包含未知字段。".into());
+        }
+        if let Some(directory) = object.get("working_directory").filter(|value| !value.is_null()) {
+            if directory.as_str().is_none_or(|value| value.is_empty() || !Path::new(value).is_absolute() || value.contains('\0')) {
+                return Err("runtime_paths.working_directory 必须是绝对路径或 null。".into());
+            }
+        }
+        if let Some(roots) = object.get("project_import_roots").filter(|value| !value.is_null()) {
+            let roots = roots.as_array().ok_or("project_import_roots 必须是路径数组。")?;
+            let mut seen = std::collections::HashSet::new();
+            if roots.len() > 32 || roots.iter().any(|value| {
+                let Some(value) = value.as_str() else { return true; };
+                value.is_empty() || value.len() > 1024 || value.contains('\\') || value.contains('\0')
+                    || value.split('/').any(|part| part.is_empty() || part == "." || part == "..")
+                    || Path::new(value).is_absolute()
+                    || Path::new(value).components().any(|part| !matches!(part, std::path::Component::Normal(_)))
+                    || !seen.insert(value)
+            }) {
+                return Err("project_import_roots 必须是不重复的项目相对路径数组。".into());
+            }
+        }
     }
     if let Some(injections) = config.get("model_injections") {
         let injections = injections
@@ -101,6 +131,15 @@ fn validate(config: &Value) -> Result<(), String> {
             if specification.is_string() {
                 if !injection_entrypoint_is_valid(specification) {
                     return Err(format!("模型接缝 {slot} 的 Python 工厂入口无效。"));
+                }
+                continue;
+            }
+            if specification.get("component_ref").is_none() {
+                if !injection_entrypoint_is_valid(&specification["factory"])
+                    || !specification["params"].is_object()
+                    || specification.as_object().is_none_or(|object| object.keys().any(|key| key != "factory" && key != "params"))
+                {
+                    return Err(format!("模型接缝 {slot} 的直接工厂或参数无效。"));
                 }
                 continue;
             }

@@ -58,6 +58,39 @@ pub fn plan(
                 .unwrap_or("此能力仅在声明的条件满足时可用。")
         ));
     }
+    for fact in facts
+        .iter()
+        .filter(|fact| fact.required && fact.state == FactState::Unknown)
+    {
+        push_condition(
+            &mut conditions,
+            format!(
+                "{}：{}",
+                fact.key,
+                fact.reason
+                    .as_deref()
+                    .filter(|reason| !reason.trim().is_empty())
+                    .unwrap_or("此项状态未知；检查原始诊断并显式确认后重试。")
+            ),
+        );
+    }
+    for capability in capabilities
+        .iter()
+        .filter(|capability| capability.required && capability.state == FactState::Unknown)
+    {
+        push_condition(
+            &mut conditions,
+            format!(
+                "{}：{}",
+                capability.id,
+                capability
+                    .reason
+                    .as_deref()
+                    .filter(|reason| !reason.trim().is_empty())
+                    .unwrap_or("运行时未能确认此能力；检查环境或协议诊断后重试。")
+            ),
+        );
+    }
     let facts = facts
         .into_iter()
         .map(|fact| ReadinessFact {
@@ -95,6 +128,12 @@ pub fn plan(
     };
     result.validate()?;
     Ok(result)
+}
+
+fn push_condition(conditions: &mut Vec<String>, condition: String) {
+    if !conditions.iter().any(|existing| existing == &condition) {
+        conditions.push(condition);
+    }
 }
 
 fn derive_state(

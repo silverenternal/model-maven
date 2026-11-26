@@ -1,9 +1,11 @@
 """Training operation preflight, source evidence and runtime provenance."""
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Callable
 
 from ..protocol import UserError
+from ..run.file_digest import sha256_file
 from .state import checkpoint_environment_inventory
 
 
@@ -84,13 +86,19 @@ def training_probe_with_source_evidence(runtime, model, request):
     else:
         runtime.entrypoint(request.get("batch"))
         runtime.entrypoint(request.get("training_step"))
+        if request.get("optimizer_factory") is not None:
+            # Include project optimizer implementation in the same source
+            # evidence as the batch and step before any update is attempted.
+            runtime.entrypoint(request["optimizer_factory"])
     before = runtime.source_manifest(request["project_root"])
 
     def attach_evidence(target):
+        audit_error = None
         try:
             after = runtime.source_manifest(request["project_root"])
-        except UserError:
+        except UserError as error:
             after = {}
+            audit_error = {"code": error.code, "message": str(error)}
         changed = sorted(
             path
             for path in before.keys() & after.keys()
@@ -98,12 +106,43 @@ def training_probe_with_source_evidence(runtime, model, request):
         )
         removed = sorted(before.keys() - after.keys())
         added = sorted(after.keys() - before.keys())
+        snapshot = request.get("code_snapshot")
+        snapshot_manifest = snapshot.get("manifest") if isinstance(snapshot, dict) else None
+        snapshot_root = snapshot.get("root") if isinstance(snapshot, dict) else None
+        pinned_added, pinned_removed = [], []
+        if isinstance(snapshot_manifest, dict) and isinstance(snapshot_root, str):
+            project_root = Path(request["project_root"]).resolve()
+            frozen_root = Path(snapshot_root).resolve()
+            for filename in added:
+                try:
+                    relative = Path(filename).relative_to(project_root).as_posix()
+                    if snapshot_manifest.get(relative) == after[filename]:
+                        pinned_added.append(filename)
+                except ValueError:
+                    continue
+            for filename in removed:
+                try:
+                    relative = Path(filename).relative_to(project_root).as_posix()
+                    frozen_file = frozen_root / relative
+                    if (snapshot_manifest.get(relative) == before[filename]
+                            and sha256_file(frozen_file) == before[filename]):
+                        pinned_removed.append(filename)
+                except (ValueError, OSError):
+                    continue
+        unpinned_added = sorted(set(added) - set(pinned_added))
+        unverified_removed = sorted(set(removed) - set(pinned_removed))
         target["source_manifest"] = before
         target["source_manifest_after"] = after
-        target["source_changed_during_run"] = bool(changed or removed or added)
+        target["source_changed_during_run"] = bool(audit_error or changed or unverified_removed or unpinned_added)
+        if audit_error is not None:
+            target["source_audit_error"] = audit_error
         target["source_hash_changes"] = changed
         target["source_files_missing_after"] = removed
         target["source_files_newly_observed"] = added
+        target["source_files_newly_observed_in_snapshot"] = pinned_added
+        target["source_files_no_longer_observed_in_snapshot"] = pinned_removed
+        target["source_files_newly_observed_unpinned"] = unpinned_added
+        target["source_files_no_longer_observed_unverified"] = unverified_removed
         if request.get("code_snapshot") is not None:
             target["code_snapshot"] = request["code_snapshot"]
         if training_environment is not None:
@@ -195,6 +234,11 @@ def training_probe_with_source_evidence(runtime, model, request):
                 "source_hash_changes",
                 "source_files_missing_after",
                 "source_files_newly_observed",
+                "source_files_newly_observed_in_snapshot",
+                "source_files_no_longer_observed_in_snapshot",
+                "source_files_newly_observed_unpinned",
+                "source_files_no_longer_observed_unverified",
+                "source_audit_error",
                 "code_snapshot",
                 "completed_steps",
                 "mean_loss",

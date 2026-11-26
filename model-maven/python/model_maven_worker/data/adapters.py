@@ -1,8 +1,8 @@
 """Data-source contracts shared by native datasets and direct batch factories.
 
-The adapter deliberately accepts a factory rather than a live training iterator.
-Probe sampling therefore owns a fresh dataset instance and cannot advance the
-iterator used by a later training run.
+The adapter can call a factory or sample a returned dataset instance. A factory
+may return shared state or interact with an external stream, so independent
+sampling cannot be inferred merely from calling it.
 """
 
 from dataclasses import dataclass
@@ -23,7 +23,7 @@ ITERABLE_WINDOW_SAMPLE_ALGORITHM = "sha256-window-rank-v1"
 class DataCapabilities:
     inspect_batch: bool
     forward_probe: bool
-    independent_sampling: bool
+    independent_sampling: bool | None
     stable_sample_ids: bool
     checkpoint_save: bool
     checkpoint_load: bool
@@ -57,6 +57,7 @@ class DataObservation:
             "sampling": {
                 "algorithm": self.algorithm,
                 "seed": self.seed,
+                "seed_decimal": str(self.seed),
                 "requested_samples": self.requested_samples,
                 "actual_samples": self.actual_samples,
                 "sample_ids": list(self.sample_ids),
@@ -94,17 +95,20 @@ class DatasetAdapter:
         self.factory = factory
         self.parameters = dict(parameters or {})
 
-    def create(self, split=None, seed=0):
+    def _factory_arguments(self, split=None, seed=0):
         parameters = dict(self.parameters)
+        if split is not None and "split" in parameters and parameters["split"] != split:
+            raise UserError("DATASET_SPLIT_CONFLICT", "所选切分与数据工厂参数中的 split 不一致。", "统一切分选择和工厂参数后重试；数据工厂未执行。")
         if split is not None and _accepts_keyword(self.factory, "split"):
             parameters.setdefault("split", split)
-        # Factories opt in to the seed by accepting it. Do not inspect arbitrary
-        # callables or silently retry after a TypeError raised inside user code.
-        if "seed" in parameters:
-            seed = parameters.pop("seed")
+        # An explicitly supplied parameter is always forwarded. The adapter's
+        # default seed is added only when the exposed signature accepts it.
         if _accepts_keyword(self.factory, "seed"):
             parameters.setdefault("seed", seed)
-        return self.factory(**parameters)
+        return parameters
+
+    def create(self, split=None, seed=0):
+        return self.factory(**self._factory_arguments(split=split, seed=seed))
 
     def sample(
         self,
@@ -120,13 +124,26 @@ class DatasetAdapter:
         _validate_fingerprint(fingerprint)
         _validate_scan_limit(count, scan_limit)
         try:
-            dataset = self.create(split=split, seed=seed)
+            if type(self).create is DatasetAdapter.create:
+                factory_arguments = self._factory_arguments(split=split, seed=seed)
+                dataset = self.factory(**factory_arguments)
+                factory_seed_forwarded = "seed" in factory_arguments
+                factory_seed = factory_arguments.get("seed") if type(factory_arguments.get("seed")) is int else None
+                split_handling = "factory_argument" if split is not None and "split" in factory_arguments else "unverified" if split is not None else "not_requested"
+            else:
+                # An adapter override controls construction; do not infer what
+                # it forwarded from the wrapped factory's signature.
+                dataset = self.create(split=split, seed=seed)
+                factory_seed_forwarded = None
+                factory_seed = None
+                split_handling = "unverified" if split is not None else "not_requested"
         except UserError:
             raise
         except Exception as error:
             raise UserError("DATASET_FACTORY_FAILED", f"数据工厂执行失败：{error}") from error
         if isinstance(dataset, dict) and split is not None and split in dataset:
             dataset = dataset[split]
+            split_handling = "dictionary_key"
         elif isinstance(dataset, dict) and split is not None:
             raise UserError("DATASET_SPLIT_MISSING", f"数据工厂没有返回 {split!r} 切分。")
         return self.sample_instance(
@@ -137,6 +154,9 @@ class DatasetAdapter:
             fingerprint=fingerprint,
             collate=collate,
             scan_limit=scan_limit,
+            factory_seed_forwarded=factory_seed_forwarded,
+            factory_seed=factory_seed,
+            split_handling=split_handling,
         )
 
     def sample_instance(
@@ -149,6 +169,9 @@ class DatasetAdapter:
         fingerprint=None,
         collate=None,
         scan_limit=None,
+        factory_seed_forwarded=None,
+        factory_seed=None,
+        split_handling=None,
     ):
         _validate_sampling_request(count, seed)
         _validate_fingerprint(fingerprint)
@@ -158,12 +181,12 @@ class DatasetAdapter:
         if hasattr(dataset, "__len__") and hasattr(dataset, "__getitem__"):
             if scan_limit is not None:
                 raise UserError("DATA_SCAN_LIMIT_UNSUPPORTED", "扫描上限仅用于可迭代的非索引数据集。")
-            return self._sample_map(dataset, count, seed, split, fingerprint, collate)
+            return self._sample_map(dataset, count, seed, split, fingerprint, collate, factory_seed_forwarded, factory_seed, split_handling)
         if hasattr(dataset, "__iter__"):
-            return self._sample_iterable(dataset, count, seed, split, fingerprint, collate, scan_limit)
+            return self._sample_iterable(dataset, count, seed, split, fingerprint, collate, scan_limit, factory_seed_forwarded, factory_seed, split_handling)
         raise UserError("DATASET_FACTORY_INVALID", "数据工厂返回值既不可索引也不可迭代。")
 
-    def _sample_map(self, dataset, count, seed, split, fingerprint, collate):
+    def _sample_map(self, dataset, count, seed, split, fingerprint, collate, seed_forwarded, factory_seed, split_handling):
         try:
             size = len(dataset)
         except Exception as error:
@@ -214,6 +237,7 @@ class DatasetAdapter:
         stateless = bool(getattr(dataset, "MODEL_MAVEN_STATELESS", False))
         resumable = hooks or stateless
         reasons = []
+        reasons.append("无法确认数据实例或外部状态与训练迭代器相互独立。")
         if not ids_stable:
             reasons.append("未提供带数据指纹约束的稳定 sample_id(index)，repeat 不会声称样本身份稳定。")
         if not resumable:
@@ -221,7 +245,7 @@ class DatasetAdapter:
         capabilities = DataCapabilities(
             inspect_batch=actual > 0,
             forward_probe=actual > 0,
-            independent_sampling=True,
+            independent_sampling=None,
             stable_sample_ids=ids_stable,
             checkpoint_save=can_save,
             checkpoint_load=can_load,
@@ -242,6 +266,9 @@ class DatasetAdapter:
             stable_sample_ids=ids_stable,
             coverage={
                 "kind": "indexed-subset",
+                "split_handling": split_handling or ("unverified" if split is not None else "not_requested"),
+                "seed_forwarded_to_factory": seed_forwarded,
+                "factory_seed": factory_seed,
                 "population_size": size,
                 "selected_indices": indices,
                 "deterministic_selection": True,
@@ -268,7 +295,7 @@ class DatasetAdapter:
             raise UserError("DATASET_STATE_RESTORE_FAILED", f"恢复数据集状态失败：{error}") from error
         return "restored"
 
-    def _sample_iterable(self, dataset, count, seed, split, fingerprint, collate, scan_limit):
+    def _sample_iterable(self, dataset, count, seed, split, fingerprint, collate, scan_limit, seed_forwarded, factory_seed, split_handling):
         values = []
         if scan_limit is not None and getattr(dataset, "batch_size", None) is not None:
             raise UserError("DATA_SCAN_LIMIT_UNSUPPORTED", "扫描采样不支持已分批的 DataLoader；请提供逐样本可迭代 Dataset。")
@@ -307,19 +334,18 @@ class DatasetAdapter:
         can_load = callable(getattr(dataset, "load_state_dict", None))
         hooks = can_save and can_load
         stateless = bool(getattr(dataset, "MODEL_MAVEN_STATELESS", False))
-        seed_forwarded = _accepts_keyword(self.factory, "seed")
         capabilities = DataCapabilities(
             inspect_batch=bool(values),
             forward_probe=bool(values),
-            # The adapter created this object from a factory. Sampling may
-            # advance this instance, but never a caller's formal train iterator.
-            independent_sampling=True,
+            # User factories can return shared objects or consume shared streams.
+            independent_sampling=None,
             stable_sample_ids=False,
             checkpoint_save=can_save,
             checkpoint_load=can_load,
             resume_cursor=hooks or stateless,
             reason=" ".join(
                 reason for reason in (
+                    "无法确认数据实例或外部状态与训练迭代器相互独立。",
                     "工厂即使接收 seed，也不能证明数据流顺序或内容可复现。",
                     None if hooks or stateless else "没有稳定样本 ID 或游标恢复钩子，不能声称代表性覆盖或无损 resume。",
                 ) if reason
@@ -339,13 +365,14 @@ class DatasetAdapter:
             stable_sample_ids=False,
             coverage={
                 "kind": "bounded-window-sample" if scan_limit is not None else "bounded-prefix",
+                "split_handling": split_handling or ("unverified" if split is not None else "not_requested"),
                 "complete": exhausted and examined <= count if scan_limit is not None else False,
                 "stream_exhausted": exhausted if scan_limit is not None else None,
                 "representative": False,
                 "deterministic_selection": False,
                 "deterministic_given_same_prefix": True,
                 "seed_forwarded_to_factory": seed_forwarded,
-                "factory_seed": self.parameters.get("seed", seed) if seed_forwarded and type(self.parameters.get("seed", seed)) is int else None,
+                "factory_seed": factory_seed,
                 "examined_items": examined,
                 "scan_limit": scan_limit,
                 "selected_offsets": selected_offsets,
@@ -367,7 +394,10 @@ def _accepts_keyword(factory, name):
         signature = inspect.signature(factory)
     except (TypeError, ValueError):
         return False
-    return name in signature.parameters or any(
+    parameter = signature.parameters.get(name)
+    return (parameter is not None and parameter.kind in (
+        inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY
+    )) or any(
         parameter.kind == inspect.Parameter.VAR_KEYWORD
         for parameter in signature.parameters.values()
     )

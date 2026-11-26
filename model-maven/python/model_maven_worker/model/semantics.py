@@ -1,6 +1,8 @@
 """Persistent, explicitly authored semantic marks for observed model ports."""
 
 import hashlib
+import copy
+import hmac
 import functools
 import stat
 from contextlib import contextmanager
@@ -22,7 +24,19 @@ _MAX_SOURCE_BYTES = 8 * 1024 * 1024
 _MAX_MARKS = 512
 _MAX_RULES_PER_MARK = 32
 _MARK_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$")
-_BATCH_PATH_TOKEN = re.compile(r"(?:\.([A-Za-z_][A-Za-z0-9_-]*)|\[([0-9]+)\])")
+_BATCH_PATH_TOKEN = re.compile(r'(?:\.([^\.\[\]]+)|\[([0-9]+)\]|\[("(?:[^"\\]|\\.)*")\])')
+
+
+def implementation_identity(implementation):
+    """Compare persistent identity only; navigation hints are not identity."""
+    if not isinstance(implementation, dict):
+        return None
+    fields = ("source_file", "source_sha256", "qualified_type")
+    if any(not isinstance(implementation.get(field), str) or not implementation[field] for field in fields):
+        return None
+    if not re.fullmatch(r"[0-9a-f]{64}", implementation["source_sha256"]):
+        return None
+    return {field: implementation[field] for field in fields}
 
 
 def _state_revision(state):
@@ -100,13 +114,26 @@ def _source_anchor(project_root, implementation):
     if not isinstance(implementation, dict):
         raise UserError(
             "SEMANTIC_SOURCE_UNAVAILABLE",
-            "该模块没有可用的项目源码锚点；无法持久标记。",
-            "将实现放入项目源码后重新 probe；外部包路径不作为可移植锚点。",
+            "该模块没有可用的 Python 源码锚点；无法持久标记。",
+            "使用可读取的 Python 实现并重新 probe；原生代码及不可读取源码目前不能建立锚点。",
         )
     relative = implementation.get("source_file")
     qualified_type = implementation.get("qualified_type")
     if not isinstance(relative, str) or not relative or not isinstance(qualified_type, str):
         raise UserError("SEMANTIC_SOURCE_UNAVAILABLE", "模块实现来源信息不完整。")
+    if relative.startswith("@external:"):
+        if relative != "@external:" + qualified_type or "/" in qualified_type or "\\" in qualified_type:
+            raise UserError("SEMANTIC_SOURCE_UNAVAILABLE", "外部模块实现身份无效。")
+        try:
+            path = Path(implementation["source_path"])
+            if not path.is_absolute() or path.is_symlink() or not path.is_file() or path.stat().st_size > _MAX_SOURCE_BYTES:
+                raise OSError("unsupported external source")
+            digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        except (KeyError, TypeError, OSError, ValueError) as error:
+            raise UserError("SEMANTIC_SOURCE_UNAVAILABLE", "无法核对外部模块的实际 Python 源码。") from error
+        if digest != implementation.get("source_sha256"):
+            raise UserError("SEMANTIC_SOURCE_CHANGED", "外部模块源码在观察后发生变化。", "重新观察模块和端口。")
+        return {"source_file": relative, "source_sha256": digest, "qualified_type": qualified_type}
     root = Path(project_root).resolve(strict=True)
     candidate = root / relative
     try:
@@ -148,6 +175,10 @@ def _read_state(path):
         value = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError) as error:
         raise UserError("SEMANTIC_STATE_INVALID", f"无法读取语义标记存储：{error}") from error
+    return _validate_state(value)
+
+
+def _validate_state(value):
     if (
         not isinstance(value, dict)
         or value.get("version") != _FORMAT_VERSION
@@ -180,6 +211,7 @@ def _read_state(path):
             or not isinstance(anchor.get("source_sha256"), str)
             or not re.fullmatch(r"[0-9a-f]{64}", anchor["source_sha256"])
             or not isinstance(anchor.get("qualified_type"), str)
+            or (source_file.startswith("@external:") and source_file != "@external:" + anchor.get("qualified_type", ""))
             or not isinstance(context, dict)
             or not isinstance(context.get("model"), str)
             or not isinstance(mark.get("observation"), dict)
@@ -218,7 +250,7 @@ def _read_state(path):
                         or not _valid_batch_target_path(rule["target_path"])
                         or isinstance(rule.get("axis"), bool)
                         or not isinstance(rule.get("axis"), int)
-                        or not 0 <= rule["axis"] <= 16
+                        or rule["axis"] < 0
                     )
                 )
                 or (
@@ -231,7 +263,7 @@ def _read_state(path):
                     and (
                         isinstance(rule.get("axis"), bool)
                         or not isinstance(rule.get("axis"), int)
-                        or not 0 <= rule["axis"] <= 16
+                        or rule["axis"] < 0
                     )
                 )
                 or (rule.get("min") is not None and rule.get("max") is not None and rule["min"] > rule["max"])
@@ -277,7 +309,18 @@ def _write_state(path, state):
         raise
 
 
-def binding_context(probe_data, variant, source_manifest):
+def runtime_paths_digest(runtime):
+    runtime = runtime if isinstance(runtime, dict) else {}
+    directory = runtime.get("working_directory")
+    roots = runtime.get("project_import_roots")
+    if directory is None and (roots is None or roots == []):
+        return None
+    encoded = json.dumps({"working_directory": directory, "project_import_roots": roots},
+                         ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def binding_context(probe_data, variant, source_manifest, runtime=None):
     origin = probe_data.get("origin", {}) if isinstance(probe_data, dict) else {}
 
     def digest(value):
@@ -287,13 +330,17 @@ def binding_context(probe_data, variant, source_manifest):
     model_ref = origin.get("model")
     if not isinstance(model_ref, str) or not model_ref:
         raise UserError("SEMANTIC_MODEL_IDENTITY_MISSING", "无法确认标记所绑定的模型入口。")
-    return {
+    context = {
         "model": model_ref,
         "model_params_sha256": digest(origin.get("params", {})),
         "model_injections_sha256": digest(origin.get("model_injections", {})),
         "variant_sha256": digest(variant) if isinstance(variant, dict) else None,
         "source_manifest_sha256": digest(source_manifest),
     }
+    paths_digest = runtime_paths_digest(runtime)
+    if paths_digest is not None:
+        context["runtime_paths_sha256"] = paths_digest
+    return context
 
 
 @_serialized_mutation
@@ -308,14 +355,17 @@ def add_from_probe(
     mark_id=None,
     replace_existing=False,
     context=None,
+    expected_state_revision=None,
+    expected_anchor=None,
+    variant_name=None,
 ):
     """Bind a human-authored mark only to a module port present in this probe."""
     module_path = module_path.strip() if isinstance(module_path, str) else ""
     port = port.strip() if isinstance(port, str) else ""
     role = role.strip() if isinstance(role, str) else ""
     meaning = meaning.strip() if isinstance(meaning, str) else ""
-    if not module_path.startswith("model.") or len(module_path) > 512:
-        raise UserError("SEMANTIC_MODULE_PATH_INVALID", "实现块须使用完整模型树路径，例如 model.encoder.projection。")
+    if not (module_path == "model" or module_path.startswith("model.")) or len(module_path) > 512:
+        raise UserError("SEMANTIC_MODULE_PATH_INVALID", "实现块须使用 model 或完整模块树路径，例如 model.encoder.projection。")
     if not (port.startswith("inputs") or port.startswith("outputs")) or len(port) > 512:
         raise UserError("SEMANTIC_PORT_INVALID", "端口须是 Probe 显示的 inputs/outputs 路径。")
     if not role or len(role) > 80 or any(ord(char) < 32 for char in role):
@@ -324,7 +374,14 @@ def add_from_probe(
         raise UserError("SEMANTIC_MEANING_INVALID", "语义说明须为 1 到 512 个字符。")
     if not isinstance(probe_data, dict) or not isinstance(probe_data.get("probe_id"), str):
         raise UserError("SEMANTIC_OBSERVATION_REQUIRED", "需要一次真实模型 Probe 观测才能标记。")
-    if probe_data.get("trace_truncated") is True:
+    # A targeted probe retains its own bounded subtree independently of the
+    # full trace. Only use that narrower coverage when it actually refers to
+    # this mark's path and was not truncated itself.
+    selected_complete = (
+        probe_data.get("selected_path") == module_path
+        and probe_data.get("selected_trace_truncated") is False
+    )
+    if probe_data.get("trace_truncated") is True and not selected_complete:
         raise UserError("SEMANTIC_OBSERVATION_TRUNCATED", "本次调用轨迹已截断；不能确认目标实现块覆盖。", "缩小模型路径或提高调用观测预算后重新 Probe。")
 
     matches = []
@@ -351,16 +408,35 @@ def add_from_probe(
         )
     implementation = matches[0].get("implementation")
     source = _source_anchor(project_root, implementation)
+    if expected_anchor is not None:
+        try:
+            expected = json.loads(expected_anchor) if isinstance(expected_anchor, str) and len(expected_anchor) <= 4096 else None
+        except (ValueError, TypeError):
+            expected = None
+        if (not isinstance(expected, dict) or set(expected) != {"source_file", "source_sha256", "qualified_type"}
+                or not all(isinstance(value, str) for value in expected.values())
+                or not re.fullmatch(r"[0-9a-f]{64}", expected.get("source_sha256", ""))):
+            raise UserError("SEMANTIC_ANCHOR_INVALID", "观察实现的条件信息无效；没有保存标记。")
+        if expected != source:
+            raise UserError("SEMANTIC_ANCHOR_CONFLICT", "重跑观察到的实现与所选实现不同；没有保存标记。", "重新观察并选择端口后再试。")
     if not isinstance(context, dict):
         raise UserError("SEMANTIC_MODEL_IDENTITY_MISSING", "无法建立模型配置与变体绑定指纹。")
+    if variant_name is not None and (
+        not isinstance(variant_name, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", variant_name)
+        or context.get("variant_sha256") is None
+    ):
+        raise UserError("SEMANTIC_VARIANT_NAME_INVALID", "变体名称提示无效；没有保存标记。")
     mark_id = mark_id or uuid.uuid4().hex[:16]
     if not isinstance(mark_id, str) or not _MARK_ID.fullmatch(mark_id):
         raise UserError("SEMANTIC_ID_INVALID", "标记 ID 仅支持 1 到 80 位字母、数字、点、下划线或连字符。")
 
     root, path = _state_path(project_root)
     state = _read_state(path)
-    if len(state["marks"]) >= _MAX_MARKS:
-        raise UserError("SEMANTIC_MARK_LIMIT", f"每个项目最多保存 {_MAX_MARKS} 个语义标记。")
+    if expected_state_revision is not None:
+        if not isinstance(expected_state_revision, str) or not re.fullmatch(r"[0-9a-f]{64}", expected_state_revision):
+            raise UserError("SEMANTIC_STATE_REVISION_INVALID", "语义状态修订无效，请重新查看标记。")
+        if not hmac.compare_digest(_state_revision(state), expected_state_revision):
+            raise UserError("SEMANTIC_STATE_CONFLICT", "语义状态在查看后已变化；没有重新绑定。", "刷新标记并重新确认。")
     existing_index = next(
         (index for index, item in enumerate(state["marks"]) if item.get("id") == mark_id),
         None,
@@ -369,21 +445,36 @@ def add_from_probe(
         raise UserError("SEMANTIC_MARK_NOT_FOUND", f"找不到要重新绑定的语义标记：{mark_id}。")
     if existing_index is not None and not replace_existing:
         raise UserError("SEMANTIC_ID_EXISTS", f"语义标记 ID 已存在：{mark_id}。")
+    if existing_index is None and len(state["marks"]) >= _MAX_MARKS:
+        raise UserError("SEMANTIC_MARK_LIMIT", f"每个项目最多保存 {_MAX_MARKS} 个语义标记。")
     mark = {
         "id": mark_id,
         "role": role,
         "meaning": meaning,
         "model": context["model"],
         "binding_context": context,
+        **({"variant_name_at_binding": variant_name} if variant_name is not None else {}),
         "module_path": module_path,
         "port": port,
         "anchor": source,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "observation": {
             "probe_id": probe_data["probe_id"],
+            "model_device": probe_data.get("model_device"),
+            "reported_seed": str(probe_data["reported_seed"]) if type(probe_data.get("reported_seed")) is int else None,
+            "seed_policy": probe_data.get("seed_policy"),
             "batch_id": probe_data.get("batch_id"),
             "batch_identity_stable": probe_data.get("batch_identity_stable") is True,
             "invocation_ids": sorted({call.get("invocation_id") for call in matches if call.get("invocation_id")}),
+            "trace_coverage": {
+                "scope": ("selected-subtree" if selected_complete else
+                          "full-trace" if probe_data.get("trace_truncated") is False else "unknown"),
+                "selected_path": probe_data.get("selected_path"),
+                "selected_calls_observed": probe_data.get("selected_calls_observed"),
+                "selected_trace_truncated": probe_data.get("selected_trace_truncated"),
+                "full_trace_truncated": probe_data.get("trace_truncated"),
+                "limitation": "only the executed input and observed control-flow path are covered",
+            },
         },
         "rules": state["marks"][existing_index].get("rules", []) if existing_index is not None else [],
     }
@@ -398,6 +489,7 @@ def add_from_probe(
         "mark": mark,
         "status": "rebound" if existing_index is not None else "current",
         "path": path.relative_to(root).as_posix(),
+        "state_revision": _state_revision(state),
     }
 
 
@@ -407,6 +499,13 @@ def list_marks(project_root):
     reports = []
     for mark in state["marks"]:
         anchor = mark.get("anchor", {})
+        if mark.get("imported_unbound") is True:
+            reports.append({**mark, "binding_status": "stale", "stale_reason": "导入的标记尚未绑定当前模型；请重新观察并绑定。"})
+            continue
+        if str(anchor.get("source_file", "")).startswith("@external:"):
+            reports.append({**mark, "binding_status": "unverified",
+                            "stale_reason": "只读列表不导入外部源码；预览或训练时须重新核对运行时识别的文件。"})
+            continue
         source_path = root / str(anchor.get("source_file", ""))
         status = "current"
         reason = None
@@ -421,7 +520,7 @@ def list_marks(project_root):
             if actual != anchor.get("source_sha256"):
                 status = "stale"
                 reason = "源文件指纹已变化，需重新 probe 并手动绑定。"
-        except OSError:
+        except (OSError, ValueError, RuntimeError):
             status = "stale"
             reason = "锚定源码不可访问，需重新 probe 并手动绑定。"
         reports.append({**mark, "binding_status": status, "stale_reason": reason})
@@ -452,12 +551,16 @@ def audit_marks(project_root, probe_data, *, context):
                 report["stale_reason"] = "当前模型观测不到原模块路径/端口；需手动重新绑定。"
             audited.append(report)
             continue
-        if any(call.get("implementation") != report.get("anchor") for call in matches):
+        expected_anchor = implementation_identity(report.get("anchor"))
+        if expected_anchor is None or any(implementation_identity(call.get("implementation")) != expected_anchor for call in matches):
             report["binding_status"] = "stale"
             report["stale_reason"] = "模块路径现在对应不同实现；需手动重新绑定。"
         elif report.get("binding_context") != context:
             report["binding_status"] = "stale"
             report["stale_reason"] = "模型入口、参数、注入或变体已变化；需重新确认语义绑定。"
+        elif report["binding_status"] == "unverified":
+            report["binding_status"] = "current"
+            report["stale_reason"] = None
         audited.append(report)
     return {
         "marks": audited,
@@ -489,6 +592,11 @@ def _valid_batch_target_path(path):
         match = _BATCH_PATH_TOKEN.match(tail, position)
         if match is None:
             return False
+        if match.group(3) is not None:
+            try:
+                json.loads(match.group(3))
+            except (ValueError, TypeError):
+                return False
         position = match.end()
     return position == len(tail)
 
@@ -505,13 +613,15 @@ def _valid_custom_plugin(plugin, kind, mode):
         or not isinstance(source, dict)
         or set(source) != {"module", "sha256", "size_bytes", "source_file"}
         or not isinstance(source.get("module"), str)
-        or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*", source["module"])
+        or not all(part.isidentifier() for part in source["module"].split("."))
         or not isinstance(source.get("sha256"), str)
         or not re.fullmatch(r"[0-9a-f]{64}", source["sha256"])
         or not isinstance(source.get("source_file"), str)
         or not source.get("source_file")
         or PurePosixPath(source["source_file"]).is_absolute()
         or ".." in PurePosixPath(source["source_file"]).parts
+        or (source["source_file"].startswith("@environment:")
+            and source["source_file"] != "@environment:" + source["module"])
         or type(source.get("size_bytes")) is not int
         or not 0 < source["size_bytes"] <= _MAX_SOURCE_BYTES
         or not isinstance(plugin.get("params"), dict)
@@ -538,6 +648,7 @@ def add_rule(
     axis=None,
     rule_id=None,
     plugin=None,
+    expected_state_revision=None,
 ):
     if kind not in {"finite", "range", "batch-alignment", "custom-validator", "custom-penalty"}:
         raise UserError("SUPERVISION_RULE_KIND_INVALID", "规则 kind 目前支持 finite、range 或 batch-alignment。")
@@ -555,14 +666,14 @@ def add_rule(
             raise UserError("SUPERVISION_RULE_VALUE_INVALID", "batch-alignment 是结构检查，不支持 penalty。")
         if not isinstance(target_path, str) or not _valid_batch_target_path(target_path):
             raise UserError("SUPERVISION_RULE_VALUE_INVALID", "batch-alignment 需要合法的 --target-path，例如 batch.args[1] 或 batch.kwargs.labels。")
-        if type(axis) is not int or not 0 <= axis <= 16:
-            raise UserError("SUPERVISION_RULE_VALUE_INVALID", "batch-alignment 的 --axis 必须是 0 到 16 的整数。")
+        if type(axis) is not int or axis < 0:
+            raise UserError("SUPERVISION_RULE_VALUE_INVALID", "batch-alignment 的 --axis 必须是非负整数；实际轴须存在于张量中。")
         if minimum is not None or maximum is not None or weight is not None:
             raise UserError("SUPERVISION_RULE_VALUE_INVALID", "batch-alignment 不接受数值范围或 penalty 权重。")
     elif target_path is not None:
         raise UserError("SUPERVISION_RULE_VALUE_INVALID", "只有 batch-alignment 接受 --target-path。")
-    elif axis is not None and (type(axis) is not int or not 0 <= axis <= 16):
-        raise UserError("SUPERVISION_RULE_VALUE_INVALID", "数值规则的样本轴须是 0 到 16 的整数。")
+    elif axis is not None and (type(axis) is not int or axis < 0):
+        raise UserError("SUPERVISION_RULE_VALUE_INVALID", "数值规则的样本轴须是非负整数；实际轴须存在于张量中。")
     if minimum is not None and maximum is not None and minimum > maximum:
         raise UserError("SUPERVISION_RULE_VALUE_INVALID", "range 的最小值不能大于最大值。")
     if mode == "penalty" and (weight is None or weight <= 0):
@@ -576,8 +687,8 @@ def add_rule(
             raise UserError("SUPERVISION_PLUGIN_INVALID", "自定义规则需要项目内 module:callable、model-maven-supervision-v1 协议及 JSON 对象参数。")
         if minimum is not None or maximum is not None or target_path is not None:
             raise UserError("SUPERVISION_PLUGIN_INVALID", "自定义规则由 callable 定义行为，不接受 min/max/target。")
-        if axis is not None and (kind != "custom-validator" or type(axis) is not int or not 0 <= axis <= 16):
-            raise UserError("SUPERVISION_PLUGIN_INVALID", "只有 custom-validator 可指定 0 到 16 的样本轴。")
+        if axis is not None and (kind != "custom-validator" or type(axis) is not int or axis < 0):
+            raise UserError("SUPERVISION_PLUGIN_INVALID", "只有 custom-validator 可指定非负样本轴。")
         if kind == "custom-penalty" and (weight is None or weight <= 0):
             raise UserError("SUPERVISION_RULE_VALUE_INVALID", "custom-penalty 必须显式提供大于 0 的 weight。")
         if kind == "custom-validator" and weight is not None:
@@ -589,6 +700,11 @@ def add_rule(
         raise UserError("SUPERVISION_RULE_ID_INVALID", "规则 ID 仅支持 1 到 80 位字母、数字、点、下划线或连字符。")
     root, path = _state_path(project_root)
     state = _read_state(path)
+    if expected_state_revision is not None:
+        if not isinstance(expected_state_revision, str) or not re.fullmatch(r"[0-9a-f]{64}", expected_state_revision):
+            raise UserError("SEMANTIC_STATE_REVISION_INVALID", "语义状态修订无效，请重新查看标记。")
+        if not hmac.compare_digest(_state_revision(state), expected_state_revision):
+            raise UserError("SEMANTIC_STATE_CONFLICT", "语义状态在查看后已变化；没有添加规则。", "刷新标记并重新选择。")
     mark = next((item for item in state["marks"] if item["id"] == mark_id), None)
     if mark is None:
         raise UserError("SEMANTIC_MARK_NOT_FOUND", f"找不到语义标记：{mark_id}。")
@@ -613,6 +729,112 @@ def add_rule(
     mark.setdefault("rules", []).append(rule)
     _write_state(path, state)
     return {"mark_id": mark_id, "rule": rule, "path": path.relative_to(root).as_posix()}
+
+
+_BUNDLE_FORMAT = "model-maven-supervision-bundle-v1"
+_BUNDLE_LIMIT = 2 * 1024 * 1024
+
+
+def export_bundle(project_root, expected_state_revision):
+    root, path = _state_path(project_root)
+    state = _read_state(path)
+    if not isinstance(expected_state_revision, str) or not hmac.compare_digest(_state_revision(state), expected_state_revision):
+        raise UserError("SEMANTIC_STATE_CONFLICT", "语义状态已变化；请重新查看。")
+    bundle = {"format": _BUNDLE_FORMAT, "state": state}
+    encoded = json.dumps(bundle, ensure_ascii=False, sort_keys=True, allow_nan=False).encode("utf-8")
+    if len(encoded) > _BUNDLE_LIMIT:
+        raise UserError("SUPERVISION_BUNDLE_TOO_LARGE", "监督声明超过大小上限。")
+    return {"bundle_json": encoded.decode("utf-8"), "bundle_sha256": hashlib.sha256(encoded).hexdigest(),
+            "marks": [{"role": m["role"], "meaning": m["meaning"], "module_path": m["module_path"],
+                       "port": m["port"], "rule_count": len(m.get("rules", [])),
+                       "rules": m.get("rules", [])} for m in state["marks"]],
+            "mark_count": len(state["marks"]), "state_revision": _state_revision(state)}
+
+
+@_serialized_mutation
+def import_bundle(project_root, bundle_path, expected_sha256, expected_state_revision, apply=False):
+    root, path = _state_path(project_root)
+    state = _read_state(path)
+    if not isinstance(expected_state_revision, str) or not hmac.compare_digest(_state_revision(state), expected_state_revision):
+        raise UserError("SEMANTIC_STATE_CONFLICT", "语义状态已变化；未导入。")
+    if not isinstance(expected_sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", expected_sha256):
+        raise UserError("SUPERVISION_BUNDLE_INVALID", "需要已审核文件的 SHA-256。")
+    try:
+        candidate = Path(bundle_path)
+        if candidate.is_symlink() or not candidate.is_file() or candidate.stat().st_size > _BUNDLE_LIMIT:
+            raise OSError("bundle is not a bounded regular file")
+        with candidate.open("rb") as stream:
+            raw = stream.read(_BUNDLE_LIMIT + 1)
+        if len(raw) > _BUNDLE_LIMIT or hashlib.sha256(raw).hexdigest() != expected_sha256:
+            raise UserError("SUPERVISION_BUNDLE_CHANGED", "监督声明内容已变化；未导入。")
+        bundle = json.loads(raw, parse_constant=lambda value: (_ for _ in ()).throw(ValueError(value)))
+    except UserError:
+        raise
+    except (TypeError, ValueError, OSError, UnicodeError) as error:
+        raise UserError("SUPERVISION_BUNDLE_INVALID", f"无法读取监督声明：{error}") from error
+    if not isinstance(bundle, dict) or set(bundle) != {"format", "state"} or bundle["format"] != _BUNDLE_FORMAT:
+        raise UserError("SUPERVISION_BUNDLE_INVALID", "监督声明格式不受支持。")
+    incoming = _validate_state(bundle["state"])
+    if len(state["marks"]) + len(incoming["marks"]) > _MAX_MARKS:
+        raise UserError("SEMANTIC_MARK_LIMIT", "导入后标记总数超过上限。")
+    summary = [{"role": m["role"], "meaning": m["meaning"], "module_path": m["module_path"],
+                "port": m["port"], "rule_count": len(m.get("rules", [])),
+                "rules": m.get("rules", [])} for m in incoming["marks"]]
+    if not apply:
+        return {"committed": False, "state_revision": _state_revision(state), "bundle_sha256": expected_sha256,
+                "marks": summary, "note": "导入后所有标记必须重新观察并绑定。"}
+    used_marks = {m["id"] for m in state["marks"]}
+    used_rules = {r["id"] for m in state["marks"] for r in m.get("rules", [])}
+    def fresh(used):
+        for _ in range(10):
+            value = uuid.uuid4().hex[:16]
+            if value not in used:
+                used.add(value)
+                return value
+        raise UserError("SEMANTIC_ID_INVALID", "无法生成唯一标识；未导入。")
+    for original in incoming["marks"]:
+        mark = copy.deepcopy(original)
+        mark["id"] = fresh(used_marks)
+        mark["imported_unbound"] = True
+        mark.pop("variant_name_at_binding", None)
+        mark["binding_context"]["variant_sha256"] = None
+        for rule in mark.get("rules", []):
+            rule["id"] = fresh(used_rules)
+        state["marks"].append(mark)
+    _write_state(path, state)
+    return {"committed": True, "imported": len(summary), "state_revision": _state_revision(state),
+            "bundle_sha256": expected_sha256, "note": "所有导入标记均需重新绑定。"}
+
+
+@_serialized_mutation
+def copy_rule(project_root, rule_id, target_id, expected_state_revision):
+    root, path = _state_path(project_root)
+    state = _read_state(path)
+    if not isinstance(expected_state_revision, str) or not re.fullmatch(r"[0-9a-f]{64}", expected_state_revision):
+        raise UserError("SEMANTIC_STATE_REVISION_INVALID", "需要有效的语义状态修订。")
+    if not hmac.compare_digest(_state_revision(state), expected_state_revision):
+        raise UserError("SEMANTIC_STATE_CONFLICT", "语义状态已变化；未复制规则。")
+    matches = [(mark, rule) for mark in state["marks"] for rule in mark.get("rules", []) if rule.get("id") == rule_id]
+    if len(matches) != 1:
+        raise UserError("SUPERVISION_RULE_NOT_FOUND", "源规则不存在或不唯一；未复制。")
+    source_mark, source_rule = matches[0]
+    target = next((mark for mark in state["marks"] if mark.get("id") == target_id), None)
+    if target is None or source_mark["id"] == target_id:
+        raise UserError("SEMANTIC_MARK_NOT_FOUND", "请选择另一个已有语义标记。")
+    if any(mark["id"] == target_id and mark["binding_status"] == "stale" for mark in list_marks(root)["marks"]):
+        raise UserError("SEMANTIC_MARK_STALE", "目标标记已过期；请先重新绑定。")
+    if len(target.get("rules", [])) >= _MAX_RULES_PER_MARK:
+        raise UserError("SUPERVISION_RULE_LIMIT", "目标标记的规则已达上限。")
+    existing_ids = {rule["id"] for mark in state["marks"] for rule in mark.get("rules", [])}
+    new_id = uuid.uuid4().hex[:16]
+    if new_id in existing_ids:
+        raise UserError("SUPERVISION_RULE_ID_EXISTS", "生成的规则 ID 冲突，请重试。")
+    cloned = copy.deepcopy(source_rule)
+    cloned["id"] = new_id
+    cloned["created_at"] = datetime.now(timezone.utc).isoformat()
+    target.setdefault("rules", []).append(cloned)
+    _write_state(path, state)
+    return {"mark_id": target_id, "source_rule_id": rule_id, "rule": cloned, "path": path.relative_to(root).as_posix()}
 
 
 def list_rules(project_root):

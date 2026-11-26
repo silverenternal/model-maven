@@ -3,4 +3,5 @@
 mod application;
 
 pub(crate) use application::classification;
+pub(crate) use application::{scaffold_encoder_layer_catalog, normalize_training_command};
 pub use application::{Application, ExecutionContext};

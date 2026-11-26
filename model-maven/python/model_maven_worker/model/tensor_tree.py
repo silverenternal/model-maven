@@ -1,6 +1,7 @@
 """Convert nested Python and tensor values into bounded JSON metadata."""
 
 import math
+from itertools import islice
 
 
 def tree(torch_module, value, depth=0):
@@ -24,11 +25,16 @@ def tree(torch_module, value, depth=0):
             "memory_format": memory_format, "requires_grad": value.requires_grad,
         }
     if isinstance(value, dict):
-        items = list(value.items())
-        result = {str(key): tree(torch_module, item, depth + 1) for key, item in items[:32]}
-        if len(items) > 32:
-            result["<truncated>"] = len(items) - 32
-        return {"kind": "dict", "items": result}
+        count = len(value)
+        items = list(islice(value.items(), 32))
+        observed_keys_all_strings = all(type(key) is str for key, _ in items)
+        result = {str(key): tree(torch_module, item, depth + 1) for key, item in items}
+        if count > 32:
+            result["<truncated>"] = count - 32
+        return {"kind": "dict", "items": result,
+                "keys_all_strings": False if not observed_keys_all_strings else (True if count <= 32 else None),
+                "observed_keys_all_strings": observed_keys_all_strings,
+                "items_truncated": count > 32}
     if isinstance(value, (tuple, list)):
         return {
             "kind": type(value).__name__,

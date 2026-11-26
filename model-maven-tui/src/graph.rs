@@ -15,6 +15,7 @@ use std::{
 };
 
 mod evidence;
+pub(crate) mod preview;
 pub(crate) struct IdentityMatch {
     pub input: String,
     pub alias: String,

@@ -75,6 +75,11 @@ class TensorIdentityTrace:
             yield from visit(value, path, 0)
 
     def inputs(self, args, kwargs):
+        # Once the relation budget is exhausted and coverage is already
+        # marked partial, walking later nested inputs cannot add evidence or
+        # change the coverage report.
+        if self.truncated and self.relation_units >= MAX_RELATION_UNITS:
+            return []
         matches = []
         for path, value, version in self._walk(((args, "inputs.args"), (kwargs, "inputs.kwargs"))):
             if len(matches) >= MAX_TENSORS_PER_CALL:

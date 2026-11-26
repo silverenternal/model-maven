@@ -4,25 +4,23 @@ import hashlib
 import json
 import os
 import shutil
+import sys
 import tempfile
 from pathlib import Path
 
 from ..protocol import UserError
+from .file_digest import sha256_file
 
 
 _IGNORED_PARTS = {
     ".git",
-    ".venv",
-    "venv",
-    "env",
-    "target",
     "node_modules",
     "__pycache__",
     ".pytest_cache",
 }
 
 
-def snapshot_project_code(project_root, snapshot_dir, required_source_manifest=None):
+def snapshot_project_code(project_root, snapshot_dir, required_source_manifest=None, import_roots=None):
     """Copy project-local Python code and pinned component descriptors.
 
     Data files and installed Python distributions remain owned by the project and
@@ -52,17 +50,62 @@ def snapshot_project_code(project_root, snapshot_dir, required_source_manifest=N
     code.mkdir()
     manifest = {}
     try:
-        for current, directories, filenames in os.walk(root, followlinks=False):
+        selected_roots = []
+        if import_roots is not None and not isinstance(import_roots, list):
+            raise UserError("IMPORT_ROOTS_INVALID", "项目模块搜索目录必须是相对路径数组。")
+        if len(import_roots or []) > 32:
+            raise UserError("IMPORT_ROOTS_INVALID", "项目模块搜索目录最多 32 项。")
+        for value in import_roots or []:
+            if (not isinstance(value, str) or not value or len(value) > 1024
+                    or "\\" in value or "\x00" in value
+                    or any(part in ("", ".", "..") for part in value.split("/"))):
+                raise UserError("IMPORT_ROOTS_INVALID", "模块搜索目录必须是项目内的有效相对路径。")
+            relative = Path(value)
+            if (relative.is_absolute() or ".git" in relative.parts or "__pycache__" in relative.parts
+                    or relative.parts[:2] == (".model-maven", "runs")):
+                raise UserError("IMPORT_ROOTS_INVALID", "模块搜索目录不能包含版本控制、缓存或运行记录目录。")
+            current = root
+            for part in relative.parts:
+                current = current / part
+                if current.is_symlink():
+                    raise UserError("IMPORT_ROOTS_INVALID", f"模块搜索目录不能经过符号链接：{value}")
+            if not current.is_dir() or current.resolve() != current:
+                raise UserError("IMPORT_ROOT_UNAVAILABLE", f"模块搜索目录不可用：{value}")
+            selected_roots.append(relative)
+            # Preserve empty selected directories too; importing from one should
+            # fail normally rather than because the snapshot omitted the root.
+            (code / relative).mkdir(parents=True, exist_ok=True)
+
+        def selected_path(relative):
+            return any(relative == chosen or relative in chosen.parents or chosen in relative.parents
+                       for chosen in selected_roots)
+
+        interpreter_environment = Path(sys.prefix).resolve()
+        excluded_roots = ({interpreter_environment}
+                          if interpreter_environment != root and interpreter_environment.is_relative_to(root) else set())
+
+        def include_directory(relative):
+            candidate = root / relative
+            if relative.parts[:2] == (".model-maven", "runs") or candidate.is_symlink():
+                return False
+            if relative.name in {".git", "__pycache__"}:
+                return False
+            if (relative.name in _IGNORED_PARTS or (candidate / "pyvenv.cfg").is_file()
+                    or (relative.name == "target" and (candidate / ".rustc_info.json").is_file())):
+                excluded_roots.add(candidate)
+            if selected_path(relative):
+                return True
+            if candidate in excluded_roots or any(parent in excluded_roots for parent in candidate.parents):
+                return False
+            return True
+
+        def raise_walk_error(error):
+            raise error
+
+        for current, directories, filenames in os.walk(root, followlinks=False, onerror=raise_walk_error):
             current_path = Path(current)
             relative_directory = current_path.relative_to(root)
-            directories[:] = sorted(
-                name
-                for name in directories
-                if name not in _IGNORED_PARTS
-                and not (relative_directory / name).parts[-1].startswith(".tmp")
-                and not (current_path / name).is_symlink()
-                and not (relative_directory / name).parts[:2] == (".model-maven", "runs")
-            )
+            directories[:] = sorted(name for name in directories if include_directory(relative_directory / name))
             for filename in sorted(filenames):
                 if not filename.endswith(".py"):
                     continue
@@ -70,12 +113,16 @@ def snapshot_project_code(project_root, snapshot_dir, required_source_manifest=N
                 if source.is_symlink() or not source.is_file():
                     continue
                 relative = source.relative_to(root)
+                # Ancestors of a selected root must be traversed, but their
+                # sibling files are not part of the selected dependency tree.
+                if not selected_path(relative) and any(parent in excluded_roots for parent in source.parents):
+                    continue
                 destination_file = code / relative
                 destination_file.parent.mkdir(parents=True, exist_ok=True)
-                before = hashlib.sha256(source.read_bytes()).hexdigest()
+                before = sha256_file(source)
                 shutil.copyfile(source, destination_file, follow_symlinks=False)
-                copied = hashlib.sha256(destination_file.read_bytes()).hexdigest()
-                after = hashlib.sha256(source.read_bytes()).hexdigest()
+                copied = sha256_file(destination_file)
+                after = sha256_file(source)
                 if before != copied or before != after:
                     raise UserError(
                         "SOURCE_SNAPSHOT_RACED",
@@ -133,9 +180,9 @@ def snapshot_project_code(project_root, snapshot_dir, required_source_manifest=N
                 )
             destination_file = code / relative
             if destination_file.exists():
-                copied = hashlib.sha256(destination_file.read_bytes()).hexdigest()
+                copied = sha256_file(destination_file)
             else:
-                before = hashlib.sha256(source.read_bytes()).hexdigest()
+                before = sha256_file(source)
                 if before != expected:
                     raise UserError(
                         "SOURCE_CHANGED",
@@ -144,8 +191,8 @@ def snapshot_project_code(project_root, snapshot_dir, required_source_manifest=N
                     )
                 destination_file.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(source, destination_file, follow_symlinks=False)
-                copied = hashlib.sha256(destination_file.read_bytes()).hexdigest()
-                after = hashlib.sha256(source.read_bytes()).hexdigest()
+                copied = sha256_file(destination_file)
+                after = sha256_file(source)
                 if before != copied or before != after:
                     raise UserError(
                         "SOURCE_SNAPSHOT_RACED",
@@ -161,12 +208,6 @@ def snapshot_project_code(project_root, snapshot_dir, required_source_manifest=N
                 )
             manifest[relative.as_posix()] = copied
 
-        if not manifest:
-            raise UserError(
-                "SOURCE_SNAPSHOT_EMPTY",
-                "项目中没有可固定的 Python 源文件。",
-                "将模型、数据和训练入口放在项目源码目录内后重试。",
-            )
         encoded = json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode()
         digest = hashlib.sha256(encoded).hexdigest()
         os.replace(code, destination)
@@ -176,6 +217,8 @@ def snapshot_project_code(project_root, snapshot_dir, required_source_manifest=N
             "files": len(manifest),
             "manifest": manifest,
             "sha256": digest,
+            "scope": "project-python-and-pinned-component-descriptors",
+            "external_dependencies_included": False,
         }
     except UserError:
         raise

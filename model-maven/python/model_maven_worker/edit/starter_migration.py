@@ -16,6 +16,8 @@ import sys
 
 from ..protocol import UserError
 from ..model.structure import shared_state_groups
+from ..runtime.source_paths import is_project_python_source
+from ..runtime.entrypoints import configure_project_import_roots
 
 
 def _unsupported(reason):
@@ -199,10 +201,27 @@ def starter_migration_candidate(runtime, request, edit):
     root = Path(request["project_root"]).resolve()
     if request.get("code_snapshot_root") and Path(request["code_snapshot_root"]).resolve() != root:
         _unsupported("源码迁移不支持从独立代码快照读取模型。")
-    relative = Path(*module.split(".")).with_suffix(".py")
-    if any(part in {".venv", "venv", "site-packages", "target", ".git", "__pycache__", ".model-maven"} for part in relative.parts):
-        _unsupported("模型文件不属于可编辑的项目源码。")
-    lexical = root / relative
+    # Use the same declared import-root order as a regular model load. The
+    # later find_spec check remains authoritative about Python's actual choice.
+    if str(root) in sys.path:
+        sys.path.remove(str(root))
+    sys.path.insert(0, str(root))
+    bases = [Path(path) for path in configure_project_import_roots(request)] + [root]
+    module_path = Path(*module.split("."))
+    lexical = None
+    for base in bases:
+        for candidate_path in (base / module_path / "__init__.py", base / module_path.with_suffix(".py")):
+            if candidate_path.is_file():
+                lexical = candidate_path
+                break
+        if lexical is not None:
+            break
+    if lexical is None:
+        _unsupported("在项目及所选模块目录中找不到骨架源码。")
+    try:
+        relative = lexical.relative_to(root)
+    except ValueError:
+        _unsupported("骨架源码不在项目内。")
     cursor = root
     for part in relative.parts:
         cursor = cursor / part
@@ -211,6 +230,8 @@ def starter_migration_candidate(runtime, request, edit):
     try:
         resolved = lexical.resolve(strict=True)
         resolved.relative_to(root)
+        if not is_project_python_source(root, resolved, resolved=True):
+            _unsupported("模型文件不属于可编辑的项目源码。")
         source_bytes = resolved.read_bytes()
         if len(source_bytes) > 16 * 1024 * 1024:
             _unsupported("源码文件超过 16 MiB。")
@@ -231,9 +252,6 @@ def starter_migration_candidate(runtime, request, edit):
     seed = request.get("seed") if request.get("seed") is not None else 42
     random.seed(seed)
     runtime.torch.manual_seed(seed)
-    if str(root) in sys.path:
-        sys.path.remove(str(root))
-    sys.path.insert(0, str(root))
     if parent_name:
         try:
             parent = importlib.import_module(parent_name)

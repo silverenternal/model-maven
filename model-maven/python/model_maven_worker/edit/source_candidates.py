@@ -6,15 +6,21 @@ import hashlib
 import inspect
 import json
 import os
-import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
 from ..protocol import UserError
 from ..model.structure import shared_state_groups
-from .layers import _external_shared_state, old_state_names, unverified_state_storage
-from .source_ast import source_argument_insertions
+from .layers import (
+    _automatic_sequential_name,
+    _external_shared_state,
+    _validate_layer_name,
+    old_state_names,
+    unverified_state_storage,
+)
+from .source_ast import read_bounded_python_source, source_argument_insertions, static_keyword_nodes
+from ..runtime.source_paths import is_project_python_source
 
 
 @dataclass(frozen=True)
@@ -104,7 +110,7 @@ def source_sequential_candidate(runtime, request, edit):
     if len(same_site) > 1 or runtime.source_site_counts().get(site_key, 0) > 1:
         raise UserError(
             "SOURCE_CALLSITE_SHARED",
-            f"第 {site['line']} 行可能构造多个 Sequential 实例，无法唯一确定源码重建范围。",
+            f"第 {site['line']} 行可能构造多个 {container_type} 实例，无法唯一确定源码重建范围。",
             "将目标容器移到只执行一次的独立构造行，或使用 --target variant。",
         )
     source_path = Path(site.get("source_path", site.get("file", "")))
@@ -115,23 +121,20 @@ def source_sequential_candidate(runtime, request, edit):
         resolved = lexical_path.resolve(strict=True)
         resolved.relative_to(root)
     except (OSError, ValueError) as error:
-        raise UserError("SOURCE_PATH_UNSUPPORTED", "Sequential 构造文件不在当前项目目录内。", "只允许编辑项目内的 Python 源码。") from error
-    ignored = {".venv", "venv", "site-packages", "target", ".git", "__pycache__", ".model-maven"}
-    if resolved.suffix != ".py" or any(part in ignored for part in relative.parts):
-        raise UserError("SOURCE_PATH_UNSUPPORTED", "Sequential 构造文件不属于可编辑的项目 Python 源码。")
+        raise UserError("SOURCE_PATH_UNSUPPORTED", f"{container_type} 构造文件不在当前项目目录内。", "只允许编辑项目内的 Python 源码。") from error
+    if not is_project_python_source(root, resolved):
+        raise UserError("SOURCE_PATH_UNSUPPORTED", f"{container_type} 构造文件不属于可编辑的项目 Python 源码。")
     cursor = root
     for part in relative.parts:
         cursor = cursor / part
         if cursor.is_symlink():
             raise UserError("SOURCE_PATH_UNSUPPORTED", "源码编辑拒绝经过符号链接的路径。")
     try:
-        source_bytes = resolved.read_bytes()
+        source_bytes = read_bounded_python_source(resolved)
         source = source_bytes.decode("utf-8")
         tree = ast.parse(source, filename=str(relative))
     except (OSError, UnicodeDecodeError, SyntaxError) as error:
         raise UserError("SOURCE_PARSE_FAILED", f"无法安全解析构造文件：{error}", "源码保持不变；首批处理器要求 UTF-8 且当前文件语法有效。") from error
-    if len(source_bytes) > 16 * 1024 * 1024:
-        raise UserError("SOURCE_TOO_LARGE", "源码文件超过 16 MiB，暂不支持自动编辑。")
     calls = [
         node for node in ast.walk(tree)
         if isinstance(node, ast.Call) and node.lineno == site["line"] and runtime.call_name(node) == container_type
@@ -139,8 +142,8 @@ def source_sequential_candidate(runtime, request, edit):
     if len(calls) != 1:
         raise UserError(
             "SOURCE_CALLSITE_AMBIGUOUS",
-            f"第 {site['line']} 行找到 {len(calls)} 个 Sequential 构造调用。",
-            "将目标 Sequential 单独放在一个赋值语句中，再重试。",
+            f"第 {site['line']} 行找到 {len(calls)} 个 {container_type} 构造调用。",
+            f"将目标 {container_type} 单独放在一个赋值语句中，再重试。",
         )
     call = calls[0]
     assignments = [
@@ -150,13 +153,13 @@ def source_sequential_candidate(runtime, request, edit):
     if len(assignments) != 1:
         raise UserError(
             "SOURCE_CALLSITE_UNSUPPORTED",
-            "Sequential 必须直接出现在唯一赋值语句右侧。",
-            "将 Sequential 单独赋值给变量或对象属性，再执行源码 CRUD。",
+            f"{container_type} 必须直接出现在唯一赋值语句右侧。",
+            f"将 {container_type} 单独赋值给变量或对象属性，再执行源码 CRUD。",
         )
     statement = assignments[0]
     if isinstance(statement, ast.Assign):
         if len(statement.targets) != 1:
-            raise UserError("SOURCE_CALLSITE_UNSUPPORTED", "不支持多目标 Sequential 赋值。")
+            raise UserError("SOURCE_CALLSITE_UNSUPPORTED", f"不支持多目标 {container_type} 赋值。")
         assignment_target = statement.targets[0]
     else:
         assignment_target = statement.target
@@ -172,6 +175,36 @@ def source_sequential_candidate(runtime, request, edit):
             expression = f"{source_target}._modules[{key!r}]"
         source_items.append((key, expression))
     torch_alias = runtime.unique_source_alias(tree, "_m_model_torch")
+    add_name, add_anchor, add_after = None, None, False
+    if action == "add":
+        add_name = edit.get("name")
+        before, after = edit.get("before"), edit.get("after")
+        if before and after:
+            raise UserError("POSITION_INVALID", "before 与 after 不能同时使用。")
+        add_anchor, add_after = before or after, bool(after)
+        if container_type == "ModuleList":
+            if add_name not in (None, ""):
+                raise UserError(
+                    "LAYER_NAME_UNSUPPORTED",
+                    "ModuleList 使用数字索引命名；添加时省略 name。",
+                    "before/after 使用子层索引，例如 0 或 model.blocks.0。",
+                )
+            if add_anchor:
+                add_anchor = str(add_anchor).rsplit(".", 1)[-1]
+                if add_anchor not in container._modules:
+                    raise UserError("ANCHOR_NOT_FOUND", f"ModuleList 中找不到索引：{add_anchor}")
+        elif container_type == "ModuleDict":
+            _validate_layer_name(container, add_name)
+            if add_anchor:
+                add_anchor = str(add_anchor).rsplit(".", 1)[-1]
+                if add_anchor not in container._modules:
+                    raise UserError("ANCHOR_NOT_FOUND", f"ModuleDict 中找不到分支：{add_anchor}")
+        else:
+            if add_name in (None, ""):
+                add_name = _automatic_sequential_name(container)
+            _validate_layer_name(container, add_name)
+            if add_anchor and add_anchor not in container._modules:
+                raise UserError("ANCHOR_NOT_FOUND", f"容器中找不到位置：{add_anchor}")
     initialization = None
     if action in {"add", "replace"}:
         layer_type = edit.get("layer_type")
@@ -215,36 +248,9 @@ def source_sequential_candidate(runtime, request, edit):
             "component_note": component_note,
         }
         if action == "add":
-            name = edit.get("name")
-            before, after = edit.get("before"), edit.get("after")
-            anchor = before or after
-            if before and after:
-                raise UserError("POSITION_INVALID", "before 与 after 不能同时使用。")
-            if container_type == "ModuleList":
-                if name not in (None, ""):
-                    raise UserError(
-                        "LAYER_NAME_UNSUPPORTED",
-                        "ModuleList 使用数字索引命名；添加时省略 name。",
-                        "before/after 使用子层索引，例如 0 或 model.blocks.0。",
-                    )
-                if anchor:
-                    anchor = str(anchor).rsplit(".", 1)[-1]
-                    if anchor not in container._modules:
-                        raise UserError("ANCHOR_NOT_FOUND", f"ModuleList 中找不到索引：{anchor}")
-            elif container_type == "ModuleDict":
-                if not isinstance(name, str) or not name.isidentifier() or "." in name or name in container._modules:
-                    raise UserError("LAYER_NAME_INVALID", "ModuleDict 分支名必须是未使用的 Python 标识符，且不能包含点号。")
-                if anchor:
-                    anchor = str(anchor).rsplit(".", 1)[-1]
-                    if anchor not in container._modules:
-                        raise UserError("ANCHOR_NOT_FOUND", f"ModuleDict 中找不到分支：{anchor}")
-            else:
-                if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name) or hasattr(container, name):
-                    raise UserError("LAYER_NAME_INVALID", "新层名称必须是唯一标识符，不能与容器属性冲突。")
-                if anchor and anchor not in container._modules:
-                    raise UserError("ANCHOR_NOT_FOUND", f"容器中找不到位置：{anchor}")
-            index = next((i for i, (key, _) in enumerate(original_items) if key == anchor), len(original_items))
-            if after and anchor:
+            name = add_name
+            index = next((i for i, (key, _) in enumerate(original_items) if key == add_anchor), len(original_items))
+            if add_after and add_anchor:
                 index += 1
             source_items.insert(index, (name or "", expression))
             original_items.insert(index, (name or "", candidate_module))
@@ -258,10 +264,10 @@ def source_sequential_candidate(runtime, request, edit):
             if old is None:
                 raise UserError("LAYER_NOT_FOUND", f"找不到 Layer：{target_path}")
             _, name = target_path.rsplit(".", 1)
-            previous_parameter = next(old.parameters(), None)
-            if previous_parameter is not None and previous_parameter.is_floating_point():
-                candidate_module.to(dtype=previous_parameter.dtype)
+            # The generated source does not contain a placement conversion.
+            # Do not validate a converted candidate that it cannot reproduce.
             candidate_module.train(old.training)
+            initialization["training_from"] = next(value for key, value in source_items if key == name)
             source_items = [
                 (key, expression if key == name else value)
                 for key, value in source_items
@@ -288,7 +294,7 @@ def source_sequential_candidate(runtime, request, edit):
             identity = runtime.torch.nn.Identity()
             identity.train(old.training)
             source_items = [
-                (key, f"{torch_alias}.nn.Identity()" if key == name else value)
+                (key, f"{torch_alias}.nn.Identity().train(({value}).training)" if key == name else value)
                 for key, value in source_items
             ]
             original_items = [
@@ -301,6 +307,7 @@ def source_sequential_candidate(runtime, request, edit):
         layer_label = target_path
     if old is not None:
         effects["old_state_not_copied"] = old_state_names(old)
+    effects["source_rebind_preserves_original_construction"] = True
     if old is not None and (unknown := unverified_state_storage(old)):
         effects["unverified_old_state_storage"] = unknown
     if impacted_shared_state:
@@ -344,8 +351,8 @@ def source_sequential_candidate(runtime, request, edit):
         "validation": validation,
         "shared_state_evidence": {"scope": "in_memory_candidate_object_storage_v2", "groups": shared_state_groups(model)},
         "edit_effects": [effects],
-        "modules": runtime.inspect_model(model)["modules"],
-        "note": f"{container_type} CRUD 重建直接赋值的原生容器，保留未修改子层对象与参数状态；ModuleList 按顺序重编号，ModuleDict 保留分支名与顺序，新增/替换层使用确定性隔离随机种子。提交后以新 worker 重建并按需前向，失败自动回滚。",
+        **{key: value for key, value in runtime.inspect_model(model).items() if key in {"modules", "model_state_placement"}},
+        "note": f"{container_type} CRUD 重建直接赋值的原生容器，保留未修改子层对象与参数状态；ModuleList 按顺序重编号，ModuleDict 保留分支名与顺序，新增/替换层使用确定性隔离随机种子。原容器构造代码仍会执行，被替换或删除的层仍可能先被构造；多次编辑会追加重建代码。提交后以新 worker 重建并按需前向，失败自动回滚。",
     }
 
 
@@ -385,7 +392,7 @@ def source_sequential_transaction_state(runtime, model, root, container_path, co
     if len(same_site) > 1 or runtime.source_site_counts().get(site_key, 0) > 1:
         raise UserError(
             "SOURCE_CALLSITE_SHARED",
-            f"第 {site['line']} 行可能构造多个 Sequential 实例，无法唯一确定源码重建范围。",
+            f"第 {site['line']} 行可能构造多个 {container_type} 实例，无法唯一确定源码重建范围。",
             "将目标容器移到只执行一次的独立构造行，或使用 --target variant。",
         )
     source_path = Path(site.get("source_path", site.get("file", "")))
@@ -400,9 +407,8 @@ def source_sequential_transaction_state(runtime, model, root, container_path, co
             f"{container_path} 的构造文件不在当前项目目录内。",
             "只允许编辑项目内的 Python 源码。",
         ) from error
-    ignored = {".venv", "venv", "site-packages", "target", ".git", "__pycache__", ".model-maven"}
-    if resolved.suffix != ".py" or any(part in ignored for part in relative.parts):
-        raise UserError("SOURCE_PATH_UNSUPPORTED", "Sequential 构造文件不属于可编辑的项目 Python 源码。")
+    if not is_project_python_source(root, resolved):
+        raise UserError("SOURCE_PATH_UNSUPPORTED", f"{container_type} 构造文件不属于可编辑的项目 Python 源码。")
     cursor = root
     for part in relative.parts:
         cursor = cursor / part
@@ -412,7 +418,7 @@ def source_sequential_transaction_state(runtime, model, root, container_path, co
         file_size = resolved.stat().st_size
         if file_size > 16 * 1024 * 1024:
             raise UserError("SOURCE_TOO_LARGE", "源码文件超过 16 MiB，暂不支持自动编辑。")
-        source_bytes = resolved.read_bytes()
+        source_bytes = read_bounded_python_source(resolved)
         source = source_bytes.decode("utf-8")
         tree = ast.parse(source, filename=relative.as_posix())
     except UserError:
@@ -420,7 +426,7 @@ def source_sequential_transaction_state(runtime, model, root, container_path, co
     except (OSError, UnicodeDecodeError, SyntaxError) as error:
         raise UserError(
             "SOURCE_PARSE_FAILED",
-            f"无法解析 {container_path} 的 Sequential 构造文件：{error}",
+            f"无法解析 {container_path} 的 {container_type} 构造文件：{error}",
             "源码保持不变；处理器要求 UTF-8 且当前文件语法有效。",
         ) from error
     calls = [
@@ -432,8 +438,8 @@ def source_sequential_transaction_state(runtime, model, root, container_path, co
     if len(calls) != 1:
         raise UserError(
             "SOURCE_CALLSITE_AMBIGUOUS",
-            f"第 {site['line']} 行找到 {len(calls)} 个 Sequential 构造调用。",
-            "将 Sequential 单独放在一个赋值语句中，再重试。",
+            f"第 {site['line']} 行找到 {len(calls)} 个 {container_type} 构造调用。",
+            f"将 {container_type} 单独放在一个赋值语句中，再重试。",
         )
     call = calls[0]
     assignments = [
@@ -443,33 +449,28 @@ def source_sequential_transaction_state(runtime, model, root, container_path, co
     if len(assignments) != 1:
         raise UserError(
             "SOURCE_CALLSITE_UNSUPPORTED",
-            "Sequential 必须直接出现在唯一赋值语句右侧。",
-            "将 Sequential 单独赋值给变量或对象属性，再执行源码 CRUD。",
+            f"{container_type} 必须直接出现在唯一赋值语句右侧。",
+            f"将 {container_type} 单独赋值给变量或对象属性，再执行源码 CRUD。",
         )
     statement = assignments[0]
     if isinstance(statement, ast.Assign):
         if len(statement.targets) != 1:
-            raise UserError("SOURCE_CALLSITE_UNSUPPORTED", "不支持多目标 Sequential 赋值。")
+            raise UserError("SOURCE_CALLSITE_UNSUPPORTED", f"不支持多目标 {container_type} 赋值。")
         assignment_target = statement.targets[0]
     else:
         assignment_target = statement.target
     if not isinstance(assignment_target, (ast.Name, ast.Attribute)):
         raise UserError(
             "SOURCE_CALLSITE_UNSUPPORTED",
-            "Sequential 需要赋给局部变量或对象属性。",
+            f"{container_type} 需要赋给局部变量或对象属性。",
             "先将容器单独赋值给变量或对象属性，再执行源码 CRUD。",
         )
-    source_target = ast.unparse(assignment_target)
+    namespace_suffix = f"_{namespace}" if namespace else ""
+    original_alias = runtime.unique_source_alias(tree, f"_m_model_original_modules{namespace_suffix}")
     source_items = []
     for name, _ in container._modules.items():
-        if container_type == "ModuleList":
-            expression = f"{source_target}[{int(name)}]"
-        elif container_type == "ModuleDict":
-            expression = f"{source_target}[{name!r}]"
-        else:
-            expression = f"{source_target}._modules[{name!r}]"
+        expression = f"{original_alias}[{name!r}]"
         source_items.append((name, expression))
-    namespace_suffix = f"_{namespace}" if namespace else ""
     return {
         "container": container,
         "container_type": container_type,
@@ -483,15 +484,17 @@ def source_sequential_transaction_state(runtime, model, root, container_path, co
         "assignment_target": assignment_target,
         "source_items": source_items,
         "original_source_items": list(source_items),
+        "original_alias": original_alias,
         "torch_alias": runtime.unique_source_alias(tree, f"_m_model_torch{namespace_suffix}"),
         "namespace": namespace,
         "initializations": [],
+        "stages": [],
         "operations": [],
         "line": site["line"],
     }
 
 
-def source_sequential_transaction_candidate(runtime, request, edit):
+def source_sequential_transaction_candidate(runtime, request, edit, *, shared_model=None):
     operations = edit.get("operations")
     structural_actions = {"add", "replace", "remove"}
     if (
@@ -519,6 +522,20 @@ def source_sequential_transaction_candidate(runtime, request, edit):
                 raise UserError("ROOT_EDIT_UNSUPPORTED", "不能通过源码 Layer 操作修改根模型。")
             container_path = affected_path.rsplit(".", 1)[0]
         operation_paths.append((action, container_path, affected_path))
+    # Source patches are emitted once per container. An interleaved sequence
+    # such as A, B, A would necessarily reorder factory calls when grouped,
+    # regardless of the order in which the model constructs those containers.
+    factory_groups = []
+    for operation, (action, container_path, _) in zip(operations, operation_paths):
+        creates_layer = action in {"add", "replace"} or (action == "remove" and operation.get("strategy") == "bypass")
+        if creates_layer and (not factory_groups or factory_groups[-1] != container_path):
+            factory_groups.append(container_path)
+    if len(set(factory_groups)) != len(factory_groups):
+        raise UserError(
+            "SOURCE_PLAN_FACTORY_ORDER_UNSUPPORTED",
+            "源码计划交错构造多个容器的 Layer，无法保持工厂调用顺序。",
+            "将每个容器的构造操作集中排列后重新预览，或在源码中手动实现并重验。",
+        )
     for index, (action, _, affected_path) in enumerate(operation_paths):
         if action not in {"replace", "remove"}:
             continue
@@ -532,7 +549,7 @@ def source_sequential_transaction_candidate(runtime, request, edit):
                     "同一計劃不能替換/刪除一個容器，同時編輯該容器或其子容器。",
                 )
 
-    model, origin, _, _ = runtime.load_model({**request, "variant": None})
+    model, origin, _, _ = shared_model or runtime.load_model({**request, "variant": None})
     root = Path(origin["project_root"]).resolve()
     states = {}
     ordered_states = []
@@ -540,8 +557,65 @@ def source_sequential_transaction_candidate(runtime, request, edit):
     source_files_seen = set()
     effects = []
 
+    # Resolve the original container sites before running any candidate Layer
+    # factories. This permits definite source-order conflicts to fail early.
+    path_states = {}
+    for _, container_path, _ in operation_paths:
+        if container_path in path_states:
+            continue
+        container = runtime.resolve_module(model, container_path)
+        state = states.get(id(container))
+        if state is None:
+            state = source_sequential_transaction_state(runtime,
+                model, root, container_path, container, len(ordered_states))
+            source_name = state["relative"].as_posix()
+            if source_name not in source_files_seen:
+                source_bytes_total += len(state["source_bytes"])
+                source_files_seen.add(source_name)
+                if source_bytes_total > 64 * 1024 * 1024:
+                    raise UserError("SOURCE_PLAN_TOO_LARGE", "源码原子计划涉及的原文件总量超过 64 MiB。", "减少计划涉及的文件数。")
+            states[id(container)] = state
+            ordered_states.append(state)
+        path_states[container_path] = state
+
+    def direct_statement_position(state):
+        # Only sibling statements in one AST list have a comparable order.
+        for parent in ast.walk(state["tree"]):
+            for field, children in ast.iter_fields(parent):
+                if isinstance(children, list):
+                    for index, child in enumerate(children):
+                        if child is state["statement"]:
+                            return (type(parent).__name__, getattr(parent, "lineno", 0),
+                                    getattr(parent, "col_offset", 0), field), index
+        return None
+
+    for index, first_path in enumerate(factory_groups):
+        first = path_states[first_path]
+        for second_path in factory_groups[index + 1:]:
+            second = path_states[second_path]
+            if first["relative"] != second["relative"]:
+                raise UserError(
+                    "SOURCE_PLAN_FACTORY_ORDER_UNVERIFIABLE",
+                    "跨源码文件的容器构造顺序无法静态核对。",
+                    "本结构计划的新增或替换工厂尚未执行；模型构造及先前参数修改可能已有副作用。分步编辑，或手动编辑源码并重验。",
+                )
+            first_pos, second_pos = direct_statement_position(first), direct_statement_position(second)
+            if not first_pos or not second_pos or first_pos[0] != second_pos[0]:
+                raise UserError(
+                    "SOURCE_PLAN_FACTORY_ORDER_UNVERIFIABLE",
+                    "不同代码块中的容器构造顺序无法静态核对。",
+                    "本结构计划的新增或替换工厂尚未执行；模型构造及先前参数修改可能已有副作用。分步编辑，或手动编辑源码并重验。",
+                )
+            if first_pos[1] > second_pos[1]:
+                raise UserError(
+                    "SOURCE_PLAN_FACTORY_ORDER_UNSUPPORTED",
+                    "计划中的工厂顺序与同一代码块内的容器构造顺序相反。",
+                    "本结构计划的新增或替换工厂尚未执行；模型构造及先前参数修改可能已有副作用。按源码顺序重新规划，或手动编辑并重验。",
+                )
+
     for operation_index, operation in enumerate(operations):
         action = operation["action"]
+        initialization = None
         if action == "add":
             container_path = runtime.normalize_path(operation.get("parent"))
             container = runtime.resolve_module(model, container_path)
@@ -562,17 +636,7 @@ def source_sequential_transaction_candidate(runtime, request, edit):
 
         state = states.get(id(container))
         if state is None:
-            state = source_sequential_transaction_state(runtime,
-                model, root, container_path, container, len(ordered_states)
-            )
-            source_name = state["relative"].as_posix()
-            if source_name not in source_files_seen:
-                source_bytes_total += len(state["source_bytes"])
-                source_files_seen.add(source_name)
-                if source_bytes_total > 64 * 1024 * 1024:
-                    raise UserError("SOURCE_PLAN_TOO_LARGE", "源码原子计划涉及的原文件总量超过 64 MiB。", "减少计划涉及的文件数。")
-            states[id(container)] = state
-            ordered_states.append(state)
+            raise UserError("SOURCE_PLAN_STATE_INVALID", "计划中的容器身份在候选操作期间发生变化。", "拆分计划或手工编辑后重验。")
 
         modules, aliases = runtime.module_entries(model)
         if len(aliases.get(id(container), [])) > 1:
@@ -596,6 +660,37 @@ def source_sequential_transaction_candidate(runtime, request, edit):
                 f"容器 {container_path} 的计划状态与运行时 Layer 顺序不一致。",
                 "拆分计划后重试；源码保持不变。",
             )
+
+        add_name, add_anchor, add_after = None, None, False
+        if action == "add":
+            add_name = operation.get("name")
+            before, after = operation.get("before"), operation.get("after")
+            if before and after:
+                raise UserError("POSITION_INVALID", "before 与 after 不能同时使用。")
+            add_anchor, add_after = before or after, bool(after)
+            if state["container_type"] == "ModuleList":
+                if add_name not in (None, ""):
+                    raise UserError(
+                        "LAYER_NAME_UNSUPPORTED",
+                        "ModuleList 使用数字索引命名；添加时省略 name。",
+                        "before/after 使用子层索引，例如 0 或 model.blocks.0。",
+                    )
+                if add_anchor:
+                    add_anchor = str(add_anchor).rsplit(".", 1)[-1]
+                    if add_anchor not in container._modules:
+                        raise UserError("ANCHOR_NOT_FOUND", f"ModuleList 中找不到索引：{add_anchor}")
+            elif state["container_type"] == "ModuleDict":
+                _validate_layer_name(container, add_name)
+                if add_anchor:
+                    add_anchor = str(add_anchor).rsplit(".", 1)[-1]
+                    if add_anchor not in container._modules:
+                        raise UserError("ANCHOR_NOT_FOUND", f"ModuleDict 中找不到分支：{add_anchor}")
+            else:
+                if add_name in (None, ""):
+                    add_name = _automatic_sequential_name(container)
+                _validate_layer_name(container, add_name)
+                if add_anchor and add_anchor not in container._modules:
+                    raise UserError("ANCHOR_NOT_FOUND", f"容器中找不到位置：{add_anchor}")
 
         if action in {"add", "replace"}:
             layer_type = operation.get("layer_type")
@@ -652,62 +747,34 @@ def source_sequential_transaction_candidate(runtime, request, edit):
             }
             state["initializations"].append(initialization)
             if action == "add":
-                name = operation.get("name")
-                before, after = operation.get("before"), operation.get("after")
-                anchor = before or after
-                if before and after:
-                    raise UserError("POSITION_INVALID", "before 与 after 不能同时使用。")
-                if state["container_type"] == "ModuleList":
-                    if name not in (None, ""):
-                        raise UserError(
-                            "LAYER_NAME_UNSUPPORTED",
-                            "ModuleList 使用数字索引命名；添加时省略 name。",
-                            "before/after 使用子层索引，例如 0 或 model.blocks.0。",
-                        )
-                    if anchor:
-                        anchor = str(anchor).rsplit(".", 1)[-1]
-                        if anchor not in container._modules:
-                            raise UserError("ANCHOR_NOT_FOUND", f"ModuleList 中找不到索引：{anchor}")
-                elif state["container_type"] == "ModuleDict":
-                    if not isinstance(name, str) or not name.isidentifier() or "." in name or name in container._modules:
-                        raise UserError("LAYER_NAME_INVALID", "ModuleDict 分支名必须是未使用的 Python 标识符，且不能包含点号。")
-                    if anchor:
-                        anchor = str(anchor).rsplit(".", 1)[-1]
-                        if anchor not in container._modules:
-                            raise UserError("ANCHOR_NOT_FOUND", f"ModuleDict 中找不到分支：{anchor}")
-                else:
-                    if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name) or hasattr(container, name):
-                        raise UserError("LAYER_NAME_INVALID", "新层名称必须是唯一标识符，不能与容器属性冲突。")
-                    if anchor and anchor not in container._modules:
-                        raise UserError("ANCHOR_NOT_FOUND", f"容器中找不到位置：{anchor}")
                 insertion_index = next(
-                    (index for index, (key, _) in enumerate(runtime_items) if key == anchor),
+                    (index for index, (key, _) in enumerate(runtime_items) if key == add_anchor),
                     len(runtime_items),
                 )
-                if after and anchor:
+                if add_after and add_anchor:
                     insertion_index += 1
-                runtime_items.insert(insertion_index, (name or "", candidate_module))
-                source_items.insert(insertion_index, (name or "", alias))
+                runtime_items.insert(insertion_index, (add_name or "", candidate_module))
+                source_items.insert(insertion_index, (add_name or "", alias))
                 if state["container_type"] == "ModuleList":
                     runtime_items = [(str(index), child) for index, (_, child) in enumerate(runtime_items)]
                     source_items = [(str(index), expression) for index, (_, expression) in enumerate(source_items)]
-                    name = str(insertion_index)
+                    add_name = str(insertion_index)
                 effect = {
-                    "action": "add", "path": container_path, "name": name,
+                    "action": "add", "path": container_path, "name": add_name,
                     "initialized": list(candidate_module.state_dict()),
                 }
-                operation_target = f"{container_path}.{name}"
+                operation_target = f"{container_path}.{add_name}"
             else:
                 if old is None:
                     raise UserError("LAYER_NOT_FOUND", f"找不到 Layer：{target_path}")
                 _, name = target_path.rsplit(".", 1)
-                previous_parameter = next(old.parameters(), None)
-                if previous_parameter is not None and previous_parameter.is_floating_point():
-                    candidate_module.to(dtype=previous_parameter.dtype)
+                # Keep candidate placement aligned with the generated source;
+                # it has no implicit conversion to the old layer's state.
                 candidate_module.train(old.training)
                 item_index = next((index for index, (key, _) in enumerate(runtime_items) if key == name), None)
                 if item_index is None:
                     raise UserError("LAYER_NOT_FOUND", f"容器 {container_path} 中找不到 Layer：{name}")
+                initialization["training_from"] = source_items[item_index][1]
                 runtime_items[item_index] = (name, candidate_module)
                 source_items[item_index] = (name, alias)
                 effect = {
@@ -733,7 +800,15 @@ def source_sequential_transaction_candidate(runtime, request, edit):
                 identity = runtime.torch.nn.Identity()
                 identity.train(old.training)
                 runtime_items[item_index] = (name, identity)
-                source_items[item_index] = (name, f"{state['torch_alias']}.nn.Identity()")
+                previous = source_items[item_index][1]
+                alias = runtime.unique_source_alias(state["tree"], f"_m_model_bypass_{operation_index}")
+                initialization = {
+                    "seed": None, "name": alias,
+                    "expression": f"{state['torch_alias']}.nn.Identity()",
+                    "training_from": previous,
+                }
+                state["initializations"].append(initialization)
+                source_items[item_index] = (name, alias)
             else:
                 raise UserError("STRATEGY_INVALID", "策略应为 remove 或 bypass。")
             effect = {
@@ -744,6 +819,7 @@ def source_sequential_transaction_candidate(runtime, request, edit):
 
         if old is not None:
             effect["old_state_not_copied"] = old_state_names(old)
+        effect["source_rebind_preserves_original_construction"] = True
         if old is not None and (unknown := unverified_state_storage(old)):
             effect["unverified_old_state_storage"] = unknown
         if impacted_shared_state:
@@ -754,33 +830,43 @@ def source_sequential_transaction_candidate(runtime, request, edit):
         state["source_items"] = source_items
         container._modules.clear()
         container._modules.update(runtime_items)
+        state["stages"].append({"initialization": initialization, "items": list(source_items)})
         state["operations"].append({"action": action, "target": operation_target})
         effects.append(effect)
 
     patches_by_file = {}
+    has_changed_container = any(
+        state["source_items"] != state["original_source_items"] for state in ordered_states
+    )
     for state in ordered_states:
-        referenced_initializers = {
-            expression for _, expression in state["source_items"]
-        }
-        initializations = [
-            item for item in state["initializations"]
-            if item["name"] in referenced_initializers
-        ]
-        if (
-            state["source_items"] == state["original_source_items"]
-            and not initializations
-        ):
+        if state["source_items"] == state["original_source_items"]:
+            if has_changed_container and state["initializations"]:
+                raise UserError(
+                    "SOURCE_PLAN_TRANSIENT_FACTORY_UNSUPPORTED",
+                    "计划包含最终未改变的容器，但其临时 Layer 工厂可能影响其他修改。",
+                    "源码没有写入；候选工厂可能已经执行且副作用不会回滚。拆分计划或直接编辑源码后重验。",
+                )
             continue
+        # Every factory ran during preview. Even an intermediate layer that
+        # is later removed can affect later construction through user code or
+        # mutable external state; omitting it would change saved behavior.
+        initializations = state["initializations"]
         _, offset, snippet = runtime.source_sequential_rebind(
             state["source_bytes"], state["tree"], state["statement"],
             state["assignment_target"], state["source_items"],
             initializations, namespace=state["namespace"], return_patch=True,
             container_type=state["container_type"],
+            stages=state["stages"], original_alias=state["original_alias"],
+            original_items=state["original_source_items"],
         )
         patches_by_file.setdefault(state["relative"].as_posix(), []).append((state, offset, snippet))
 
     if not patches_by_file:
-        raise UserError("SOURCE_NO_CHANGE", "结构计划最终没有改变任何容器。", "调整操作顺序或 Layer 参数后重试。")
+        raise UserError(
+            "SOURCE_NO_CHANGE",
+            "结构计划最终没有改变任何容器。",
+            "源码没有写入；候选模型和 Layer 工厂可能已经执行，其外部副作用不会回滚。",
+        )
 
     source_patches = []
     snapshot_bytes_total = 0
@@ -854,8 +940,8 @@ def source_sequential_transaction_candidate(runtime, request, edit):
         "validation": validation,
         "shared_state_evidence": {"scope": "in_memory_candidate_object_storage_v2", "groups": shared_state_groups(model)},
         "edit_effects": effects,
-        "modules": runtime.inspect_model(model)["modules"],
-        "note": "成组 Sequential/ModuleList/ModuleDict CRUD 已统一构造、编译并按需前向检查；ModuleList 按索引重编号，ModuleDict 保留分支名与顺序。提交使用可恢复事务日志与逐文件原子替换，重载/前向失败将整体回滚。文件系统不提供跨文件瞬时原子可见性。",
+        **{key: value for key, value in runtime.inspect_model(model).items() if key in {"modules", "model_state_placement"}},
+        "note": "成组 Sequential/ModuleList/ModuleDict CRUD 已统一构造、编译并按需前向检查；ModuleList 按索引重编号，ModuleDict 保留分支名与顺序。原容器构造代码仍会执行，被替换或删除的层仍可能先被构造；计划中随后移除的临时层工厂也会构造，可能产生副作用。预览在模型构造后应用计划，生成代码在各容器构造位置执行；跨容器或依赖中间状态的工厂执行顺序和可见状态不能保证一致，请检查差异并按需手工编辑。多次编辑会追加重建代码。提交使用可恢复事务日志与逐文件原子替换，重载/前向失败将整体回滚。文件系统不提供跨文件瞬时原子可见性。",
     }
 
 
@@ -903,10 +989,8 @@ def apply_source_set_candidate(runtime, model, operation, call):
         raise UserError("SOURCE_CONSTRUCTOR_UNSUPPORTED", "自定义 Layer 使用了无法映射的可变位置参数。")
     for name, node in zip(fixed_positional, call.args):
         values[name] = expression_value(node, name)
-    for keyword in call.keywords:
-        if keyword.arg is None:
-            raise UserError("SOURCE_CONSTRUCTOR_UNSUPPORTED", "无法重建 **kwargs 构造表达式。")
-        values[keyword.arg] = expression_value(keyword.value, keyword.arg)
+    for name, node in static_keyword_nodes(call).items():
+        values[name] = expression_value(node, name)
 
     values.update(changed)
     extra_positional = []
@@ -978,7 +1062,7 @@ def apply_source_set_candidate(runtime, model, operation, call):
     }
 
 
-def source_set_transaction_candidate(runtime, request, edit):
+def source_set_transaction_candidate(runtime, request, edit, *, shared_model=None):
     operations = edit.get("operations")
     if (
         not isinstance(operations, list)
@@ -992,7 +1076,7 @@ def source_set_transaction_candidate(runtime, request, edit):
         )
     if request.get("variant") is not None:
         raise UserError("SOURCE_VARIANT_CONFLICT", "源码编辑不能应用在已有结构变体上。")
-    model, origin, _, _ = runtime.load_model({**request, "variant": None})
+    model, origin, _, _ = shared_model or runtime.load_model({**request, "variant": None})
     root = Path(origin["project_root"]).resolve()
     modules = runtime.module_entries(model)[0]
     target_ids = set()
@@ -1043,8 +1127,7 @@ def source_set_transaction_candidate(runtime, request, edit):
             resolved.relative_to(root)
         except (OSError, ValueError) as error:
             raise UserError("SOURCE_PATH_UNSUPPORTED", f"{target_path} 的构造文件不在当前项目内。") from error
-        ignored = {".venv", "venv", "site-packages", "target", ".git", "__pycache__", ".model-maven"}
-        if resolved.suffix != ".py" or any(part in ignored for part in relative.parts):
+        if not is_project_python_source(root, resolved):
             raise UserError("SOURCE_PATH_UNSUPPORTED", f"{target_path} 的构造文件不是可编辑的项目 Python 源码。")
         cursor = root
         for part in relative.parts:
@@ -1060,8 +1143,10 @@ def source_set_transaction_candidate(runtime, request, edit):
                     raise UserError("SOURCE_TOO_LARGE", "源码文件超过 16 MiB，暂不支持自动编辑。")
                 if source_bytes_total + file_size > 64 * 1024 * 1024:
                     raise UserError("SOURCE_PLAN_TOO_LARGE", "源码原子计划的原文件总量超过 64 MiB。", "减少计划涉及的文件数。")
-                source_bytes = resolved.read_bytes()
+                source_bytes = read_bounded_python_source(resolved)
                 source_bytes_total += len(source_bytes)
+                if source_bytes_total > 64 * 1024 * 1024:
+                    raise UserError("SOURCE_PLAN_TOO_LARGE", "源码原子计划的原文件总量超过 64 MiB。", "减少计划涉及的文件数。")
                 source = source_bytes.decode("utf-8")
                 tree = ast.parse(source, filename=source_name)
             except UserError:
@@ -1099,17 +1184,19 @@ def source_set_transaction_candidate(runtime, request, edit):
         if len(calls) != 1:
             raise UserError(
                 "SOURCE_CALLSITE_AMBIGUOUS",
-                f"第 {site['line']} 行找到 {len(calls)} 个 {type(old).__name__} 构造调用。",
-                "将 Layer 构造移到独立代码行后重试。",
+                f"{source_name}:{site['line']} 找到 {len(calls)} 个 {type(old).__name__} 构造调用，无法可靠绑定 {target_path}。",
+                ("该层可能由别名或工厂间接构造；请检查调用方并手动编辑源码，或使用变体。"
+                 if not calls else "将目标 Layer 构造移到独立代码行后重试，或使用变体。"),
+                {"source_edit_location": {"source": source_name, "line": site["line"],
+                 "digest": hashlib.sha256(source_info["bytes"]).hexdigest(), "path": target_path,
+                 "identity_scope": "source-read-during-preview"}},
             )
         call = calls[0]
-        if any(isinstance(argument, ast.Starred) for argument in call.args) or any(keyword.arg is None for keyword in call.keywords):
-            raise UserError("SOURCE_CALLSITE_UNSUPPORTED", "暂不改写 *args 或 **kwargs 构造表达式。")
+        keyword_nodes = static_keyword_nodes(call)
         insertion_values = []
         for name, value in parameters.items():
-            keyword = next((item for item in call.keywords if item.arg == name), None)
-            if keyword is not None:
-                node = keyword.value
+            if name in keyword_nodes:
+                node = keyword_nodes[name]
             elif name in parameter_names and parameter_names.index(name) < len(call.args):
                 node = call.args[parameter_names.index(name)]
             else:
@@ -1207,6 +1294,115 @@ def source_set_transaction_candidate(runtime, request, edit):
         "validation": validation,
         "shared_state_evidence": {"scope": "in_memory_candidate_object_storage_v2", "groups": shared_state_groups(model)},
         "edit_effects": effects,
-        "modules": runtime.inspect_model(model)["modules"],
+        **{key: value for key, value in runtime.inspect_model(model).items() if key in {"modules", "model_state_placement"}},
         "note": "多文件 set 计划已统一构造和检查；提交使用可恢复事务日志与逐文件原子替换，任一重载/前向失败将整体回滚。文件系统不提供跨文件瞬时原子可见性。",
     }
+
+
+def source_mixed_transaction_candidate(runtime, request, edit):
+    """Combine constructor edits and container edits before the one forward.
+
+    Paths are interpreted against the original model: set operations must
+    precede structural operations. Overlapping source hunks and ancestor edits
+    fail closed rather than guessing the user's intended operation order.
+    """
+    operations = edit.get("operations")
+    if not isinstance(operations, list) or not 2 <= len(operations) <= 64:
+        raise UserError("SOURCE_EDIT_UNSUPPORTED", "混合计划需要 2..64 项源码操作。")
+    sets, structures, structural_started = [], [], False
+    for operation in operations:
+        if not isinstance(operation, dict):
+            raise UserError("SOURCE_EDIT_UNSUPPORTED", "混合计划中的每项操作必须是对象。")
+        action = operation.get("action")
+        if action == "set" and not structural_started:
+            sets.append(operation)
+        elif action in {"add", "replace", "remove"}:
+            structural_started = True
+            structures.append(operation)
+        else:
+            raise UserError("SOURCE_PLAN_ORDER_UNSUPPORTED", "混合源码计划要求先列出所有 set，再列出结构操作。",
+                            "调整操作顺序；不会修改源码。")
+    if not sets or not structures:
+        raise UserError("SOURCE_EDIT_UNSUPPORTED", "混合计划需要参数修改和结构操作。")
+    set_paths = [runtime.normalize_path(item.get("path")) for item in sets]
+    for item in structures:
+        path = runtime.normalize_path(item.get("parent") if item["action"] == "add" else item.get("path"))
+        for target in set_paths:
+            if path == target or path.startswith(target + ".") or (item["action"] != "add" and target.startswith(path + ".")):
+                raise UserError("SOURCE_PLAN_OVERLAPPING_TARGETS", f"参数目标 {target} 与结构目标 {path} 重叠。",
+                                "将重叠修改写到源码，或拆分成明确的步骤。")
+    shared = runtime.load_model({**request, "variant": None})
+    no_forward = {**request, "batch": None, "require_forward": False}
+    parameter = source_set_transaction_candidate(runtime, no_forward, {"operations": sets}, shared_model=shared)
+    structure = source_sequential_transaction_candidate(runtime, request, {"operations": structures}, shared_model=shared)
+    root = Path(shared[1]["project_root"]).resolve()
+    grouped = {}
+    for part in (parameter, structure):
+        for patch in part["source_patches"]:
+            grouped.setdefault(patch["path"], []).append(patch)
+    merged = []
+    total_bytes = 0
+    for name, patches in grouped.items():
+        path = root / name
+        try:
+            if not path.is_file() or path.resolve(strict=True) != path or path.stat().st_size > 16 * 1024 * 1024:
+                raise UserError("SOURCE_PATH_UNSUPPORTED", f"合并时源码不可用或路径经过符号链接：{name}。")
+            original = read_bounded_python_source(path)
+        except OSError as error:
+            raise UserError("SOURCE_PLAN_CONFLICT", f"无法重新读取计划源码 {name}：{error}") from error
+        original_digest = hashlib.sha256(original).hexdigest()
+        if any(patch["before_sha256"] != original_digest for patch in patches):
+            raise UserError("SOURCE_PLAN_CONFLICT", f"合并候选时源码已变化：{name}。", "重新预览；源码未修改。")
+        lines = original.splitlines(keepends=True)
+        if len(lines) > 30000:
+            raise UserError("SOURCE_PLAN_TOO_LARGE", f"混合计划涉及的文件行数过多：{name}。", "拆分计划或手工编辑源码。")
+        changes = []
+        for patch in patches:
+            candidate = patch["contents"].encode("utf-8").splitlines(keepends=True)
+            if len(candidate) > 30000:
+                raise UserError("SOURCE_PLAN_TOO_LARGE", f"混合候选行数过多：{name}。")
+            # Large generated files commonly repeat identical declarations;
+            # avoid quadratic matching on frequent lines. Coarse hunks may
+            # conservatively conflict, but are never silently overwritten.
+            matcher = difflib.SequenceMatcher(None, lines, candidate, autojunk=True)
+            for tag, start, end, other_start, other_end in matcher.get_opcodes():
+                if tag != "equal":
+                    changes.append((start, end, b"".join(candidate[other_start:other_end])))
+        changes.sort(key=lambda item: (item[0], item[1]))
+        for previous, current in zip(changes, changes[1:]):
+            # An insertion immediately before a replacement is unambiguous:
+            # reverse application replaces the original line first, then
+            # inserts before it. Two insertions at the same point have no
+            # defined order and must still be rejected.
+            if current[0] < previous[1] or (current[0] == previous[0] and current[0] == current[1] and previous[0] == previous[1]):
+                raise UserError("SOURCE_PLAN_OVERLAP", f"混合计划在 {name} 的同一源码行或插入位置发生重叠。",
+                                "调整源码或拆分计划；没有修改任何文件。")
+        candidate_lines = list(lines)
+        for start, end, replacement in reversed(changes):
+            candidate_lines[start:end] = [replacement]
+        candidate_bytes = b"".join(candidate_lines)
+        try:
+            original_text = original.decode("utf-8")
+            candidate_text = candidate_bytes.decode("utf-8")
+            compile(candidate_text, str(path), "exec")
+        except (UnicodeDecodeError, SyntaxError) as error:
+            raise UserError("SOURCE_PATCH_INVALID", f"混合源码候选无法解析：{name}: {error}") from error
+        diff = "".join(difflib.unified_diff(original_text.splitlines(keepends=True), candidate_text.splitlines(keepends=True),
+                                            fromfile=name, tofile=name + " (candidate)"))
+        total_bytes += len(candidate_bytes) + 2 * len(diff.encode("utf-8"))
+        if total_bytes > 24 * 1024 * 1024:
+            raise UserError("SOURCE_PLAN_TOO_LARGE", "混合计划预览超过 24 MiB。")
+        merged.append({"path": name, "line": min((patch.get("line") or 1) for patch in patches),
+                       "operations": [item for patch in patches for item in patch.get("operations", [])],
+                       "before_sha256": original_digest, "after_sha256": hashlib.sha256(candidate_bytes).hexdigest(),
+                       "unified_diff": diff, "contents": candidate_text})
+    primary = dict(merged[0])
+    primary["unified_diff"] = "".join(patch["unified_diff"] for patch in merged)
+    primary.pop("contents", None)
+    if len(merged) > 1:
+        primary["path"], primary["line"] = f"{len(merged)} files", None
+        primary["operations"] = [{"path": patch["path"], "operations": patch["operations"]} for patch in merged]
+    structure["source_patch"], structure["source_patches"] = primary, merged
+    structure["edit_effects"] = parameter["edit_effects"] + structure["edit_effects"]
+    structure["note"] = "参数修改先于结构修改作用于同一临时模型；合并源码后提交仍须在新 worker 中重载并验证。多文件不保证瞬时原子可见。"
+    return structure

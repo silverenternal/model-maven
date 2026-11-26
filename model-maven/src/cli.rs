@@ -1,8 +1,10 @@
 use clap::{Args, Parser, Subcommand, ValueEnum};
+
+pub(crate) const CLASSIFICATION_CREATE_PRESETS: [&str; 2] = ["tiny-cnn", "resnet18"];
 use serde_json::Value;
 use std::path::PathBuf;
 
-#[derive(Debug, Parser)]
+#[derive(Debug, Clone, Parser)]
 #[command(
     name = "m-model",
     version,
@@ -22,7 +24,7 @@ pub struct Cli {
     #[arg(
         long,
         global = true,
-        help = "Python 解释器；默认使用项目已选环境（默认 .venv），否则 python3"
+        help = "Python 解释器；未指定时按操作使用项目选择、项目环境或 PATH 中发现的解释器"
     )]
     pub python: Option<String>,
     #[arg(skip)]
@@ -90,7 +92,7 @@ pub struct Cli {
     #[arg(
         long,
         global = true,
-        help = "随机种子；已有变体的 --seed 控制执行随机性，Layer 编辑使用变体固定种子"
+        help = "随机种子；新变体条件提交需复用预览的 initialization_seed_decimal；已有变体的 Layer 编辑使用变体固定种子"
     )]
     pub seed: Option<u64>,
     #[arg(
@@ -105,6 +107,45 @@ pub struct Cli {
 
 #[derive(Debug, Clone, Subcommand)]
 pub enum Command {
+    #[command(about = "试跑用户自有的纯 Python 循环，不自动导入或绑定机器学习框架")]
+    LoopTrial {
+        #[arg(long = "loop", help = "用户循环入口 module:callable，签名为 loop(None, context, **params)")]
+        training_loop: String,
+        #[arg(long = "loop-interface", default_value = "model-context", value_parser = ["context", "model-context"], help = "循环签名：context 为 loop(context, **params)，model-context 为 loop(None, context, **params)")]
+        loop_interface: String,
+        #[arg(long = "loop-param", value_name = "NAME=JSON", help = "循环参数，可重复；请勿放入密钥")]
+        params: Vec<String>,
+        #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u32).range(1..=1000), help = "最多接收的步骤报告数")]
+        steps: u32,
+        #[arg(long, help = "试跑记录名称")]
+        name: Option<String>,
+    },
+    #[command(about = "运行用户自有的纯 Python 循环并保存用户报告的 JSON 状态")]
+    LoopRun {
+        #[arg(long = "loop", help = "新运行的 module:callable 入口；恢复时沿用原入口")]
+        training_loop: Option<String>,
+        #[arg(long = "loop-interface", value_parser = ["context", "model-context"], help = "循环签名；新运行默认 model-context，恢复时沿用原签名")]
+        loop_interface: Option<String>,
+        #[arg(long = "loop-param", value_name = "NAME=JSON", help = "新运行的循环参数，可重复；不要填写密钥")]
+        params: Vec<String>,
+        #[arg(long, value_parser = clap::value_parser!(u32).range(1..=1_000_000), help = "总步骤目标，恢复时包含已有步数")]
+        steps: u32,
+        #[arg(long, help = "从已停止的纯 Python 循环运行恢复")]
+        resume: Option<String>,
+        #[arg(long = "if-checkpoint-sha256", help = "恢复时确认的原 checkpoint SHA-256")]
+        expected_checkpoint: Option<String>,
+        #[arg(long, help = "运行名称")]
+        name: Option<String>,
+        #[arg(long, help = "脱离终端后台运行（当前仅 Linux）；需要唯一请求标识")]
+        detach: bool,
+        #[arg(long, help = "16 到 64 位字母、数字或连字符，用于核对启动结果")]
+        request_id: Option<String>,
+    },
+    #[command(about = "只读扫描项目 Python 源码中的常见入口候选；不导入或运行项目")]
+    Discover {
+        #[arg(long = "import-root", value_name = "PROJECT_RELATIVE_DIR", help = "优先扫描的项目模块搜索目录，可重复；不导入代码")]
+        import_roots: Vec<String>,
+    },
     #[command(about = "执行用户训练步骤或完整自有循环并进行有限试跑")]
     Try {
         #[command(flatten)]
@@ -146,6 +187,8 @@ pub enum Command {
             help = "明确启用绑定到人工语义标记的 require/penalty 规则；penalty 会改变训练目标"
         )]
         apply_supervision: bool,
+        #[arg(long, conflicts_with = "apply_supervision", help = "本次试跑不启用监督，即使重复的历史试跑启用了监督")]
+        no_supervision: bool,
         #[arg(
             long = "step-param",
             value_name = "NAME=JSON",
@@ -290,6 +333,8 @@ pub enum Command {
         split: String,
         #[arg(long, help = "项目评估入口 module:evaluate")]
         evaluator: String,
+        #[arg(long, help = "评估模型设备；输入由评估函数自行迁移")]
+        device: Option<String>,
         #[arg(long, help = "验证/测试数据工厂 module:build_data")]
         data: String,
         #[arg(long, value_parser = clap::value_parser!(u64).range(1..), help = "传给评估入口的样本目标；入口负责限量并报告实际数量")]
@@ -344,10 +389,12 @@ pub enum Command {
     },
     #[command(about = "预览或创建可编辑的分类模型项目")]
     Create {
-        #[arg(long, value_parser = ["tiny-cnn", "resnet18"], help = "分类模型预设")]
-        preset: String,
-        #[arg(long, value_name = "DIRECTORY", help = "按类别分目录的图像数据根目录")]
-        data: PathBuf,
+        #[arg(long, required_unless_present = "recipe", conflicts_with = "recipe", value_parser = clap::builder::PossibleValuesParser::new(CLASSIFICATION_CREATE_PRESETS), help = "分类模型预设")]
+        preset: Option<String>,
+        #[arg(long, required_unless_present = "recipe", conflicts_with = "recipe", value_name = "DIRECTORY", help = "按类别分目录的图像数据根目录")]
+        data: Option<PathBuf>,
+        #[arg(long, value_name = "FILE", help = "从分类项目声明重建；数据路径相对于目标项目")]
+        recipe: Option<PathBuf>,
         #[arg(long, help = "确认创建；需要 --if-plan 使用预览返回的修订")]
         apply: bool,
         #[arg(
@@ -358,8 +405,231 @@ pub enum Command {
         )]
         if_plan: Option<String>,
     },
+    #[command(about = "审核并更新图像分类声明中的训练、监督和源码引用")]
+    RecipeUpdate {
+        #[arg(long, value_name = "JSON", help = "训练声明对象；使用 null 清除")]
+        training: Option<String>,
+        #[arg(long, value_name = "JSON", help = "监督文件引用对象；使用 null 清除")]
+        supervision: Option<String>,
+        #[arg(long, value_name = "JSON", help = "源码快照引用对象；使用 null 清除")]
+        source: Option<String>,
+        #[arg(long, value_name = "JSON", help = "项目内相对运行目录与模块搜索目录；使用 null 清除")]
+        runtime: Option<String>,
+        #[arg(long, value_name = "SHA256", help = "当前 model-maven.json 的摘要")]
+        if_recipe: String,
+        #[arg(long, help = "提交已审核的计划")]
+        apply: bool,
+        #[arg(long, requires = "apply", value_name = "REVISION")]
+        if_plan: Option<String>,
+    },
+    #[command(about = "独立审核并同步通用模型声明中的项目输入或训练设置")]
+    RecipeSync {
+        #[arg(long, required_unless_present = "training_profile", help = "同步当前项目已保存的输入")]
+        data: bool,
+        #[arg(long, value_name = "JSON", help = "训练声明对象；使用 null 清除")]
+        training_profile: Option<String>,
+        #[arg(long, value_name = "SHA256", help = "当前模型声明的文件摘要")]
+        if_recipe: String,
+        #[arg(long, value_name = "SHA256", help = "当前项目配置修订")]
+        if_config_revision: String,
+        #[arg(long, help = "提交已审核的声明变更")]
+        apply: bool,
+        #[arg(long, requires = "apply", value_name = "REVISION")]
+        if_plan: Option<String>,
+    },
+    #[command(about = "按稳定层 ID 预览草稿内同组移动；不会修改声明或运行模型")]
+    RecipeLayerPlan {
+        #[arg(long, value_name = "FILE", help = "要规划的草稿声明 JSON")]
+        recipe: PathBuf,
+        #[arg(long, value_name = "SHA256", help = "输入文件的 SHA-256")]
+        if_recipe: String,
+        #[arg(long, value_name = "JSON", help = "移动数组，如 [{\"id\":\"n_...\",\"before\":\"n_...\"}]；before 为 null 表示末尾")]
+        moves: String,
+    },
+    #[command(about = "按稳定 ID 批量预览声明层的增删改查；不写项目文件")]
+    RecipeLayerEditPlan {
+        #[arg(long, value_name = "FILE", help = "草稿声明 JSON 文件")]
+        recipe: PathBuf,
+        #[arg(long, value_name = "SHA256", help = "草稿文件摘要")]
+        if_recipe: String,
+        #[arg(long, value_name = "FILE", help = "操作数组 JSON 文件；避免将参数暴露在命令行中")]
+        operations: PathBuf,
+        #[arg(long, value_name = "SHA256", help = "操作文件摘要")]
+        if_operations: String,
+    },
+    #[command(about = "只读规划显式节点、端口和共享组件图；不运行模型")]
+    GraphPlan {
+        #[arg(long, value_name = "FILE", help = "图声明 JSON 文件")]
+        graph: PathBuf,
+        #[arg(long, value_name = "SHA256", help = "图文件内容摘要")]
+        if_graph: String,
+    },
+    #[command(about = "按稳定 ID 只读预览一组图编辑；不写入项目或运行模型")]
+    GraphEditPlan {
+        #[arg(long, value_name = "FILE")]
+        graph: PathBuf,
+        #[arg(long, value_name = "SHA256")]
+        if_graph: String,
+        #[arg(long, value_name = "FILE")]
+        operations: PathBuf,
+        #[arg(long, value_name = "SHA256")]
+        if_operations: String,
+    },
+    #[command(about = "只读预览将顺序声明包装为显式图；保留原声明和源码")]
+    GraphImportScaffold {
+        #[arg(long, value_name = "FILE", help = "现有 model-maven.json")]
+        recipe: PathBuf,
+        #[arg(long, value_name = "SHA256", help = "声明文件内容摘要")]
+        if_recipe: String,
+        #[arg(long, value_name = "MODULE:CALLABLE", help = "现有模型工厂；不导入或运行")]
+        model: String,
+        #[arg(long, value_name = "SHA256", help = "可选：核对项目配置版本并在声明未提供数据时保留当前批次入口")]
+        if_project: Option<String>,
+        #[arg(long, help = "从受支持的声明层栈构造可编辑图草稿；不推断用户修改的源码或权重")]
+        editable: bool,
+    },
+    #[command(about = "只读预览无分支组件链的顺序调整；不写入或运行模型")]
+    GraphReorderPlan {
+        #[arg(long, value_name = "FILE")]
+        graph: PathBuf,
+        #[arg(long, value_name = "SHA256")]
+        if_graph: String,
+        #[arg(long, value_name = "NODE_ID")]
+        node: String,
+        #[arg(long, value_name = "NODE_ID", conflicts_with = "after", required_unless_present = "after")]
+        before: Option<String>,
+        #[arg(long, value_name = "NODE_ID", conflicts_with = "before", required_unless_present = "before")]
+        after: Option<String>,
+    },
+    #[command(about = "预览图 Python 源码，或按计划创建/条件更新文件；不运行模型")]
+    GraphGenerate {
+        #[arg(long, value_name = "FILE")]
+        graph: PathBuf,
+        #[arg(long, value_name = "SHA256")]
+        if_graph: String,
+        #[arg(long, value_name = "PYTHON_FILE", help = "项目根目录下的新 Python 模块文件")]
+        output: Option<String>,
+        #[arg(long, requires = "output", value_name = "SHA256", help = "显式审核并条件更新已有源码的摘要")]
+        if_source: Option<String>,
+        #[arg(long, requires_all = ["output", "if_plan"], help = "按已审核计划创建新文件")]
+        apply: bool,
+        #[arg(long, requires = "apply", value_name = "SHA256")]
+        if_plan: Option<String>,
+    },
+    #[command(about = "在独立 worker 中用已捕获输入预览未保存的图草稿")]
+    GraphDraftProbe {
+        #[arg(long, value_name = "FILE")]
+        graph: PathBuf,
+        #[arg(long, value_name = "SHA256")]
+        if_graph: String,
+        #[arg(long, value_name = "FILE")]
+        snapshot: PathBuf,
+        #[arg(long, value_name = "SHA256")]
+        input_sha256: String,
+        #[arg(long, value_name = "MODULE:CALLABLE")]
+        batch: Option<String>,
+        #[arg(long, value_name = "DEVICE", help = "预览模型设备；不会自动迁移捕获的输入")]
+        model_device: Option<String>,
+        #[arg(long, value_name = "SHA256")]
+        if_config: String,
+    },
+    #[command(about = "审核并有条件地将已保存图源码和声明数据一起绑定到现有项目")]
+    GraphBind {
+        #[arg(long, value_name = "FILE")]
+        graph: PathBuf,
+        #[arg(long, value_name = "SHA256")]
+        if_graph: String,
+        #[arg(long, value_name = "PYTHON_FILE")]
+        source: String,
+        #[arg(long, value_name = "ABSENT_OR_SHA256")]
+        if_config: String,
+        #[arg(long, help = "同时应用图中声明的数据绑定")]
+        include_data: bool,
+        #[arg(long, requires = "if_plan")]
+        apply: bool,
+        #[arg(long, requires = "apply", value_name = "SHA256")]
+        if_plan: Option<String>,
+    },
+    #[command(about = "有条件保存显式图草稿；保留不完整图，绝不覆盖未知内容")]
+    GraphSave {
+        #[arg(long, value_name = "FILE")]
+        draft: PathBuf,
+        #[arg(long, value_name = "SHA256")]
+        if_draft: String,
+        #[arg(long, value_name = "JSON_FILE")]
+        output: String,
+        #[arg(long, value_name = "ABSENT_OR_SHA256")]
+        if_base: String,
+        #[arg(long, requires = "if_plan")]
+        apply: bool,
+        #[arg(long, requires = "apply", value_name = "SHA256")]
+        if_plan: Option<String>,
+    },
+    #[command(about = "统一审核图草稿、拟生成源码和当前项目绑定；只读，不提交")]
+    GraphDeliveryPlan {
+        #[arg(long, value_name = "FILE")]
+        draft: PathBuf,
+        #[arg(long, value_name = "SHA256")]
+        if_draft: String,
+        #[arg(long, value_name = "JSON_FILE")]
+        output: String,
+        #[arg(long, value_name = "ABSENT_OR_SHA256")]
+        if_base: String,
+        #[arg(long, value_name = "PYTHON_FILE")]
+        source: String,
+    },
+    #[command(about = "根据联合审核执行可恢复的图、源码与项目分阶段提交")]
+    GraphDeliveryStart {
+        #[arg(long)] draft: PathBuf,
+        #[arg(long)] if_draft: String,
+        #[arg(long)] output: String,
+        #[arg(long)] if_base: String,
+        #[arg(long)] source: String,
+        #[arg(long)] if_plan: String,
+    },
+    #[command(about = "查看未完成图交付的各阶段状态，不执行提交")]
+    GraphDeliveryStatus,
+    #[command(about = "归档待恢复交付记录，不回滚已写入的文件")]
+    GraphDeliveryArchive {
+        #[arg(long, value_name = "SHA256")]
+        if_plan: String,
+    },
+    #[command(about = "继续当前项目中断的图交付，遇到外部修改时停止")]
+    GraphDeliveryResume {
+        #[arg(long, value_name = "SHA256", help = "要求待恢复记录与已审核计划一致")]
+        if_plan: Option<String>,
+    },
+    #[command(about = "预览或导出项目的可迁移文件包")]
+    RecipeBundle {
+        #[arg(long, conflicts_with = "scaffold", help = "打包 model-graph.json 显式图；源码、数据和环境文件需显式选择")]
+        graph: bool,
+        #[arg(long, help = "打包 model-maven.json 通用骨架声明及其监督引用")]
+        scaffold: bool,
+        #[arg(long, value_name = "DIRECTORY", help = "项目根目录下的新目录名")]
+        output: String,
+        #[arg(long, value_name = "PATH", help = "额外包含的项目内文件或目录，可重复；数据和环境文件需要显式选择")]
+        include: Vec<String>,
+        #[arg(long, help = "创建已审核的项目包")]
+        apply: bool,
+        #[arg(long, requires = "apply", value_name = "REVISION")]
+        if_plan: Option<String>,
+    },
     #[command(about = "从具名输入创建可编辑的自定义多输入模型骨架")]
     Scaffold {
+        #[arg(long, value_name = "FILE", conflicts_with_all = ["module", "batch", "batch_binding", "batch_params", "injections", "injection_params", "component_params_slots", "inputs", "routes", "native_encoders", "encoder_layers", "encoder_widths", "training_profile", "supervision_reference", "output_dim", "outputs", "loss"], help = "读取声明式骨架配置，预览后可按修订创建")]
+        recipe: Option<PathBuf>,
+        #[arg(long, conflicts_with_all = ["module", "output_dim", "loss"], help = "创建时同时写入可复用的 model-maven.json")]
+        write_recipe: bool,
+        #[arg(long, value_name = "SHA256", requires = "write_recipe", help = "按当前 model-maven.json 的文件摘要生成并切换到新构建")]
+        update_recipe: Option<String>,
+        #[arg(long, requires = "update_recipe", help = "将组件绑定、输入接线和编码器输出方式同步至画布声明，需审核生成计划")]
+        reconcile_assembly: bool,
+        #[arg(long, requires = "write_recipe", value_name = "JSON", help = "声明训练模式、入口和参数；不会自动执行")]
+        training_profile: Option<String>,
+        #[arg(long = "supervision-ref", requires = "write_recipe", value_name = "JSON", help = "引用项目内监督声明及摘要；重建后需显式导入并绑定")]
+        supervision_reference: Option<String>,
+        #[arg(long = "component-params-slot", requires = "write_recipe", help = "明确声明组件参数对象，包括空对象；可重复")]
+        component_params_slots: Vec<String>,
         #[arg(
             long,
             value_name = "MODULE",
@@ -401,9 +671,9 @@ pub enum Command {
         injection_params: Vec<String>,
         #[arg(
             long = "input",
-            required = true,
+            required_unless_present = "recipe",
             value_name = "NAME[:DTYPE]=DIM,DIM",
-            help = "输入名、可选 dtype 和不含批次轴的正整数形状；可重复，dtype 默认 float32"
+            help = "输入名、可选 dtype 和不含批次轴的形状；?128 表示可变轴及代表长度，可重复；省略 dtype 使用批次执行时 PyTorch 默认浮点类型"
         )]
         inputs: Vec<String>,
         #[arg(
@@ -418,13 +688,17 @@ pub enum Command {
             help = "保留指定编码器的原始输出，不自动平均或展平；可重复"
         )]
         native_encoders: Vec<String>,
+        #[arg(long = "encoder-layers", value_name = "SLOT=JSON", requires = "write_recipe", help = "声明编码器的有序层配置，可重复")]
+        encoder_layers: Vec<String>,
+        #[arg(long = "encoder-width", value_name = "SLOT=WIDTH", requires = "write_recipe", help = "声明组件编码器的输出特征数，可重复")]
+        encoder_widths: Vec<String>,
         #[arg(long, value_name = "FEATURES", help = "输出特征数；默认使用融合特征数")]
         output_dim: Option<usize>,
         #[arg(
             long = "output",
-            value_name = "NAME=FEATURES[:mse|ce]",
+            value_name = "NAME=FEATURES[:mse|ce|custom:MODULE:CALLABLE]",
             conflicts_with_all = ["output_dim", "loss"],
-            help = "具名输出头，可重复，如 score=1:mse@0.5；权重默认 1，损失支持 mse 或 ce"
+            help = "具名输出头，可重复；custom:module:callable 在训练时调用函数(prediction, target)，须返回标量张量"
         )]
         outputs: Vec<String>,
         #[arg(long, value_parser = ["mse", "cross_entropy"], help = "单输出的示例损失；cross_entropy 使用整数类别目标")]
@@ -459,6 +733,11 @@ pub enum Command {
         #[command(subcommand)]
         command: VariantCommand,
     },
+    #[command(about = "工作区内部只读操作")]
+    Workspace {
+        #[command(subcommand)]
+        command: WorkspaceCommand,
+    },
     #[command(about = "将正式训练的代码快照与 checkpoint 导出为可验证工程包")]
     Export {
         /// Export destination directory.
@@ -481,6 +760,22 @@ pub enum Command {
     Completions {
         #[arg(value_parser = ["bash", "elvish", "fish", "powershell", "zsh"], help = "目标 shell")]
         shell: String,
+    },
+}
+
+#[derive(Debug, Clone, Subcommand)]
+pub enum WorkspaceCommand {
+    #[command(hide = true, about = "为目标操作解析可复核授权身份；不会启动 Python")]
+    AuthorizationIdentity {
+        #[arg(long = "request-json", value_name = "JSON", help = "规范化目标 CLI 参数的 JSON 字符串数组")]
+        request_json: String,
+    },
+    #[command(hide = true, about = "使用后端身份条件执行目标工作区操作")]
+    Run {
+        #[arg(long = "request-json", value_name = "JSON", help = "规范化目标 CLI 参数的 JSON 字符串数组")]
+        request_json: String,
+        #[arg(long = "if-authorization-identity", value_name = "SHA256", help = "要求解析后的操作身份与工作区预检完全相同")]
+        if_authorization_identity: String,
     },
 }
 
@@ -529,19 +824,24 @@ pub enum EnvironmentCommand {
         #[arg(long, help = "要核对的项目虚拟环境目录；默认使用上次 setup 选择的环境")]
         venv: Option<PathBuf>,
     },
-    #[command(about = "只读查看所选 Python 环境中常见 ML/RL 库的安装情况")]
+    #[command(about = "只读查看所选 Python 环境中的发行包元数据")]
     Libraries {
         #[arg(long, help = "要检查的项目虚拟环境目录；默认使用上次 setup 选择的环境")]
         venv: Option<PathBuf>,
         #[arg(
             long = "library",
             value_name = "DISTRIBUTION",
-            help = "只检查指定包；可重复指定，默认列出常见库"
+            help = "只检查指定发行包；可重复指定，默认列出有界环境清单"
         )]
         libraries: Vec<String>,
     },
+    #[command(about = "显式导入 PyTorch 并查询该解释器可见的训练设备；不安装依赖")]
+    Devices {
+        #[arg(long, help = "要查询的项目虚拟环境目录；默认使用当前所选环境")]
+        venv: Option<PathBuf>,
+    },
     #[command(
-        about = "显式导入用户点名的 ML/RL 库；可选 --check-runtime 运行有限 CPU smoke；不会安装依赖或绑定训练后端"
+        about = "显式导入用户点名的 Python 模块；可选 --check-runtime 运行支持的有限 CPU smoke；不会安装依赖或绑定训练后端"
     )]
     Probe {
         #[arg(long, help = "要使用的项目虚拟环境目录；默认使用上次 setup 选择的环境")]
@@ -551,14 +851,18 @@ pub enum EnvironmentCommand {
             value_name = "ID",
             required = true,
             num_args = 1..,
-            help = "要显式导入探测的候选库 ID；可重复指定，不支持任意 distribution"
+            help = "要显式导入的模块名或已知库 ID；可重复指定，发行包名不一定是模块名"
         )]
         libraries: Vec<String>,
         #[arg(
             long,
-            help = "额外运行有固定 CPU smoke 的库操作；不支持的库会标记 unsupported，不会自动绑定后端"
+            help = "额外运行支持的库计算；JAX 使用环境默认后端并可能初始化加速器，不支持的库标记 unsupported，不自动绑定训练后端"
         )]
         check_runtime: bool,
+        #[arg(long, help = "从显式导入的 torch.nn 发现公开 Module 类及其可观察签名；不会构造 Layer")]
+        layer_catalog: bool,
+        #[arg(long, help = "列出显式指定模块中的公开类和函数及可观察签名；不构造对象，不代表模型兼容")]
+        operator_catalog: bool,
     },
     #[command(about = "归档并离线重建与当前 Python ABI 匹配的锁定依赖")]
     Wheelhouse {
@@ -587,15 +891,16 @@ pub enum WheelhouseCommand {
         )]
         path: Option<PathBuf>,
     },
-    #[command(about = "从完整归档在已创建的虚拟环境中离线安装")]
+    #[command(about = "从完整归档离线创建新虚拟环境，不修改已有环境")]
     Replay {
         #[arg(
             long,
-            default_value = ".venv",
             value_name = "DIR",
-            help = "项目内目标虚拟环境"
+            help = "尚不存在的项目内目标虚拟环境"
         )]
         venv: PathBuf,
+        #[arg(long, required = true, help = "仅创建全新目标环境并离线安装；目标必须不存在")]
+        create: bool,
         #[arg(
             long,
             value_name = "DIR",
@@ -776,6 +1081,18 @@ pub enum RunsCommand {
     },
     #[command(about = "查看记录输入快照与完整结果")]
     Show { id: Option<String> },
+    #[command(about = "审核并显式解除未知运行对新任务的阻挡；不会判定进程已停止")]
+    AcknowledgeUnknown {
+        id: String,
+        #[arg(long, help = "使用预览返回的运行记录修订")]
+        if_revision: Option<String>,
+        #[arg(long, requires = "if_revision", help = "确认已检查进程并接受运行状态仍未知")]
+        acknowledge: bool,
+        #[arg(long, requires = "acknowledge", help = "旧记录缺少主机/PID 命名空间身份时，确认已在原运行环境检查")]
+        accept_unverified_host: bool,
+        #[arg(long, requires = "acknowledge", help = "启动环境与当前环境不同时，明确接受无法检查原环境进程")]
+        accept_different_scope: bool,
+    },
     #[command(about = "只读比较两个运行的输入、代码、数据、预算、设备、权重与指标")]
     Compare {
         #[arg(help = "左侧运行 ID")]
@@ -858,6 +1175,8 @@ pub enum TrainingMode {
 
 #[derive(Debug, Clone, Default, Args)]
 pub struct Inputs {
+    #[arg(skip)]
+    pub no_project_model: bool,
     #[arg(long, help = "原生模型类或工厂，如 examples.models:build_shared")]
     pub model: Option<String>,
     #[arg(long, help = "示例批次函数，不需要 DataLoader 或训练步骤")]
@@ -878,7 +1197,7 @@ pub struct Inputs {
         long = "inject-param",
         value_name = "SLOT.NAME=JSON",
         add = clap_complete::engine::ArgValueCompleter::new(crate::presentation::completion::injection_param_completer),
-        help = "已登记注入组件的参数，可重复，例如 encoder.depth=50"
+        help = "注入工厂或已登记组件的参数，可重复，例如 encoder.depth=50"
     )]
     pub injection_params: Vec<String>,
     #[arg(skip)]
@@ -892,7 +1211,7 @@ pub struct Inputs {
     #[arg(
         long,
         value_enum,
-        help = "批次与模型前向参数的绑定方式；默认按 Tensor/envelope 推断"
+        help = "批次与模型前向参数的绑定方式；single-raw 整体传入并跳过自动数据集采样"
     )]
     pub batch_binding: Option<BatchBinding>,
     #[arg(long, help = "按训练模式前向（仍不反向/更新）；默认 eval")]
@@ -901,6 +1220,26 @@ pub struct Inputs {
 
 #[derive(Debug, Clone, Default, Args)]
 pub struct TrainingInputs {
+    #[arg(long, value_name = "FILE", help = "使用项目、分类配置或模型图 JSON 的训练声明；不能与训练入口或恢复选项同时指定")]
+    pub training_recipe: Option<PathBuf>,
+    #[arg(long = "no-model", conflicts_with_all = ["model", "model_params", "injections", "injection_params"],
+        help = "external-loop 新运行不使用项目默认模型；循环收到 None")]
+    pub no_model: bool,
+    #[arg(long = "model-initialization", value_parser = ["runtime", "seeded"],
+        help = "模型工厂的随机状态策略；seeded 可使用独立的 --model-initialization-seed")]
+    pub model_initialization: Option<String>,
+    #[arg(long = "model-initialization-seed", requires = "model_initialization",
+        help = "模型构造种子，与训练执行种子分别控制")]
+    pub model_initialization_seed: Option<u64>,
+    #[arg(long = "batch-device-policy", value_parser = ["preserve", "recursive-strict"],
+        help = "步骤前保留批次对象或严格递归迁移；新运行默认严格迁移，续训沿用原策略")]
+    pub batch_device_policy: Option<String>,
+    #[arg(long = "if-repeat-inputs-sha256", value_name = "SHA256", help = "仅当重复试跑的历史输入与 runs show 回执一致时执行")]
+    pub if_repeat_inputs_sha256: Option<String>,
+    #[arg(long = "optimizer-factory", help = "managed-step 优化器工厂 module:callable；接收模型和显式参数")]
+    pub optimizer_factory: Option<String>,
+    #[arg(long = "optimizer-param", value_name = "NAME=JSON", requires = "optimizer_factory", help = "优化器工厂参数；会记录到运行与检查点中，勿填写密钥")]
+    pub optimizer_params: Vec<String>,
     #[arg(
         long = "if-config-revision",
         value_name = "SHA256",
@@ -919,7 +1258,7 @@ pub struct TrainingInputs {
         help = "用户声明的数据集/切分版本；不是自动验证的数据内容哈希"
     )]
     pub data_fingerprint: Option<String>,
-    #[arg(long, help = "训练执行设备：cpu、auto 或单 GPU cuda:N；默认 cpu")]
+    #[arg(long, help = "训练执行设备：cpu、auto 或所选 PyTorch 支持的设备标识；默认 cpu")]
     pub device: Option<String>,
     #[arg(long, help = "原生模型类或工厂，如 examples.models:build_classifier")]
     pub model: Option<String>,
@@ -941,7 +1280,7 @@ pub struct TrainingInputs {
         long = "inject-param",
         value_name = "SLOT.NAME=JSON",
         add = clap_complete::engine::ArgValueCompleter::new(crate::presentation::completion::injection_param_completer),
-        help = "已登记注入组件的参数，可重复，例如 encoder.depth=50"
+        help = "注入工厂或已登记组件的参数，可重复，例如 encoder.depth=50"
     )]
     pub injection_params: Vec<String>,
     #[arg(skip)]
@@ -952,11 +1291,14 @@ pub struct TrainingInputs {
         help = "批次工厂参数，可重复"
     )]
     pub batch_params: Vec<String>,
+    #[arg(long, value_enum, help = "批次与模型前向参数的绑定方式；single-raw 整体传入并跳过自动数据集采样")]
+    pub batch_binding: Option<BatchBinding>,
 }
 
 impl From<TrainingInputs> for Inputs {
     fn from(inputs: TrainingInputs) -> Self {
         Self {
+            no_project_model: inputs.no_model,
             model: inputs.model,
             batch: inputs.batch,
             model_params: inputs.model_params,
@@ -964,6 +1306,7 @@ impl From<TrainingInputs> for Inputs {
             injection_params: inputs.injection_params,
             saved_injections: inputs.saved_injections,
             batch_params: inputs.batch_params,
+            batch_binding: inputs.batch_binding,
             ..Self::default()
         }
     }
@@ -972,10 +1315,18 @@ impl From<TrainingInputs> for Inputs {
 impl From<Inputs> for TrainingInputs {
     fn from(inputs: Inputs) -> Self {
         Self {
+            training_recipe: None,
+            no_model: inputs.no_project_model,
+            model_initialization: None,
+            model_initialization_seed: None,
+            if_repeat_inputs_sha256: None,
+            optimizer_factory: None,
+            optimizer_params: Vec::new(),
             device: None,
             if_config_revision: None,
             if_supervision_revision: None,
             data_fingerprint: None,
+            batch_device_policy: None,
             model: inputs.model,
             batch: inputs.batch,
             model_params: inputs.model_params,
@@ -983,14 +1334,16 @@ impl From<Inputs> for TrainingInputs {
             injection_params: inputs.injection_params,
             saved_injections: inputs.saved_injections,
             batch_params: inputs.batch_params,
+            batch_binding: inputs.batch_binding,
         }
     }
 }
 
-#[derive(Debug, Clone, ValueEnum)]
+#[derive(Debug, Clone, PartialEq, Eq, ValueEnum)]
 pub enum BatchBinding {
     Envelope,
     Single,
+    SingleRaw,
     Args,
     Kwargs,
 }
@@ -1016,12 +1369,16 @@ pub enum ModelCommand {
             help = "可选 JSON 端口契约；声明输入/输出 shape、dtype、layout 与符号维度"
         )]
         contract: Option<PathBuf>,
+        #[arg(long, requires = "contract", value_name = "SHA256", help = "仅使用与此 SHA-256 一致的契约文件")]
+        if_contract_sha256: Option<String>,
         #[arg(
             long,
             value_name = "ID",
             help = "可选数据/切分指纹；配合 Dataset 的 sample_id(index) 启用安全证据复用"
         )]
         batch_fingerprint: Option<String>,
+        #[arg(long, help = "显式迁移模型到所选 PyTorch 设备；输入不会自动迁移")]
+        model_device: Option<String>,
         #[arg(
             long,
             requires = "path",
@@ -1036,7 +1393,7 @@ pub enum ModelCommand {
         #[arg(
             long,
             required = true,
-            help = "完整模块树路径，例如 model.encoder.projection"
+            help = "模型根路径 model，或完整模块树路径，例如 model.encoder.projection"
         )]
         path: String,
         #[arg(
@@ -1055,6 +1412,10 @@ pub enum ModelCommand {
         meaning: String,
         #[arg(long, help = "可选的稳定标记 ID；省略时自动生成")]
         id: Option<String>,
+        #[arg(long, value_name = "JSON", help = "仅当重跑观察到相同实现来源时保存标记")]
+        if_anchor: Option<String>,
+        #[arg(long, help = "显式选择标记观察时的模型设备；输入不会自动迁移")]
+        model_device: Option<String>,
     },
     #[command(about = "重新探测并更新一个已有语义标记的实现块或含义")]
     Retag {
@@ -1070,6 +1431,12 @@ pub enum ModelCommand {
         role: String,
         #[arg(long, required = true, help = "人工编写的简短语义说明")]
         meaning: String,
+        #[arg(long, value_name = "SHA256", help = "仅当语义状态与已查看修订一致时重新绑定")]
+        if_state_revision: Option<String>,
+        #[arg(long, value_name = "JSON", help = "仅当重跑观察到相同实现来源时重新绑定")]
+        if_anchor: Option<String>,
+        #[arg(long, help = "显式选择重新绑定观察时的模型设备；输入不会自动迁移")]
+        model_device: Option<String>,
     },
     #[command(about = "列出项目中的人工语义标记，并检查源码锚点是否过期")]
     Marks {
@@ -1110,10 +1477,28 @@ pub enum SuperviseCommand {
         #[command(subcommand)]
         command: SupervisionRuleCommand,
     },
+    #[command(about = "导出监督标记与规则声明；不写文件")]
+    Export {
+        #[arg(long, required = true, help = "已审核语义状态的修订")]
+        if_state_revision: String,
+    },
+    #[command(about = "预览或导入监督声明；导入的标记必须重新绑定")]
+    Import {
+        #[arg(long, value_name = "FILE", required = true)]
+        file: PathBuf,
+        #[arg(long, required = true, help = "已审核声明文件的 SHA-256")]
+        if_sha256: String,
+        #[arg(long, required = true, help = "目标语义状态修订")]
+        if_state_revision: String,
+        #[arg(long, help = "应用已预览的导入")]
+        apply: bool,
+    },
     #[command(about = "对真实模型前向执行只读规则预览；不反向、不更新参数")]
     Preview {
         #[command(flatten)]
         inputs: Inputs,
+        #[arg(long, help = "显式选择监督预览时的模型设备；输入不会自动迁移")]
+        model_device: Option<String>,
     },
 }
 
@@ -1148,21 +1533,34 @@ pub enum SupervisionRuleCommand {
             help = "batch-alignment 的人工目标路径，例如 batch.args[1] 或 batch.kwargs.labels"
         )]
         target_path: Option<String>,
-        #[arg(long, value_parser = clap::value_parser!(u8).range(0..=16), help = "batch-alignment 的目标维度；finite/range/custom-validator 可用它指定输出样本轴")]
-        axis: Option<u8>,
+        #[arg(long, value_parser = clap::value_parser!(u32), help = "batch-alignment 的目标维度；finite/range/custom-validator 可用它指定输出样本轴")]
+        axis: Option<u32>,
         #[arg(long, help = "可选稳定规则 ID；省略时自动生成")]
         id: Option<String>,
+        #[arg(long = "if-state-revision", help = "仅当语义状态仍是所选完整修订时添加规则")]
+        if_state_revision: Option<String>,
         #[arg(
             long,
             help = "自定义规则 module:callable；函数签名为 (value, batch, params)"
         )]
         plugin: Option<String>,
+        #[arg(long, value_parser = ["project", "environment"], help = "规则来源：project（默认）或所选 Python environment")]
+        plugin_source: Option<String>,
         #[arg(
             long = "plugin-param",
             value_name = "NAME=JSON",
             help = "自定义规则 JSON 参数，可重复"
         )]
         plugin_params: Vec<String>,
+    },
+    #[command(about = "将监督规则完整复制到其他人工标记，保留插件源码身份")]
+    Copy {
+        #[arg(long, required = true, help = "源规则 ID")]
+        id: String,
+        #[arg(long, required = true, help = "目标语义标记 ID")]
+        mark: String,
+        #[arg(long, required = true, help = "仅当标记与规则状态修订一致时复制")]
+        if_state_revision: String,
     },
     #[command(about = "列出监督规则及其当前可用性")]
     List,
@@ -1256,6 +1654,8 @@ pub enum DataCommand {
             help = "已准备批次工厂入口，如 project.data:example_batch"
         )]
         batch: Option<String>,
+        #[arg(long, requires = "batch", help = "将批次工厂整个返回值作为一项预览，不自动采样 Dataset")]
+        whole_batch: bool,
         #[arg(
             long = "param",
             value_name = "NAME=JSON",
@@ -1264,6 +1664,10 @@ pub enum DataCommand {
         parameters: Vec<String>,
         #[arg(long, default_value = "train", help = "数据切分名称；默认 train")]
         split: String,
+        #[arg(long, help = "不请求数据切分；优先于 --split，且不自动套用项目 train/eval 增强")]
+        no_split: bool,
+        #[arg(long, value_parser = ["train", "eval", "none"], conflicts_with = "transforms", help = "显式选择项目增强流水线；none 不套用增强，缺省时按切分选择")]
+        augment_split: Option<String>,
         #[arg(long, default_value_t = 12, value_parser = parse_preview_samples, help = "最多预览的样本数（1 到 64）")]
         samples: usize,
         #[arg(long, requires = "dataset", value_parser = clap::value_parser!(u32).range(1..=100_000), help = "流式 Dataset 最多读取的样本数；从该窗口抽样，不代表整个数据流")]
@@ -1421,6 +1825,15 @@ pub struct EditOptions {
         help = "写入持久 variant；source 支持 Sequential/ModuleList/ModuleDict CRUD 与跨文件 set/结构事务"
     )]
     pub target: String,
+    #[arg(long = "variant-device-policy", value_parser = ["legacy-cpu", "factory"],
+        help = "新变体默认保留基础模型和新增层的工厂设备；替换层参考旧层首个状态；已有变体保持原策略")]
+    pub variant_device_policy: Option<String>,
+    #[arg(long = "base-rng-scope", value_parser = ["cpu", "selected"], help = "新变体基础模型随机范围：cpu 或 selected（CPU 和明确指定的设备）")]
+    pub base_rng_scope: Option<String>,
+    #[arg(long = "base-rng-device", value_name = "BACKEND:INDEX", requires = "base_rng_scope", help = "selected 范围内的基础模型随机设备；可重复，会初始化所选设备")]
+    pub base_rng_devices: Vec<String>,
+    #[arg(long = "layer-rng-device", value_name = "BACKEND:INDEX", help = "变体 add/replace 时额外固定的随机设备；可重复，同一后端，例如 cuda:0；会初始化指定设备")]
+    pub layer_rng_devices: Vec<String>,
     #[arg(
         long = "param",
         value_name = "NAME=JSON",
@@ -1441,7 +1854,7 @@ pub enum LayerCommand {
         #[command(flatten)]
         edit: EditOptions,
     },
-    #[command(about = "列出内置 PyTorch Layer 的常用参数提示；不导入 PyTorch")]
+    #[command(about = "列出部分 PyTorch Layer 的离线参数示例；非可用类型清单，不导入 PyTorch")]
     Catalog,
     #[command(about = "列出模型中的 Layer；可按父路径、关键词或模块类型筛选")]
     List {
@@ -1501,7 +1914,7 @@ pub enum LayerCommand {
             long,
             required_unless_present = "layer_type",
             conflicts_with = "layer_type",
-            help = "已登记的 Layer 组件 ID，可带版本约束"
+            help = "Python 工厂 module:callable，或已登记的 Layer 组件 ID（可带版本约束）"
         )]
         #[arg(add = clap_complete::engine::ArgValueCompleter::new(crate::presentation::completion::component_id_completer))]
         component: Option<String>,
@@ -1515,7 +1928,7 @@ pub enum LayerCommand {
         #[command(flatten)]
         edit: EditOptions,
     },
-    #[command(about = "用内置 Layer 或已登记组件替换目标 Layer")]
+    #[command(about = "用内置 Layer、Python 工厂或已登记组件替换目标 Layer")]
     Replace {
         #[arg(help = "模型树路径，如 model.encoder.proj")]
         path: String,
@@ -1530,7 +1943,7 @@ pub enum LayerCommand {
             long,
             required_unless_present = "layer_type",
             conflicts_with = "layer_type",
-            help = "已登记的 Layer 组件 ID，可带版本约束"
+            help = "Python 工厂 module:callable，或已登记的 Layer 组件 ID（可带版本约束）"
         )]
         #[arg(add = clap_complete::engine::ArgValueCompleter::new(crate::presentation::completion::component_id_completer))]
         component: Option<String>,
@@ -1778,6 +2191,41 @@ pub enum AssemblyCommand {
 pub enum ProjectConfigCommand {
     #[command(about = "列出项目配置的历史版本")]
     History,
+    #[command(about = "预览或条件保存项目默认 Python 解释器")]
+    SetPython {
+        #[arg(long, required_unless_present = "clear", conflicts_with = "clear")]
+        executable: Option<String>,
+        #[arg(long, conflicts_with = "executable")]
+        clear: bool,
+        #[arg(long, requires = "if_current")]
+        apply: bool,
+        #[arg(long = "if-current", requires = "apply")]
+        if_current: Option<String>,
+    },
+    #[command(about = "预览或条件保存项目运行目录与模块搜索目录")]
+    SetRuntimePaths {
+        #[arg(long, help = "已有的绝对运行目录；省略时使用项目目录")]
+        working_directory: Option<String>,
+        #[arg(long = "import-root", help = "项目内相对模块搜索目录，按优先级重复指定")]
+        import_roots: Vec<String>,
+        #[arg(long, requires = "if_current", help = "按预览修订保存")]
+        apply: bool,
+        #[arg(long = "if-current", requires = "apply")]
+        if_current: Option<String>,
+    },
+    #[command(about = "预览或条件更新默认模型入口与参数")]
+    SetModel {
+        #[arg(long, required = true, help = "新的模型工厂 module:callable")]
+        model: String,
+        #[arg(long = "model-param", value_name = "NAME=JSON", help = "模型工厂参数；会保存在项目配置中，请勿保存凭据")]
+        model_params: Vec<String>,
+        #[arg(long, help = "同时清除已有模型装配注入")]
+        clear_injections: bool,
+        #[arg(long, requires = "if_current", help = "按预览的当前修订提交")]
+        apply: bool,
+        #[arg(long = "if-current", requires = "apply", help = "预览时返回的完整配置修订")]
+        if_current: Option<String>,
+    },
     #[command(about = "预览或条件更新默认批次入口，不改变模型和装配")]
     SetBatch {
         #[arg(long, required = true, help = "新的批次工厂 module:callable")]
@@ -1806,7 +2254,7 @@ pub enum ProjectConfigCommand {
         #[arg(
             long = "field",
             value_name = "FIELD",
-            value_parser = ["model", "model_params", "batch", "batch_binding", "batch_params", "model_injections"],
+            value_parser = ["model", "model_params", "batch", "batch_binding", "batch_params", "model_injections", "runtime_paths", "runtime_python"],
             required = true,
             help = "恢复的配置字段，可重复指定"
         )]

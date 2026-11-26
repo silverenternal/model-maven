@@ -4,7 +4,7 @@
 protocol-v1 JSON report on stdout without starting Python or loading project code.
 `data.interface_version` describes this catalog, `data.cli_version` identifies
 the package version, and `data.report_protocol_version` describes the report
-envelope. `data.capabilities` currently advertises the boolean
+envelope. `data.capabilities` advertises boolean capabilities including
 `input_snapshot.capture_replay`. It describes the CLI interface, not whether
 the selected Python environment or a particular model can perform an operation.
 Unknown fields may be ignored; missing or invalid required catalog fields are
@@ -13,6 +13,16 @@ advertised, while a present non-boolean value is a protocol error. An older CLI
 that rejects `--describe-interface` does not prove support for new guarded
 operations. Future capabilities are added explicitly as their contracts are
 implemented.
+
+For a guarded `model probe --contract FILE --if-contract-sha256 SHA256`,
+`model.contract_identity_v1` and `model.contract_preload_v1` advertise the CLI
+interface; the worker separately negotiates both features before the operation.
+The CLI checks the selected bytes before starting the worker, then the worker
+checks and loads them before importing the model or input factory. Python
+startup hooks may execute before the worker receives the request. The result's
+`contract_report.contract_content_sha256` and `contract_identity_check`
+describe the bytes used and whether a condition was checked; older reports may
+omit them. A fresh-forward request is distinct from a reused probe report.
 
 For protocol v1, a successful report includes a non-null `data` value and a
 nonempty `operation`. The known statuses are `success`, `error`, and
@@ -40,13 +50,16 @@ creation does not imply a successful forward or training step.
 
 `project.custom_scaffold` advertises `scaffold --input NAME=DIM,DIM` (repeat
 for each named input) and optional `--output-dim FEATURES`. Shapes exclude the
-batch dimension; optional `:dtype` supports float32, float64, float16, int64,
-and bool. A dimension `?N` is variable with representative length N, for
+batch dimension. `project.scaffold_runtime_dtype_v1` allows optional `:dtype`
+to name a public PyTorch dtype; planning validates only the name's syntax, and
+the selected runtime resolves it when the synthetic batch runs. A dimension
+`?N` is variable with representative length N, for
 example `tokens:int64=?8`. The synthetic batch defaults to two; generated
 `batch` parameters expose `batch_size` and, for each variable axis, a name
 such as `tokens_dim1` (axes are numbered from one, excluding the batch axis).
-For an input with variable axes, the starter converts its encoder output to
-float32 and averages those axes with dimensions retained; then it flattens each output,
+For an input with variable axes, the starter preserves floating and complex
+encoder output precision, converts non-floating output to the PyTorch default
+floating dtype, and averages those axes with dimensions retained; then it flattens each output,
 concatenates the results, and applies a fixed-width linear head. Custom encoders
 must preserve those axes and compatible remaining feature widths, or the author
 must edit the generated model. Averaging is a starter behavior, not an inference
@@ -72,8 +85,10 @@ Previewing the template does not load the data or configure the project.
 `data.csv_batch_typed` adds fixed-shape typed fields. A simple column list is a
 float32 vector as before; a field may instead be an object such as
 `{"columns":["p0","p1","p2","p3"],"shape":[2,2],"dtype":"float32"}`.
-Supported dtypes are float32, float64, float16, int64 and bool; dimensions must
-multiply to the column count. For a single scalar target use a `$tensor` wrapper,
+`data.csv_batch_runtime_dtype_v1` resolves real floating, integer and boolean
+dtype names in the selected PyTorch runtime; individual tensor operations can
+still be unsupported. Complex and quantized formats require user-provided
+parsing. Dimensions must multiply to the column count. For a single scalar target use a `$tensor` wrapper,
 for example `{"$tensor":{"columns":["label"],"shape":[],"dtype":"int64"}}`.
 For named outputs, each target value can be a list or a typed field object.
 Integers parse directly with range checks; booleans accept 0/1/true/false. A
@@ -178,6 +193,10 @@ legacy or malformed catalogs stop that guarded launch with the specific reason.
 If request-identity capability discovery itself becomes malformed after the
 plan is confirmed, the TUI also stops rather than silently downgrading.
 
+`supervision.conditional_variant_mark_v1` declares that `model mark` can pin an explicitly named variant with `--if-variant-base`; the variant lock is held during observation and mark creation. `supervision.conditional_variant_retag_v1` adds the same variant guard to a retag, together with the semantic-state and observed-anchor guards. `supervision.conditional_variant_preview_v1` similarly pins the selected variant for `model supervise preview`; it does not cover rule edits or other supervision operations.
+
+`training.detached_cli_v1` is true only when this CLI was built for Linux; it declares the CLI background supervisor path, not the selected Python worker or device capabilities. The workspace selects background starts and resumes only when this field is true. A false or absent field selects foreground execution with its own pending-operation handling; the confirmation states the selected mode. Runtime readiness still checks the actual worker.
+
 `training.request_identity` advertises `train --request-id ID`, including
 detached starts and resumes. IDs contain 16–64 ASCII letters, digits or hyphens
 and must not contain secrets. The ID is recorded in the run and exposed by
@@ -243,7 +262,10 @@ For variant edits, `layer undo` and `layer redo` support `--dry-run` and
 the candidate with a real forward, then commit with the returned variant base
 and forward input digest via `--if-variant-base` and `--if-input-content`.
 These conditions protect the variant and the actual input contents; they do not
-pin all source, project configuration, or runtime. `--dry-run` and
+pin all source, project configuration, or runtime. When an input digest is
+specified, the CLI requires a successful, actually executed forward and a
+matching worker-reported input digest before saving either a variant or source
+edit; an older worker that cannot provide that evidence is rejected. `--dry-run` and
 `--require-forward` are not supported for source-target undo or redo. After a
 transport interruption, inspect the variant before retrying a commit.
 
@@ -253,7 +275,8 @@ When a candidate contains a nonempty, valid worker-recorded project-source and
 component-manifest map, the preview reports its canonical JSON digest as
 `source_manifest_evidence`. The condition compares that digest after candidate
 execution and re-reads the recorded files before saving; a mismatch rejects the
-save. Missing evidence cannot satisfy the condition. This covers only recorded
+save. Files must be canonical project paths; hashing is streamed and checks
+file identity and metadata before and after reading. Missing evidence cannot satisfy the condition. This covers only recorded
 files, not external libraries, weights, other resources, future imports, or
 changes after the check. The file hashes do not prove that the bytes read from
 disk are identical to the code actually loaded by Python.
@@ -302,12 +325,54 @@ between and after the checks. It is distinct from the variant manifest scope,
 which can additionally include component manifests.
 
 `layer.builtin_catalog` advertises `layer catalog`, a static, non-Python
-catalog of common fields for the currently supported built-in PyTorch Layer
-factories. `catalog_version: 1` and `scope: common-pytorch-constructor-fields`
-identify the hint format. It does not prove that a given PyTorch version,
+catalog of example fields for common PyTorch Layer factories. It is not an
+exhaustive allowlist. `catalog_version: 1` and
+`scope: common-pytorch-constructor-fields` identify the hint format;
+`exhaustive: false` explicitly states its coverage. It does not prove that a given PyTorch version,
 constructor argument, device, dtype, or input is usable. Clients can still
 accept raw JSON parameters; candidate construction and forward remain the
 authoritative checks for a particular environment and model.
+
+`runtime.torch_layer_catalog_v1` advertises the explicit
+`env probe --library torch --layer-catalog` query. It imports torch in the
+selected Python and reports bounded public `torch.nn.Module` classes and
+inspectable constructor parameter names, kinds and required flags. Import and
+signature inspection may execute code; no layer is constructed. Truncation,
+unavailable signatures and failures are reported. The result is a snapshot,
+not proof that a class can be instantiated or used with a given input. The
+worker capability `environment.torch_layer_catalog_v1` is required when the
+query is requested.
+
+Source Layer generation preserves runtime factory names and keyword strings
+when Python source identifier normalization would otherwise change them. Such
+calls can use explicit dictionary expansion. The automatic source parameter
+editor can address explicit keywords and literal `**` dictionaries with unique
+string keys; dynamic expansions, nested dictionary expansions, duplicate keys
+and `*args` still require manual source editing. All automatic changes require
+the usual source-location and preview checks. Newly generated custom factory
+calls use literal dictionaries; this alone does not establish that a factory
+call can be mapped uniquely to the constructed class. Earlier generated
+`json.loads` calls remain dynamic expressions and require manual editing.
+
+`edit.variant_layer_rng_v1` advertises optional `--layer-rng-device cuda:0`
+on variant `layer add` / `layer replace`, and `rng_devices` on individual
+variant `layer apply --operation` add/replace JSON objects, for example
+`"rng_devices":["cuda:0"]`. The flag may be repeated. Device IDs must be explicit, unique and from one
+backend. The Layer seed applies to CPU and those devices only; construction
+may initialize the selected backend. Existing operations without the field
+retain CPU-only behavior. The field is persisted and replayed by generated
+variant adapters, with worker feature `model.variant_layer_rng_v1` required.
+Source edits and custom edit providers do not support this option. Seeded
+generators do not guarantee deterministic algorithms, input or full-model
+weights. The workspace offers CPU-only, an observed indexed device or manual
+same-backend device IDs while preparing a variant add/replace; advanced users
+can also enter the operation JSON. Device observations may become stale.
+
+`edit.conditional_variant_edit_v1` advertises the workspace's required
+preview and conditional commit path: a variant edit can be previewed with a
+fresh forward and later committed against its variant base, input digest and
+source-manifest evidence. A client must preserve the reviewed seed and request
+and recheck its own context; these conditions do not pin all external state.
 
 Success exits 0. Business failures and invalid arguments are JSON error reports
 with nonzero exit status; `inconclusive` also has a nonzero exit status. stderr
@@ -348,6 +413,16 @@ evaluation. The evaluator is not called if the confirmed digest differs.
 This requires temporary space at least as large as the checkpoint; data and
 project code are governed by their separate provenance checks. Evaluation
 without the condition retains the prior loading behavior for compatibility.
+
+`evaluation.model_device_v1` adds `evaluate --device DEVICE`. The CLI requires the worker capability of the same name when this option is present. After loading checkpoint weights, the worker calls the model's `to()` and exposes the resolved device string as `context.device`; the evaluator is responsible for input placement. Without the option, `context.device` is `None` and prior placement behavior remains. Placement may execute user-defined `to()` code; the reported device is the resolved request, not independent proof of the placement of model state.
+
+For unseeded model observations and edits with a representative input, the CLI requests worker capability `data.runtime_sampling_seed_v1`. When that input resolves to a dataset, the worker chooses and reports a sampling seed instead of silently assuming zero. A plain batch factory retains ownership of its randomness. Historical training requests with no seed keep their legacy sampling policy.
+
+`data.raw_batch_binding_v1` adds `--batch-binding single-raw`: pass the complete batch-factory result as one positional argument without dataset auto-sampling. The distinct binding value is stored in project configuration, run inputs and checkpoint signatures; legacy `single` retains its prior sample-then-bind behavior. Explicit Dataset requests cannot be combined with `single-raw`. New CLI requests require matching worker capability when this binding is used.
+
+The preview worker accepts an omitted binding or `single-raw` for a batch factory; unsupported bindings and bindings attached to a Dataset source are rejected before the factory is called. This validation is not yet manually verified.
+
+Variant edit reports and `variant show` include `initialization_seed_decimal` as a decimal string, so a 64-bit construction seed can be displayed or passed back without floating-point rounding. Assembly generation reports expose the same field when a seed is recorded; a null value means no seed was recorded for that generation. Consumers of older reports must treat a missing string as unavailable rather than reconstructing a large integer from an imprecise JSON number. These additions are not yet manually verified.
 
 `export.conditional_checkpoint` adds `export DIRECTORY --run RUN
 --if-checkpoint-sha256 SHA256`. The selected run's checkpoint manifest must
@@ -503,6 +578,14 @@ a nonempty first manifest or `unavailable` when no project files were observed;
 older implementations may omit this field. A changed, missing or inconsistent
 manifest prevents publication. These observations do not prove which bytes were
 imported, cover external dependencies, or eliminate changes after the check.
+
+`assembly.show_runtime_paths_v1` means live assembly inspection uses the selected
+Python, working directory and project import roots. `assembly.generate_runtime_paths_v1`
+extends the same selection to both generation validation workers, compares
+the declared paths and resolves them again before publication. A client must
+check the relevant capability before forwarding explicit workspace path
+overrides. These capabilities do not prove that external dependencies or data
+are identical; implementation remains subject to the planned manual review.
 `input_comparison.status` separately reports whether the two actual forward
 inputs have matching complete `sha256-forward-input-v1` evidence: `same`,
 `different`, `unknown`, or `not_run` when there was no batch. Older responses
@@ -583,3 +666,209 @@ reported separately. A changed setting is reported as changed, but does not
 prove that the underlying data content differs. Older CLI versions may use
 `status: same` for declarations alone; consumers should treat that as unknown
 content identity. This release does not independently hash the dataset.
+
+## Capability evidence, readiness and compatibility boundary
+
+The catalogs describe different evidence layers and are not interchangeable:
+
+| Evidence | Source | What it establishes | What it does not establish |
+| --- | --- | --- | --- |
+| CLI interface capability | `--describe-interface` `data.capabilities` boolean map | This CLI build recognizes a guarded command/schema feature | Python availability, worker support, component conformance, or model behavior |
+| Worker feature registry | `compatibility.json#/required_features` and `#/operations`, mirrored by `python/model_maven_worker/protocol.py` | An operation is registered and names the worker features required before dispatch | Whether the selected runtime or model instance can satisfy those features |
+| Selected runtime capability | `doctor.data.compatibility` and `doctor.data.capabilities[]` | Worker protocol/API/state format and registered capability state for the selected Python/platform at query time | Model construction, data compatibility, observed path coverage, or safe editability |
+| Provider declaration | Component manifest | What the component claims in its versioned description | Runtime conformance until the corresponding check/test is run |
+| Model/data instance evidence | Explicit inspect, probe, preview, conformance, or candidate-validation report | Only the paths, inputs and scope actually observed by that operation | Unobserved/dynamic paths, later mutations, external dependencies, or future batches |
+
+An absent capability, failed query, malformed JSON, duplicate ID, invalid version,
+unknown status, or incompatible protocol is `unknown`/incompatible evidence. It
+must not be converted to `supported` or successful readiness. An older CLI that
+rejects `--describe-interface` has unknown interface capability; clients may keep
+only separately documented legacy-safe read-only actions. They must stop a
+protected write or execution route when its required interface capability cannot
+be established. For path values, pass the path as one argv value or a JSON string;
+spaces are ordinary path characters and must not be split or shell-expanded by a
+client.
+
+`OperationPlan` v2 defines `ready`, `needs_input`, `conditional`, `unsupported`,
+and `unknown`; facts and capabilities separately use `available`, `missing`,
+`conditional`, `unsupported`, and `unknown`. This is a point-in-time answer for
+one selected operation. It is not a project-wide score or a lock on files,
+configuration, runtime, data, model weights, or provider code. A missing source
+revision means freshness is unknown. Recompute before an operation-specific
+commit guard; a revision mismatch is a conflict, not permission to use the old
+plan. A successful legacy `Report` is not proof that readiness was known.
+
+Current coverage is partial. The application builds plans for selected command
+families, and `ApplicationUiServices` blocks missing, unsupported or unknown
+required inputs and capabilities when such a plan exists. A plan that fails
+structural validation is an error rather than an absent plan. Required
+conditional inputs, capabilities and facts are rejected unless an explicit
+operation-specific execution check exists: Layer provider verification is
+deferred to its worker, which checks the payload, source fingerprints and
+runtime identity before using the provider. Advisory conditions without a
+required conditional fact or capability remain visible but do not themselves
+assert a failed prerequisite. Commands without a readiness plan do not inherit
+this gate. The legacy interactive
+training-plan flow now starts only a `ready` plan and rechecks that the plan is
+unchanged after confirmation; an unavailable, unknown or conditional plan must
+be resolved and prepared again. This is not a claim that the contract is
+enforced everywhere or that a matching plan locks external resources.
+`DiagnosticDetails`
+can carry severity, scope, recovery action availability and evidence certainty,
+but current reports primarily provide legacy `code`, `message`, and optional
+`hint`. Hints are display text, not executable recovery actions. Recovery advice
+must name a compatible next query/action and be revalidated after the user selects
+it.
+
+## Query, preview, execution and cancellation
+
+The default/home view is query-only. It may read local metadata and show known
+catalog facts, but must not construct a user model, call a user batch/transform,
+run training/evaluation code, install packages, download weights, or mutate
+project files. When facts are unavailable it reports `unknown` and presents
+available inspection/configuration actions. `--describe-interface` does not
+start Python or import project code; its Python selection hint may read project
+configuration metadata. `doctor` may start the selected Python runtime to inspect
+it, but does not construct the selected model. An application readiness plan may
+ask `doctor` for runtime capabilities when its required inputs are present, so it
+is not a universal zero-process query.
+
+A preview is non-writing only with respect to the target configuration/source
+being planned. If its operation runs a forward, imports a selected component, or
+invokes user code, that must be stated by that operation's contract. A commit
+requires its documented explicit choice and revision/input guards, then
+revalidates the candidate. A lost or interrupted commit receipt leaves the
+outcome unknown; query the operation's request, run, source history, or current
+configuration before retrying.
+
+Cancellation is operation-specific and generally cooperative. Selected preview
+flows support cancellation and generation supersession; training stop asks the
+user loop to stop at a supported boundary. There is no common cancellable async
+operation envelope for every CLI command. A stop request or `USER_INTERRUPTED`
+report does not prove that no side effect occurred. Reconcile current operation
+state before retrying.
+
+Cache and freshness are likewise operation-specific. Model evidence cache keys
+and preview request generations have local identity rules; the application
+runtime capability catalog is process-local. No universal stale marker or global
+invalidation event exists. If a consumer cannot verify the evidence identity or
+source revision it needs, it shows the result as stale/unknown and requests a
+fresh query rather than reusing it as current evidence.
+
+## Neovim workspace mapping
+
+| Presentation boundary | Existing source of facts | Remaining boundary |
+| --- | --- | --- |
+| Project, model, input and environment context | `assembly show --config-only` for saved configuration; session overrides and buffer state in the workspace; `input_sources` and runtime fields in operation reports | A selected path or source revision does not prove an imported module, complete environment, device, or external data identity. Missing and stale evidence remain unknown. |
+| Actions and prerequisites | CLI interface capability map, operation-specific `readiness` facts/capabilities/actions, and the current observed report | No universal backend recommendation or complete action catalog exists; workspace suggestions are derived from its current project and evidence. Conditional and unsupported actions retain their reported limits. |
+| Preview and commit | Operation-specific preview report and conditions such as config revision, source-plan/manifest and input-content identities | Preview can execute user code even when it does not write the planned target. Guards cover their stated inputs, not arbitrary external state or all side effects. |
+| Results and recovery | Versioned report status and diagnostics; operation-specific run/request IDs, current files and the workspace's pending-operation marker | Cancellation and recovery are operation-specific. A lost or malformed receipt is unknown, not a successful rollback or proof that no process ran. Diagnostic `hint` text is not an executable recovery contract. |
+
+The journey states below map the current interface to facts, not to a promised
+universal backend state machine. The workspace derives its suggestion from the
+available context and last result; another action may replace that result.
+
+| Journey state | Current facts and actions | Unknown or unsupported boundary |
+| --- | --- | --- |
+| Starting a project | Saved metadata via `assembly show --config-only`; `discover` gives static entrypoint candidates; `init`/`scaffold` offer plans and guarded writes. | A missing or unreadable configuration must not be silently treated as a safe empty project. Static candidates do not prove imports or model behavior. |
+| Model selected, no representative input | Session selection and saved model/batch fields identify the configured factories; inspection can construct the model after confirmation. | A declared factory is not an observed sample. User-provided loops may supply their own data; no real dataset is fabricated. |
+| Preparing a forward | The confirmation identifies selected model, input, Python and known path/seed/device choices; the CLI capability and worker readiness are checked where supported. | Selection and capability declarations do not prove the instance will run. User code and Python startup hooks may have side effects. |
+| Forward failed | `probe` diagnostics, partial calls and source identities can support a report, input change or verified source navigation. | Missing, truncated or ambiguous observations are unknown; the last observed call is not necessarily the root cause, and failed execution may have side effects. |
+| Candidate modification | A dry-run `edit` or assembly plan supplies the candidate, validation and operation-specific revision/input/source guards before explicit commit. | Preview can execute code; checks cover only their reported scope, not arbitrary dependencies or external state. Unsupported source forms remain manual edits. |
+| Forward observed | A successful `probe` with executed forward records observations for the selected input; module navigation, semantic marks, edit and training preparation are separate choices. | Reused or partial evidence is identified; unobserved branches, external state and other inputs are not proved. A variant result remains separate from the source model. |
+| Run state unknown | Run/request lookup, logs and persistent pending markers provide operation-specific recovery paths. | Missing records or a lost receipt do not prove that a process stopped or never started; a user must inspect and decide before retrying. |
+
+For a command with a readiness plan, an inaccessible project directory,
+unreadable/invalid project configuration or invalid plan is an error; it is not
+silently treated as a command without a plan. An uninitialized project is a
+separate state and remains available to operations that accept explicit inputs.
+
+The framework-neutral loop, evaluation, data preview and assembly view, edit and code generation paths have readiness plans. Project operations retain their own guards:
+
+| Route | Existing operation-specific checks | Limit |
+| --- | --- | --- |
+| `loop-trial` / `loop-run` | A readiness plan checks the loop entry and selected worker declarations, including the signature and detached capability; the operation also validates paths, request and run identity. | The declarations-only worker query does not deliberately import PyTorch; Python startup hooks may still run. Missing metadata is unknown. Invalid or unavailable historical run IDs still use operation-specific diagnostics. User code, dependencies and resume contents remain unverified until execution. |
+| `evaluate` | A resolved historical training record supplies the Python for capability checks unless explicitly overridden; the plan checks evaluation, checkpoint and requested device capabilities. | The plan identifies a record, not a valid checkpoint or evaluator. The operation separately validates checkpoint and inputs; user code runs in the selected runtime and snapshots may differ. Missing records retain operation-specific diagnostics. |
+| Data preview | A readiness plan records the explicit source type and checks preview, dataset, whole-batch and selected runtime-path capabilities as applicable. | A selected source is not a verified factory or sample; the operation separately validates parameters and paths and may execute user code or renderers. A missing source keeps the operation-specific diagnostic. |
+| Assembly view, edits and generation | Runtime assembly view and edits check selected model, applicable batch, runtime paths and worker capabilities; generation also checks code-generation and selected variant requirements. Batch patch and route settings require the saved project batch; `show --config-only` remains static. | A ready plan does not verify components, source, weights or the forward result. Each operation retains its revision checks and may execute user code; project creation/configuration retain their own guards. Invalid generation paths or unavailable variants retain operation-specific diagnostics. |
+
+These checks do not yet provide a single readiness envelope or common
+cancellation contract for all routes. See the operation descriptions for exact
+requirements; an unlisted operation must not be assumed to have equivalent
+guards.
+
+For required runtime capabilities, an explicit unsupported state offers an environment inspection action; an unknown or incompatible worker declaration offers a diagnostic action. An older worker that lacks the declarations-only endpoint remains unknown and the requested operation is not started. These actions do not install dependencies or establish that a particular model is supported.
+
+The workspace displays each readiness action's reported availability. Only an
+action explicitly marked `available` can open a known workspace handler;
+conditional, unsupported, missing or unknown availability remains advice until
+the conditions are reviewed and a fresh plan reports availability. A handler
+still performs its own current-context checks and confirmations. Current CLI
+execution reports can wrap the complete operation plan under `data.readiness`,
+with actions in `data.readiness.readiness.actions`; older direct readiness
+objects are also accepted. Missing actions or availability are not inferred.
+
+The current workspace route map is recorded in
+`operations.json#/workspace_entry_matrix`; its source is
+`../model-maven-tui/lua/model_maven/workspace.lua` keybindings and
+`../model-maven-tui/lua/model_maven/transport.lua` request validation. `M.open`
+creates the panel and refreshes saved state with `assembly show --config-only`.
+Key `I` requests `--describe-interface` and labels returned booleans as CLI
+declarations; it may separately display a still-current inspect/probe report as
+model-instance evidence. It does not run a model and does not query the selected
+worker runtime. Keys `i`/`l` issue model inspection/layer listing, `p` issues a
+forward probe, `w`/`W` prepare Layer edit candidates, `A` prepares assembly
+changes, `y`/`T` prepare training actions, `R`/`H` reconcile run state, and `C`
+interrupts the active client process request. Their CLI report operation and
+worker route IDs are listed in the matrix and cross-referenced to
+`compatibility.json#/operations`. Key `Z` reads saved variant metadata without
+running the model; the selected variant's forward, edit, training and
+supervision actions separately check their advertised capabilities and pin the
+selected revision where supported. A source module detail can also initiate a
+new variant edit with `V`. The reported structure is not proof of execution,
+and observations made on a variant are not source-model observations.
+`F`, `n`/`a`, `Q`/`S`, and `e`/`E`/`K` are also mapped in the matrix:
+static discovery and configuration previews do not establish runtime behavior;
+explicit environment inspection can start Python and import libraries; saved
+runtime choices do not freeze their contents.
+
+The workspace transport validates report protocol v1, operation, status/exit-code
+agreement, successful data presence, and required interface-catalog identity.
+Missing CLI or incompatible/malformed catalog stops guarded actions before the
+requested operation. For actions with explicit runtime-path overrides it first
+checks `runtime.workspace_paths_v1` and the route-specific CLI capability. It
+passes command arguments as an argv array, so spaces in a path remain part of one
+argument; it does not rely on shell quoting.
+
+If this preliminary capability query fails, the transport reports its bounded
+reason and marks the requested action as not started. The query process itself
+may have started; this distinction applies to the subsequent model, data, or
+training operation, not to arbitrary side effects of a nonconforming CLI.
+
+The TUI also tracks project config revisions, source buffer/disk changes and a
+per-session change epoch. A changed context labels prior reports stale and gates
+execution; a final check rescans open Python buffers instead of relying on the
+initial comparison cache. Cancellation during capability discovery is reported
+as cancelled before start. After a request starts, the TUI distinguishes a
+completed operation, `USER_INTERRUPTED`, and an unknown cancellation outcome;
+unknown outcomes require inspecting affected files or run state before retry.
+These are TUI request/session behaviors, not a universal backend stale-event or
+async-operation protocol. The capability overview itself is not a unified
+per-operation preflight: it combines interface declarations with available
+current instance reports, while selected-runtime doctor evidence and action
+specific worker feature gates remain separate.
+
+The workspace capability overview reuses these existing sources:
+
+| Source | Reused fields | Boundary |
+| --- | --- | --- |
+| `--describe-interface` | CLI capability IDs for probe, guarded edits, training and supervision | A declaration is CLI support, not proof for the selected runtime or model. Missing or unavailable metadata is unknown. |
+| Current inspect/layers report | Module paths, source-edit and insertion candidates and rejection reasons | Candidates require an individual preview; they do not authorize an edit. |
+| Current probe report | Actual forward status and observed input/call paths | Unobserved branches and truncated calls remain unknown. |
+| Current training trial | Reported mode, supervision and forward/loss/backward/resume seam information and coverage | Unreported fields remain unknown; a trial does not establish other inputs or training runs. |
+| Neovim source buffer | Manual takeover in the existing buffer | Unsaved changes are not executed; save and revalidate explicitly. |
+
+There is still no unified, enforced readiness matrix combining selected-runtime
+doctor evidence with model-instance evidence. Runtime checks require explicit
+confirmation, and individual operations retain their own capability and
+revision guards.

@@ -30,7 +30,7 @@ def _fingerprint(classes, samples, extensions, excluded_files=()):
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
-def scan_class_folder(root, extensions=DEFAULT_IMAGE_EXTENSIONS):
+def scan_class_folder(root, extensions=DEFAULT_IMAGE_EXTENSIONS, *, digest_cache=None):
     """Index `<root>/<class>/*` paths and contents without image decoding."""
     root = Path(root).expanduser().resolve()
     if not root.is_dir():
@@ -57,6 +57,7 @@ def scan_class_folder(root, extensions=DEFAULT_IMAGE_EXTENSIONS):
     classes = sorted(names, key=lambda name: name.casefold())
     class_to_idx = {label: index for index, label in enumerate(classes)}
     samples = []
+    next_cache, reused = {}, 0
     for label in classes:
         class_root = root / label
         for current, dirs, files in os.walk(class_root, followlinks=False):
@@ -69,10 +70,18 @@ def scan_class_folder(root, extensions=DEFAULT_IMAGE_EXTENSIONS):
                     before = path.stat(follow_symlinks=False)
                     if not stat.S_ISREG(before.st_mode):
                         continue
-                    digest = hashlib.sha256()
-                    with path.open("rb") as stream:
-                        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-                            digest.update(chunk)
+                    relative = path.relative_to(root).as_posix()
+                    identity = (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns, before.st_ctime_ns)
+                    cached = digest_cache.get(relative) if isinstance(digest_cache, dict) else None
+                    if isinstance(cached, tuple) and len(cached) == 2 and cached[0] == identity:
+                        digest_value = cached[1]
+                        reused += 1
+                    else:
+                        digest = hashlib.sha256()
+                        with path.open("rb") as stream:
+                            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                                digest.update(chunk)
+                        digest_value = digest.hexdigest()
                     after = path.stat(follow_symlinks=False)
                 except OSError as error:
                     raise UserError(
@@ -81,28 +90,32 @@ def scan_class_folder(root, extensions=DEFAULT_IMAGE_EXTENSIONS):
                         "修复文件权限或显式排除该相对路径后重新建立数据协议。",
                         {"path": path.relative_to(root).as_posix()},
                     ) from error
-                if (before.st_size, before.st_mtime_ns, before.st_ino) != (
-                    after.st_size, after.st_mtime_ns, after.st_ino
-                ):
+                if identity != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns):
                     raise UserError(
                         "DATASET_CHANGED_DURING_SCAN",
                         f"扫描期间样本发生变化：{path.relative_to(root).as_posix()}",
                         "等待文件写入完成后重新扫描。",
                     )
-                relative = path.relative_to(root).as_posix()
+                if isinstance(digest_cache, dict) and len(next_cache) < 100_000:
+                    next_cache[relative] = (identity, digest_value)
                 samples.append({
                     "path": relative,
                     "label": label,
                     "class_index": class_to_idx[label],
                     "size_bytes": after.st_size,
-                    "sha256": digest.hexdigest(),
+                    "sha256": digest_value,
                     "sample_id": relative,
                 })
     if not samples:
         raise UserError("CLASS_DATASET_EMPTY", "分类目录中没有支持的图像文件。", f"当前支持扩展名：{', '.join(normalized_extensions)}。")
     samples.sort(key=lambda item: (item["label"].casefold(), item["path"]))
-    class_counts = {label: sum(sample["label"] == label for sample in samples) for label in classes}
+    class_counts = {label: 0 for label in classes}
+    for sample in samples:
+        class_counts[sample["label"]] += 1
     fingerprint = _fingerprint(classes, samples, normalized_extensions)
+    if isinstance(digest_cache, dict):
+        digest_cache.clear()
+        digest_cache.update(next_cache)
     return {
         "algorithm": INDEX_ALGORITHM,
         "classes": classes,
@@ -115,6 +128,7 @@ def scan_class_folder(root, extensions=DEFAULT_IMAGE_EXTENSIONS):
         "indexing": {
             "decoded_images": False,
             "content_hashed": True,
+            "content_hashes_reused": reused,
             "root_path_persisted": False,
         },
         "excluded_files": [],

@@ -1,5 +1,6 @@
 """Real-batch forward tracing and gradient verification."""
 
+import ast
 import hashlib
 import hmac
 import inspect
@@ -7,6 +8,7 @@ import json
 import math
 import re
 import sys
+import sysconfig
 import threading
 import traceback
 import uuid
@@ -15,15 +17,17 @@ from pathlib import Path
 from ..protocol import UserError
 from ..tensor_inputs.content_identity import fingerprint as _fingerprint_forward_inputs
 from ..tensor_inputs import snapshot as input_snapshot
-from .contracts import check_contract, validate_contract_definition
+from .contracts import check_contract, load_contract
 from .evidence_store import (
     build_evidence_identity,
+    environment_fingerprint,
     invalidation_reasons,
     load_evidence,
     load_evidence_with_inventory,
     load_latest_identity,
     reconcile_branch_evidence,
     save_evidence,
+    weight_fingerprint_report,
 )
 from .local_probe import replay_invocation
 from .identity_links import TensorIdentityTrace
@@ -31,6 +35,192 @@ from .shape import infer_with_fx_meta
 
 
 _MAX_BRANCH_FINGERPRINT_BYTES = 64 * 1024 * 1024
+
+
+def _declaration_digest(value):
+    try:
+        encoded = json.dumps(value, sort_keys=True, ensure_ascii=False,
+                             separators=(",", ":")).encode("utf-8")
+    except (TypeError, ValueError, RecursionError):
+        return None
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _safe_data_observation(observation):
+    """Retain reproducibility metadata while replacing user identifiers with digests."""
+    if not isinstance(observation, dict):
+        return None
+    sampling = observation.get("sampling", {})
+    if not isinstance(sampling, dict):
+        sampling = {}
+    sample_ids = sampling.get("sample_ids")
+    return {
+        "source_sha256": _declaration_digest(observation.get("source"))
+        if observation.get("source") is not None else None,
+        "adapter": observation.get("adapter") if isinstance(observation.get("adapter"), str) else None,
+        "adapter_version": observation.get("adapter_version")
+        if isinstance(observation.get("adapter_version"), str) else None,
+        "split_sha256": _declaration_digest(observation.get("split"))
+        if observation.get("split") is not None else None,
+        "dataset_fingerprint_sha256": _declaration_digest(observation.get("dataset_fingerprint"))
+        if observation.get("dataset_fingerprint") is not None else None,
+        "sampling": {
+            key: sampling.get(key)
+            for key in ("algorithm", "seed_decimal", "requested_samples", "actual_samples",
+                        "stable_sample_ids", "seed_source")
+            if isinstance(sampling.get(key), (str, int, bool)) or sampling.get(key) is None
+        } | {
+            "sample_count": len(sample_ids) if isinstance(sample_ids, list) else None,
+            "sample_ids_sha256": _declaration_digest(sample_ids)
+            if isinstance(sample_ids, list) and sample_ids else None,
+        },
+    }
+
+
+def _input_source_compatibility(provenance):
+    """Expose the bounded source kind through the existing TUI input-source key."""
+    input_report = provenance.get("input") if isinstance(provenance, dict) else None
+    if not isinstance(input_report, dict):
+        return {"batch": {"kind": "unknown", "checkability": "unknown"}}
+    return {
+        "batch": {
+            "kind": input_report.get("source_kind", "unknown"),
+            "checkability": input_report.get("checkability", "unknown"),
+        }
+    }
+
+
+def _run_provenance(model, request, *, torch_module, batch_content, weight_report,
+                    execution_status, calls=None, trace_truncated=False,
+                    snapshot_status=None, calls_observed=None,
+                    post_weight_report=None, output_signature=None):
+    observation = request.get("_data_observation")
+    sampling = observation.get("sampling", {}) if isinstance(observation, dict) else {}
+    if not isinstance(sampling, dict):
+        sampling = {}
+    variant = request.get("variant")
+    execution_seed = request.get("seed")
+    construction_seed = variant.get("seed") if isinstance(variant, dict) else execution_seed
+    seed_policy = (
+        "reset_after_variant" if isinstance(variant, dict) and type(execution_seed) is int
+        else "construction_stream" if type(construction_seed) is int else "runtime"
+    )
+    call_items = calls if isinstance(calls, list) else []
+    paths = sorted({
+        path for call in call_items
+        for path in call.get("paths", [])
+        if isinstance(path, str)
+    })
+    anchors = [call.get("implementation") for call in call_items
+               if isinstance(call.get("implementation"), dict)]
+    anchors_available = sum(
+        isinstance(anchor.get("source_sha256"), str) for anchor in anchors
+    )
+    anchor_digests = sorted({
+        anchor["source_sha256"] for anchor in anchors
+        if isinstance(anchor.get("source_sha256"), str)
+    })
+    call_evidence = []
+    for call in call_items[:256]:
+        implementation = call.get("implementation")
+        call_evidence.append({
+            "paths": [path for path in call.get("paths", []) if isinstance(path, str)],
+            "module_type": call.get("module_type"),
+            "invocation_index": call.get("invocation_index"),
+            "implementation_source_sha256": implementation.get("source_sha256")
+            if isinstance(implementation, dict) else None,
+            "implementation_checkability": "source_digest_available"
+            if isinstance(implementation, dict) and isinstance(implementation.get("source_sha256"), str)
+            else "source_digest_unknown",
+        })
+    replayed = request.get("replay_input_from") is not None
+    input_source_kind = (
+        "snapshot_replay" if replayed
+        else "dataset_sample" if isinstance(observation, dict)
+        else "batch_factory" if isinstance(request.get("batch"), str) and request.get("batch")
+        else "unknown"
+    )
+    model_anchor = implementation_anchor(model, request.get("project_root", "."))
+    safe_model_anchor = {
+        key: model_anchor.get(key)
+        for key in ("qualified_type", "source_file", "source_sha256", "declaration_line")
+        if key in model_anchor and not (
+            key == "source_file" and isinstance(model_anchor.get(key), str)
+            and Path(model_anchor["source_file"]).is_absolute()
+        )
+    }
+    return {
+        "schema": 1,
+        "execution_status": execution_status,
+        "input": {
+            "source_kind": input_source_kind,
+            "declared_batch_sha256": _declaration_digest(request.get("batch"))
+            if request.get("batch") is not None else None,
+            "dataset_fingerprint_sha256": _declaration_digest(observation.get("dataset_fingerprint"))
+            if isinstance(observation, dict) and observation.get("dataset_fingerprint") is not None else None,
+            "split_declared": isinstance(observation, dict) and observation.get("split") is not None,
+            "stable_sample_ids_reported": sampling.get("stable_sample_ids") is True,
+            "sample_count": len(sampling.get("sample_ids", []))
+            if isinstance(sampling.get("sample_ids"), list) else None,
+            "content": batch_content,
+            "data_observation": _safe_data_observation(observation),
+            "snapshot_status": snapshot_status or ("replayed" if replayed else "not_requested"),
+            "checkability": "content_digest_available" if batch_content.get("status") == "available"
+            else "content_unknown",
+        },
+        "output": {
+            "structure_signature": output_signature,
+            "status": "observed" if output_signature is not None and execution_status == "executed"
+            else "partial" if execution_status == "failed"
+            else "not_observed" if execution_status == "not_executed"
+            else "historical_or_unknown" if execution_status == "reused"
+            else "unknown",
+            "values_fingerprinted": False,
+            "scope": "bounded structure metadata only; no output tensor values retained",
+        },
+        "model": {
+            "declared_model_sha256": _declaration_digest(request.get("model")),
+            "implementation": safe_model_anchor,
+            "variant_requested": variant is not None,
+            "weights_before_forward": weight_report,
+            "weights_after_forward": post_weight_report,
+            "weight_comparison": (
+                "matched" if isinstance(post_weight_report, dict)
+                and weight_report.get("status") == "available"
+                and post_weight_report.get("status") == "available"
+                and hmac.compare_digest(weight_report["digest"], post_weight_report["digest"])
+                else "changed" if isinstance(post_weight_report, dict)
+                and weight_report.get("status") == "available"
+                and post_weight_report.get("status") == "available"
+                else "unknown_after_execution" if execution_status in {"executed", "failed"}
+                else "not_observed"
+            ),
+        },
+        "environment": environment_fingerprint(torch_module),
+        "randomness": {
+            "requested_seed_decimal": str(execution_seed) if type(execution_seed) is int else None,
+            "construction_seed_decimal": str(construction_seed) if type(construction_seed) is int else None,
+            "forward_rng_policy": seed_policy,
+            "checkability": "seed_policy_reported_ambient_and_user_random_state_unknown",
+        },
+        "path_evidence": {
+            "status": "observed" if execution_status == "executed" else
+            "partial_failed" if execution_status == "failed" else
+            "not_observed" if execution_status == "not_executed" else "historical_or_unobserved",
+            "requested_path": request.get("path"),
+            "requested_call": request.get("call", "all"),
+            "observed_paths": paths,
+            "observed_call_count": calls_observed if type(calls_observed) is int else len(call_items),
+            "retained_call_count": len(call_items),
+            "trace_truncated": bool(trace_truncated),
+            "implementation_anchor_count": len(anchors),
+            "implementation_anchor_available_count": anchors_available,
+            "implementation_source_sha256": anchor_digests,
+            "module_calls": call_evidence,
+            "module_calls_truncated": len(call_items) > len(call_evidence),
+            "scope": "registered module calls retained by this Probe; not all Python operations or unexecuted branches",
+        },
+    }
 
 
 def _estimated_input_bytes(value, torch_module, seen=None, depth=0, item_count=None):
@@ -96,8 +286,11 @@ def _signature_shape(value):
                 "items": {
                     key: _signature_shape(item)
                     for key, item in sorted(items.items())
+                    if not (key == "<truncated>" and value.get("items_truncated") is True)
                 } if isinstance(items, dict) else {},
-                "truncated": value.get("<truncated>"),
+                "truncated": items.get("<truncated>") if isinstance(items, dict) and value.get("items_truncated") is True else 0,
+                "keys_all_strings": value.get("keys_all_strings"),
+                "observed_keys_all_strings": value.get("observed_keys_all_strings"),
             }
         if kind in {"tuple", "list"}:
             items = value.get("items", [])
@@ -130,7 +323,7 @@ def _input_signature(metadata):
         ensure_ascii=False,
         separators=(",", ":"),
     ).encode("utf-8")
-    return "structure-v1:" + hashlib.sha256(canonical).hexdigest()
+    return "structure-v3:" + hashlib.sha256(canonical).hexdigest()
 
 
 def _port_paths(metadata, prefix, limit=128):
@@ -142,8 +335,20 @@ def _port_paths(metadata, prefix, limit=128):
         if isinstance(value, dict) and value.get("kind") == "dict":
             items = value.get("items", {})
             if isinstance(items, dict) and items:
+                # Metadata stringifies dictionary keys; do not turn ambiguous
+                # non-string keys or the truncation marker into selectable ports.
+                if value.get("observed_keys_all_strings", value.get("keys_all_strings")) is not True:
+                    return
                 for key, item in items.items():
-                    visit(item, f"{path}.{str(key)[:128]}")
+                    if key == "<truncated>" and value.get("items_truncated") is True:
+                        continue
+                    key = str(key)
+                    if len(key) > 128:
+                        continue
+                    suffix = ("." + key if key and not any(c in key for c in ".[]")
+                              and not any(ord(c) < 32 or ord(c) == 127 for c in key)
+                              else "[" + json.dumps(key, ensure_ascii=True) + "]")
+                    visit(item, path + suffix)
                 return
         elif isinstance(value, dict) and value.get("kind") in {"tuple", "list"}:
             items = value.get("items", [])
@@ -151,7 +356,8 @@ def _port_paths(metadata, prefix, limit=128):
                 for index, item in enumerate(items):
                     visit(item, f"{path}[{index}]")
                 return
-        paths.append(path[:512])
+        if len(path) <= 512:
+            paths.append(path)
 
     visit(metadata, prefix)
     return paths
@@ -189,31 +395,57 @@ def _batch_identity(request):
 
 
 def implementation_anchor(module, project_root):
-    """Identify project-owned module code without retaining source or values."""
+    """Identify readable Python module code without retaining source or values."""
     module_type = type(module)
     qualified_type = f"{module_type.__module__}.{module_type.__qualname__}"[:512]
-    if module_type.__module__.split(".", 1)[0] == "torch":
-        return {
-            "qualified_type": qualified_type,
-            "source_file": "@runtime:" + qualified_type,
-            "source_sha256": hashlib.sha256(qualified_type.encode("utf-8")).hexdigest(),
-        }
     try:
         filename = inspect.getsourcefile(module_type)
         if not filename:
             return {"qualified_type": qualified_type, "source_file": None, "source_sha256": None}
         root = Path(project_root).resolve()
         source = Path(filename).resolve(strict=True)
-        relative = source.relative_to(root)
         if not source.is_file() or source.stat().st_size > 8 * 1024 * 1024:
             raise OSError("source size or type unsupported")
-        digest = hashlib.sha256(source.read_bytes()).hexdigest()
+        contents = source.read_bytes()
+        digest = hashlib.sha256(contents).hexdigest()
+        environment = Path(sys.prefix).resolve()
+        in_project_environment = environment != root and environment.is_relative_to(root) and source.is_relative_to(environment)
+        runtime_roots = [Path(value).resolve() for name in ("purelib", "platlib", "stdlib", "platstdlib")
+                         if (value := sysconfig.get_path(name))]
+        in_runtime_library = any(source.is_relative_to(directory) for directory in runtime_roots)
+        if not source.is_relative_to(root) or in_project_environment or in_runtime_library:
+            if not qualified_type or "/" in qualified_type or "\\" in qualified_type:
+                raise ValueError("external type identity unsupported")
+            return {"qualified_type": qualified_type, "source_file": "@external:" + qualified_type,
+                    "source_sha256": digest, "source_path": str(source)}
+        relative = source.relative_to(root)
+        # A declaration is only a navigation hint, not proof of the code
+        # currently executing: modules can be redefined or changed after import.
+        declaration_line = None
+        parts = module_type.__qualname__.split(".")
+        if parts and all(part.isidentifier() for part in parts):
+            try:
+                nodes = ast.parse(contents).body
+                for part in parts:
+                    matches = [node for node in nodes
+                               if isinstance(node, ast.ClassDef) and node.name == part]
+                    if len(matches) != 1:
+                        break
+                    declaration_line = matches[0].lineno
+                    nodes = matches[0].body
+                else:
+                    parts = []
+                if parts:
+                    declaration_line = None
+            except (SyntaxError, ValueError, UnicodeError, RecursionError, MemoryError):
+                declaration_line = None
         return {
             "qualified_type": qualified_type,
             "source_file": relative.as_posix(),
             "source_sha256": digest,
+            "declaration_line": declaration_line,
         }
-    except (OSError, TypeError, ValueError):
+    except (OSError, TypeError, ValueError, RuntimeError):
         return {"qualified_type": qualified_type, "source_file": None, "source_sha256": None}
 
 
@@ -248,27 +480,24 @@ def probe(
     model.train(bool(request.get("training", False)))
     input_tree = tree_fn(torch_module, {"args": args, "kwargs": kwargs})
     input_signature = _input_signature(input_tree)
-    contract = None
+    contract = request["_resolved_contract"] if "_resolved_contract" in request else load_contract(request)
     shape_inference = None
-    contract_path = request.get("contract")
-    if contract_path:
-        path = Path(contract_path)
-        if not path.is_absolute():
-            path = Path(request.get("project_root", ".")) / path
-        try:
-            with path.open("r", encoding="utf-8") as stream:
-                contract = json.load(stream)
-        except (OSError, json.JSONDecodeError) as error:
-            raise UserError(
-                "MODEL_CONTRACT_INVALID",
-                f"无法读取模型契约 {str(path)!r}：{error}",
-                "使用有效的 UTF-8 JSON 契约文件；契约只参与检查，不会修改模型或项目配置。",
-            ) from error
-        contract = validate_contract_definition(contract)
     current_source_inventory = {}
+    batch_content = _fingerprint_forward_inputs(args, kwargs, torch_module)
+    weights_report = weight_fingerprint_report(model, torch_module)
+    # A plain batch factory cannot supply the stable dataset identity required
+    # for cache reuse. With no contract, prepared provenance is never returned:
+    # success/failure both collect a fresh post-forward report. Avoid an extra
+    # environment inventory and source lookup in this common path.
+    current_provenance = None
+    if contract is not None or isinstance(request.get("_data_observation"), dict):
+        current_provenance = _run_provenance(
+            model, request, torch_module=torch_module, batch_content=batch_content,
+            weight_report=weights_report, execution_status="prepared",
+        )
     evidence_identity, cache_unavailable_reason = build_evidence_identity(
-        model, request, torch_module=torch_module, contract=contract,
-        source_inventory_out=current_source_inventory,
+        model, request, torch_module=torch_module, input_content=batch_content, contract=contract,
+        source_inventory_out=current_source_inventory, weights_report=weights_report,
     )
     previous_identity = load_latest_identity(request.get("project_root", ".")) if evidence_identity else None
     invalidated = invalidation_reasons(previous_identity, evidence_identity) if evidence_identity else []
@@ -280,10 +509,18 @@ def probe(
     if evidence_identity is not None and not request.get("local_probe") and not request.get("_disable_evidence_cache") and request.get("expected_input_content") is None and capture_path is None and replay_path is None:
         cached_data, cache_key = load_evidence(request.get("project_root", "."), evidence_identity)
         if cached_data is not None:
+            cached_data["historical_run_provenance"] = cached_data.get("run_provenance")
+            current_provenance["execution_status"] = "reused"
+            cached_data["run_provenance"] = current_provenance
+            cached_data["input_sources"] = _input_source_compatibility(current_provenance)
             cached_data["evidence_cache"] = {"status": "reused", "key": cache_key, "invalidated": []}
+            cached_data["forward_execution"] = "reused"
+            # This describes the input prepared for this request, not a new
+            # forward execution; it was checked against the cache identity.
+            cached_data["batch_content"] = batch_content
             cached_data["coverage"] = (
-                "复用与源码、权重、组件、契约及稳定样本身份完全匹配的元数据证据；"
-                "未执行本次前向，不能代表身份范围外的样本或分支。"
+                "复用与源码、权重、组件、契约、稳定样本身份及输入内容匹配的历史元数据证据；"
+                "未执行本次前向，外部数据、环境变量及其他未记录状态仍可能改变结果。"
             )
             return cached_data
         cache_key = None
@@ -291,7 +528,6 @@ def probe(
         cache_key = None
     else:
         cache_key = None
-    batch_content = _fingerprint_forward_inputs(args, kwargs, torch_module)
     expected_content = request.get("expected_input_content")
     if expected_content is not None:
         if not isinstance(expected_content, str) or not re.fullmatch(r"[0-9a-f]{64}", expected_content):
@@ -328,13 +564,17 @@ def probe(
                     "symbols": contract.get("symbols", {}),
                 }
                 contract_report = check_contract(input_only_contract, input_tree, {})
+                contract_report["contract_content_sha256"] = request.get("_contract_content_sha256")
+                contract_report["contract_identity_check"] = "matched" if request.get("if_contract_sha256") is not None else "not_requested"
                 contract_report["status"] = "failed"
                 contract_report["coverage"] = "静态维度错误已在真实前向前证实；输出端口尚未执行。"
+                current_provenance["execution_status"] = "not_executed"
                 raise UserError(
                     "MODEL_CONTRACT_FAILED",
                     "Meta/FX 推演发现静态维度不匹配，真实前向尚未执行。",
                     "根据 data.shape_inference.diagnostics 中的图节点、expected 和 actual 修正接线或 Layer 参数。",
                     {
+                        "forward_execution": "not_executed",
                         "probe_id": probe_id,
                         "forward_id": forward_id,
                         "batch_id": batch_id,
@@ -343,12 +583,19 @@ def probe(
                         "input_signature": input_signature,
                         "shape_inference": shape_inference,
                         "contract_report": contract_report,
+                        "run_provenance": current_provenance,
+                        "input_sources": _input_source_compatibility(current_provenance),
                         "coverage": "静态推演证实的节点错误；动态分支和不支持算子未被证明。",
                     },
                 )
         else:
             shape_inference = {"status": "not_requested", "coverage": "本次只检查声明契约与真实批次。"}
     modules, aliases = module_entries_fn(model)
+    # Keep a separate bounded view of the selected subtree. A global trace
+    # can fill up before a late layer executes in a large model.
+    selected = normalize_path_fn(request.get("path"))
+    selected_calls = []
+    selected_observed = 0
     ids = {key: f"module-{index + 1}" for index, key in enumerate(modules)}
     counts = {key: 0 for key in modules}
     calls = []
@@ -362,7 +609,7 @@ def probe(
     identity_trace = TensorIdentityTrace(torch_module)
 
     def before(module, call_args, call_kwargs):
-        nonlocal observed, last_observed_call, branch_fingerprint_bytes
+        nonlocal observed, last_observed_call, branch_fingerprint_bytes, selected_observed
         key = id(module)
         counts[key] += 1
         observed += 1
@@ -371,8 +618,12 @@ def probe(
         invocation_id = f"{forward_id}:call-{observed}"
         parent = local.stack[-1] if local.stack else None
         call_inputs = tree_fn(torch_module, {"args": call_args, "kwargs": call_kwargs})
-        estimated_bytes = _estimated_input_bytes(
-            (call_args, call_kwargs), torch_module
+        # Without a complete evidence identity no invocation can be reused,
+        # so traversing every call's inputs merely to estimate hash cost is
+        # unnecessary (and can be expensive for deeply nested structures).
+        estimated_bytes = (
+            _estimated_input_bytes((call_args, call_kwargs), torch_module)
+            if evidence_identity is not None else None
         )
         if (
             evidence_identity is not None
@@ -387,7 +638,11 @@ def probe(
         else:
             call_content_identity = {
                 "status": "unsupported",
-                "reason": "aggregate invocation fingerprint budget exceeded or input size unknown",
+                "reason": (
+                    "complete evidence identity unavailable"
+                    if evidence_identity is None
+                    else "aggregate invocation fingerprint budget exceeded or input size unknown"
+                ),
             }
         module_type = type(module)
         if module_type not in implementation_anchors:
@@ -414,17 +669,26 @@ def probe(
             "input_output_paths": _port_paths(call_inputs, "inputs"),
             "input_tensor_matches": identity_trace.inputs(call_args, call_kwargs),
         }
-        if request.get("local_probe") and observed <= max_calls:
-            captured_inputs[invocation_id] = (call_args, call_kwargs)
+        selected_match = selected != "model" and any(
+            path == selected or path.startswith(selected + ".") for path in aliases[key]
+        )
+        if selected_match:
+            selected_observed += 1
         record = None
-        if len(calls) < max_calls:
+        in_global_trace = len(calls) < max_calls
+        if in_global_trace:
             record = last_observed_call
             calls.append(record)
-        local.stack.append((observed, key, invocation_id, record))
+        if selected_match and len(selected_calls) < max_calls:
+            record = last_observed_call
+            selected_calls.append(record)
+            if request.get("local_probe") and selected in aliases[key]:
+                captured_inputs[invocation_id] = (call_args, call_kwargs)
+        local.stack.append((observed, key, invocation_id, record, in_global_trace))
 
     def after(module, call_args, call_kwargs, output):
         if getattr(local, "stack", None):
-            _, _, invocation_id, record = local.stack.pop()
+            _, _, invocation_id, record, in_global_trace = local.stack.pop()
             target = record
             if (
                 target is None
@@ -437,7 +701,7 @@ def probe(
                 target["outputs"] = output_tree
                 target["output_signature"] = _input_signature(output_tree)
                 target["input_output_paths"].extend(_port_paths(output_tree, "outputs"))
-                if record is not None:
+                if in_global_trace:
                     identity_trace.outputs(output, invocation_id)
 
     for module in modules.values():
@@ -448,6 +712,7 @@ def probe(
             output = model(*args, **kwargs)
     except Exception as error:
         traceback.print_exc(file=sys.stderr)
+        post_weights_report = weight_fingerprint_report(model, torch_module)
         origin = request.get("_model_origin")
         failure_origin = None
         if isinstance(origin, dict):
@@ -458,7 +723,8 @@ def probe(
                 "scope": "partial_failure_context",
                 "params": {"input_routes": routes} if isinstance(routes, dict) else {},
                 "injection_evidence": [
-                    {"slot": item.get("slot"), "registered_paths": item.get("registered_paths")}
+                    {"slot": item.get("slot"), "registered_paths": item.get("registered_paths"),
+                     "shared_with_slots": item.get("shared_with_slots")}
                     for item in bindings if isinstance(item, dict)
                 ] if isinstance(bindings, list) else [],
             }
@@ -472,19 +738,59 @@ def probe(
                 relative = frame_path.relative_to(project_root)
             except (OSError, ValueError):
                 continue
-            project_frames.append({
+            frame_record = {
                 "file": relative.as_posix(),
                 "line": frame.lineno,
                 "function": frame.name,
-            })
+            }
+            project_frames.append(frame_record)
+        project_frames = project_frames[-16:]
+        identities = {}
+        for frame_record in project_frames:
+            frame_path = project_root / frame_record["file"]
+            if frame_path in identities:
+                frame_record.update(identities[frame_path])
+                continue
+            identity = {}
+            # This identifies the file as read after the exception. It does not
+            # prove the running code was loaded from these exact bytes.
+            try:
+                before = frame_path.stat()
+                if before.st_size <= 4 * 1024 * 1024 and frame_path.is_file():
+                    with frame_path.open("rb") as source_file:
+                        contents = source_file.read(4 * 1024 * 1024 + 1)
+                    after = frame_path.stat()
+                    if (len(contents) <= 4 * 1024 * 1024 and before.st_size == after.st_size
+                            and before.st_mtime_ns == after.st_mtime_ns
+                            and before.st_ctime_ns == after.st_ctime_ns
+                            and before.st_ino == after.st_ino):
+                        identity["source_sha256"] = hashlib.sha256(contents).hexdigest()
+                        identity["identity_scope"] = "file-read-after-error"
+            except OSError:
+                pass
+            identities[frame_path] = identity
+            frame_record.update(identity)
+        failed_provenance = _run_provenance(
+            model, request, torch_module=torch_module, batch_content=batch_content,
+            weight_report=weights_report, execution_status="failed",
+            calls=calls, trace_truncated=observed > max_calls,
+            calls_observed=observed,
+            snapshot_status=snapshot.get("status") if snapshot is not None else "not_requested",
+            post_weight_report=post_weights_report,
+            output_signature=last_observed_call.get("output_signature")
+            if isinstance(last_observed_call, dict) else None,
+        )
         raise UserError("FORWARD_FAILED", f"真实前向失败：{type(error).__name__}: {error}",
                         "查看已采集调用和 --verbose 日志；没有执行反向或优化器更新。",
                         {
+                            "forward_execution": "failed",
                             "probe_id": probe_id,
                             "forward_id": forward_id,
                             "batch_id": batch_id,
                             "batch_identity_stable": batch_identity_stable,
                             "batch_content": batch_content,
+                            "run_provenance": failed_provenance,
+                            "input_sources": _input_source_compatibility(failed_provenance),
                             **({"batch_snapshot": snapshot} if snapshot is not None else {}),
                             "input_signature": input_signature,
                             "calls": calls,
@@ -497,15 +803,14 @@ def probe(
                                 "last_observed_module_call": last_observed_call,
                                 "project_stack": project_frames[-16:],
                             },
-                        "data_observation": request.get("_data_observation"),
+                        "data_observation": _safe_data_observation(request.get("_data_observation")),
                         }) from error
     finally:
         for handle in handles:
             handle.remove()
-    selected = normalize_path_fn(request.get("path"))
     resolve_module_fn(model, selected)
     observed_calls = calls
-    calls = [call for call in calls if any(p == selected or p.startswith(selected + ".") for p in call["paths"])]
+    calls = observed_calls if selected == "model" else selected_calls
     chosen = request.get("call", "all")
     if chosen != "all":
         if not re.fullmatch(r"[1-9][0-9]*", str(chosen)):
@@ -521,7 +826,7 @@ def probe(
             raise UserError("LOCAL_PROBE_PATH_REQUIRED", "局部 Probe 需要一个具体 Layer 路径。", "使用 --path model.encoder.block 或在 TTY 输入 Layer 路径。")
         local_module = resolve_module_fn(model, selected)
         eligible = [call for call in calls if selected in call["paths"]]
-        local_probe_truncated = len(eligible) > 8 or observed > max_calls
+        local_probe_truncated = len(eligible) > 8 or selected_observed > max_calls
         for call in eligible[:8]:
             captured = captured_inputs.get(call["invocation_id"])
             if captured is None:
@@ -549,7 +854,10 @@ def probe(
                 "coverage": "本次调用未观察到该 Layer，或调用已超出保留上限；没有重放旧输入。",
             })
     output_tree = tree_fn(torch_module, output)
+    output_signature = _input_signature(output_tree)
+    post_weights_report = weight_fingerprint_report(model, torch_module)
     result = {
+        "forward_execution": "executed",
         "probe_id": probe_id,
         "forward_id": forward_id,
         "batch_id": batch_id,
@@ -557,6 +865,7 @@ def probe(
         "batch_content": batch_content,
         **({"batch_snapshot": snapshot} if snapshot is not None else {}),
         "input_signature": input_signature,
+        "output_signature": output_signature,
         "inputs": input_tree,
         "outputs": output_tree,
         "input_output_paths": _port_paths(input_tree, "inputs")
@@ -564,14 +873,34 @@ def probe(
         "calls": calls,
         "evidence_calls": observed_calls,
         "calls_observed": observed,
+        "selected_path": selected,
+        "selected_calls_observed": observed if selected == "model" else selected_observed,
         "trace_truncated": observed > max_calls,
+        "selected_trace_truncated": selected_observed > max_calls if selected != "model" else observed > max_calls,
         "tensor_identity_trace": identity_trace.coverage(),
         "observed_mode": "train" if model.training else "eval",
         "coverage": "仅本批次已采集的前向；未反向、未更新、不证明所有分支。",
     }
+    result["run_provenance"] = _run_provenance(
+        model, request, torch_module=torch_module, batch_content=batch_content,
+        weight_report=weights_report, execution_status="executed",
+        calls=observed_calls, trace_truncated=observed > max_calls,
+        calls_observed=observed,
+        snapshot_status=snapshot.get("status") if snapshot is not None else "not_requested",
+        post_weight_report=post_weights_report,
+        output_signature=output_signature,
+    )
+    result["input_sources"] = _input_source_compatibility(result["run_provenance"])
     if contract is not None:
         result["shape_inference"] = shape_inference
         result["contract_report"] = check_contract(contract, input_tree, output_tree, observed_calls)
+        result["contract_report"]["contract_content_sha256"] = request.get("_contract_content_sha256")
+        result["contract_report"]["contract_identity_check"] = "matched" if request.get("if_contract_sha256") is not None else "not_requested"
+        if contract.get("modules") and observed > max_calls:
+            result["contract_report"]["trace_truncated"] = True
+            result["contract_report"]["coverage"] += " 模块调用记录已截断，契约未覆盖所有实际调用。"
+            if result["contract_report"]["status"] == "observed-runtime":
+                result["contract_report"]["status"] = "partial"
         if result["contract_report"]["status"] == "failed":
             raise UserError(
                 "MODEL_CONTRACT_FAILED",
@@ -638,7 +967,7 @@ def probe(
             "invalidated": invalidated,
         }
     if request.get("_data_observation") is not None:
-        result["data_observation"] = request["_data_observation"]
+        result["data_observation"] = _safe_data_observation(request["_data_observation"])
     result.pop("evidence_calls", None)
     return result
 
@@ -712,7 +1041,7 @@ def verify_gradients(model, request, *, torch_module, resolve_entrypoint, make_b
         "coverage": "已执行指定批次的一次真实前向、用户损失和反向；未更新参数，不代表完整训练循环。",
     }
     if request.get("_data_observation") is not None:
-        result["data_observation"] = request["_data_observation"]
+        result["data_observation"] = _safe_data_observation(request["_data_observation"])
     return result
 
 

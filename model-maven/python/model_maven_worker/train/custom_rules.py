@@ -1,7 +1,8 @@
-"""Pinned project-local custom supervision callables."""
+"""Pinned custom supervision callables from the project or selected environment."""
 
 import hashlib
 import importlib
+import importlib.util
 import json
 import math
 import re
@@ -9,6 +10,7 @@ import sys
 from pathlib import Path
 
 from ..protocol import UserError
+from ..run.file_digest import sha256_file
 
 
 _MAX_PLUGIN_SOURCE = 8 * 1024 * 1024
@@ -16,7 +18,7 @@ _MAX_SUMMARY_DEPTH = 6
 _MAX_SUMMARY_ITEMS = 256
 
 
-def pin_plugin(project_root, kind, entrypoint, params):
+def pin_plugin(project_root, kind, entrypoint, params, *, source_kind="project"):
     root = Path(project_root).resolve(strict=True)
     module_name, attribute = _split_entrypoint(entrypoint)
     if not isinstance(params, dict) or len(params) > 64:
@@ -26,8 +28,11 @@ def pin_plugin(project_root, kind, entrypoint, params):
         raise UserError("SUPERVISION_PLUGIN_PARAMS_INVALID", "自定义规则参数序列化后不得超过 64 KiB。")
     if str(root) not in sys.path:
         sys.path.insert(0, str(root))
+    if source_kind not in {"project", "environment"}:
+        raise UserError("SUPERVISION_PLUGIN_INVALID", "规则源码来源必须是 project 或 environment。")
     target = _load_target(module_name, attribute)
-    source = _project_source(root, module_name)
+    source = (_project_source(root, module_name) if source_kind == "project"
+              else _environment_source(module_name, getattr(sys.modules.get(module_name), "__file__", None)))
     if not callable(target):
         raise UserError("SUPERVISION_PLUGIN_NOT_CALLABLE", f"自定义规则入口 {entrypoint} 不是 callable。")
     return {
@@ -42,13 +47,42 @@ def resolve_plugin(project_root, plugin, kind, mode, *, code_root=None):
     if not isinstance(plugin, dict) or plugin.get("protocol") != "model-maven-supervision-v1":
         raise UserError("SUPERVISION_PLUGIN_INVALID", "自定义监督规则协议版本无效。")
     module_name, attribute = _split_entrypoint(plugin.get("entrypoint"))
-    if plugin.get("source", {}).get("module") != module_name:
+    recorded_source = plugin.get("source")
+    if not isinstance(recorded_source, dict) or recorded_source.get("module") != module_name:
         raise UserError("SUPERVISION_PLUGIN_INVALID", "自定义监督规则入口与源码锚点不匹配。")
+    if kind not in {"custom-validator", "custom-penalty"}:
+        raise UserError("SUPERVISION_PLUGIN_INVALID", "不支持的自定义监督规则类型。")
+    if kind == "custom-validator" and mode not in {"observe", "require"}:
+        raise UserError("SUPERVISION_PLUGIN_INVALID", "custom-validator 只支持 observe 或 require。")
+    if kind == "custom-penalty" and mode != "penalty":
+        raise UserError("SUPERVISION_PLUGIN_INVALID", "custom-penalty 只支持 penalty。")
     root = Path(project_root).resolve(strict=True)
-    if str(root) not in sys.path:
-        sys.path.insert(0, str(root))
+    source_root = Path(code_root).resolve(strict=True) if code_root is not None else root
+    # Snapshot-backed training must not deliberately add the live project as
+    # an import fallback. Existing selected import roots retain their order.
+    if str(source_root) not in sys.path:
+        sys.path.append(str(source_root))
+    external = recorded_source.get("source_file") == "@environment:" + module_name
+    expected = None if external else _recorded_source_path(root, source_root, recorded_source)
+    try:
+        # find_spec can import parent packages; verify the target before its
+        # own import and check its identity again afterwards.
+        spec = importlib.util.find_spec(module_name)
+        origin = Path(spec.origin).resolve(strict=True) if spec and isinstance(spec.origin, str) else None
+    except (ImportError, OSError, ValueError, AttributeError) as error:
+        raise UserError("SUPERVISION_PLUGIN_SOURCE_UNAVAILABLE", f"无法核对自定义规则导入位置：{error}") from error
+    if external:
+        if _environment_source(module_name, origin) != recorded_source:
+            raise UserError("SUPERVISION_PLUGIN_STALE", "所选环境中规则源码与已固定摘要不一致。",
+                            "检查所选 Python 环境，或重新添加并复核规则。")
+    elif origin != expected:
+        raise UserError("SUPERVISION_PLUGIN_SOURCE_CONFLICT", "自定义规则的导入位置与已固定源码不一致。",
+                        "检查所选模块搜索目录及环境；不会主动导入此目标模块。")
     target = _load_target(module_name, attribute)
-    current = _project_source(root, module_name, code_root=code_root)
+    if not callable(target):
+        raise UserError("SUPERVISION_PLUGIN_NOT_CALLABLE", f"自定义规则入口 {plugin.get('entrypoint')} 不是 callable。")
+    current = (_environment_source(module_name, getattr(sys.modules.get(module_name), "__file__", None))
+               if external else _project_source(root, module_name, code_root=code_root))
     if current != plugin.get("source"):
         raise UserError(
             "SUPERVISION_PLUGIN_STALE",
@@ -56,11 +90,32 @@ def resolve_plugin(project_root, plugin, kind, mode, *, code_root=None):
             "重新添加规则并复核其协议行为后再预览或训练。",
             {"expected_source": plugin.get("source"), "current_source": current},
         )
-    if kind == "custom-validator" and mode not in {"observe", "require"}:
-        raise UserError("SUPERVISION_PLUGIN_INVALID", "custom-validator 只支持 observe 或 require。")
-    if kind == "custom-penalty" and mode != "penalty":
-        raise UserError("SUPERVISION_PLUGIN_INVALID", "custom-penalty 只支持 penalty。")
     return target
+
+
+def _recorded_source_path(project_root, source_root, source):
+    relative = source.get("source_file") if isinstance(source, dict) else None
+    expected_hash = source.get("sha256") if isinstance(source, dict) else None
+    expected_size = source.get("size_bytes") if isinstance(source, dict) else None
+    if (not isinstance(relative, str) or not relative or "\\" in relative
+            or any(part in {"", ".", ".."} for part in relative.split("/"))
+            or Path(relative).is_absolute() or not relative.endswith(".py")
+            or not isinstance(expected_hash, str) or not re.fullmatch(r"[0-9a-f]{64}", expected_hash)
+            or type(expected_size) is not int or not 0 < expected_size <= _MAX_PLUGIN_SOURCE):
+        raise UserError("SUPERVISION_PLUGIN_INVALID", "自定义规则源码锚点无效。")
+    try:
+        source_root.relative_to(project_root)
+        path = source_root / relative
+        resolved = path.resolve(strict=True)
+        info = resolved.stat()
+        if resolved != path or not resolved.is_file() or info.st_size != expected_size:
+            raise OSError("源码缺失、经过符号链接或大小变化")
+        if sha256_file(resolved) != expected_hash:
+            raise OSError("源码摘要变化")
+    except (OSError, ValueError, RuntimeError) as error:
+        raise UserError("SUPERVISION_PLUGIN_STALE", f"自定义规则源码无法核对：{error}",
+                        "恢复已固定源码，或重新添加并确认规则。") from error
+    return resolved
 
 
 def evaluate_plugin(
@@ -192,6 +247,20 @@ def _load_target(module_name, attribute):
     return target
 
 
+def _environment_source(module_name, filename):
+    try:
+        path = Path(filename).resolve(strict=True)
+        info = path.stat()
+        if path.suffix != ".py" or not path.is_file() or not 0 < info.st_size <= _MAX_PLUGIN_SOURCE:
+            raise OSError("需要不超过 8 MiB 的可读 Python 源码")
+        digest = sha256_file(path)
+    except (OSError, TypeError, ValueError, RuntimeError) as error:
+        raise UserError("SUPERVISION_PLUGIN_SOURCE_UNAVAILABLE",
+                        f"无法读取所选环境中的规则源码：{error}") from error
+    return {"module": module_name, "sha256": digest, "size_bytes": info.st_size,
+            "source_file": "@environment:" + module_name}
+
+
 def _project_source(root, module_name, *, code_root=None):
     module = sys.modules.get(module_name)
     filename = getattr(module, "__file__", None)
@@ -205,10 +274,7 @@ def _project_source(root, module_name, *, code_root=None):
         if code_root is not None:
             snapshot_root = Path(code_root).resolve(strict=True)
             snapshot_root.relative_to(root)
-            try:
-                relative = resolved.relative_to(snapshot_root)
-            except ValueError:
-                relative = resolved.relative_to(root)
+            relative = resolved.relative_to(snapshot_root)
         else:
             relative = resolved.relative_to(root)
         info = resolved.stat()

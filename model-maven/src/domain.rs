@@ -63,7 +63,8 @@ impl Report {
         match self.diagnostics.first().map(|d| d.code.as_str()) {
             Some("USER_INTERRUPTED") => 130,
             Some("WORKER_TIMEOUT") => 6,
-            Some("PYTHON_UNAVAILABLE" | "TORCH_UNAVAILABLE" | "ENVIRONMENT_MISMATCH") => 3,
+            Some("PYTHON_UNAVAILABLE" | "PYTHON_SELECTION_REQUIRED" | "EXPORT_PYTHON_REQUIRED"
+                | "TORCH_UNAVAILABLE" | "ENVIRONMENT_MISMATCH") => 3,
             Some(
                 "FORWARD_FAILED"
                 | "EDIT_VALIDATION_FAILED"

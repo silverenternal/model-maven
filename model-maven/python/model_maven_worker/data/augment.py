@@ -1,5 +1,7 @@
 """Explicit, path-targeted transform application for user-owned training batches."""
 
+import sys
+
 from ..protocol import UserError
 from .transforms import describe_value, run_transform_pipeline
 
@@ -144,12 +146,12 @@ def _apply_to_selected(value, specification, *, resolve_entrypoint, seed, step_i
 
 
 def _torch_module(value):
-    module = type(value).__module__
-    if module == "torch" or module.startswith("torch."):
-        import torch
-
-        return torch if isinstance(value, torch.Tensor) else None
-    return None
+    # Tensor subclasses can be defined in user or third-party modules. An
+    # existing tensor already implies PyTorch was imported, so inspect the
+    # active runtime rather than importing it for unrelated batch values.
+    torch = sys.modules.get("torch")
+    tensor_type = getattr(torch, "Tensor", None) if torch is not None else None
+    return torch if isinstance(tensor_type, type) and isinstance(value, tensor_type) else None
 
 
 def _is_sample(value):

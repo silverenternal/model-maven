@@ -1,6 +1,11 @@
 name: Release candidate
 on:
   workflow_dispatch:
+    inputs:
+      tui_revision:
+        description: Full 40-character commit SHA of silverenternal/model-maven-tui
+        required: true
+        type: string
 permissions:
   contents: read
 jobs:
@@ -21,7 +26,22 @@ jobs:
       run:
         shell: bash
     steps:
+      - name: Check workspace revision format
+        env:
+          TUI_REVISION: ${{ inputs.tui_revision }}
+        run: |
+          [[ "$TUI_REVISION" =~ ^[0-9a-f]{40}$ ]] || { echo 'tui_revision must be a full lowercase Git commit SHA' >&2; exit 1; }
       - uses: actions/checkout@v4
+        with:
+          path: model-maven
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: silverenternal/model-maven-tui
+          ref: ${{ inputs.tui_revision }}
+          path: model-maven-tui
+          token: ${{ secrets.MODEL_MAVEN_TUI_READ_TOKEN }}
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@1.88.0
       - uses: actions/setup-python@v5
         with:
@@ -41,9 +61,13 @@ jobs:
           cargo test --manifest-path model-maven-tui/Cargo.toml --locked --test diagnosis_line -- --test-threads=1
           cargo test --manifest-path model-maven-tui/Cargo.toml --locked --test language_settings
       - name: Build binaries
+        env:
+          TUI_REVISION: ${{ inputs.tui_revision }}
         run: |
-          cargo build --manifest-path model-maven/Cargo.toml --release --locked
-          cargo build --manifest-path model-maven-tui/Cargo.toml --release --locked
+          backend_revision=$(git -C model-maven rev-parse --verify 'HEAD^{commit}')
+          test "$(git -C model-maven-tui rev-parse --verify 'HEAD^{commit}')" = "$TUI_REVISION"
+          MODEL_MAVEN_BUILD_REVISION="$backend_revision" cargo build --manifest-path model-maven/Cargo.toml --release --locked
+          MODEL_MAVEN_BUILD_REVISION="$TUI_REVISION" cargo build --manifest-path model-maven-tui/Cargo.toml --release --locked
       - name: Verify terminal language selection
         if: runner.os != 'Windows'
         env:
@@ -62,14 +86,29 @@ jobs:
   launcher:
     runs-on: ubuntu-24.04
     steps:
+      - name: Check workspace revision format
+        env:
+          TUI_REVISION: ${{ inputs.tui_revision }}
+        run: |
+          [[ "$TUI_REVISION" =~ ^[0-9a-f]{40}$ ]] || { echo 'tui_revision must be a full lowercase Git commit SHA' >&2; exit 1; }
       - uses: actions/checkout@v4
+        with:
+          path: model-maven
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: silverenternal/model-maven-tui
+          ref: ${{ inputs.tui_revision }}
+          path: model-maven-tui
+          token: ${{ secrets.MODEL_MAVEN_TUI_READ_TOKEN }}
+          persist-credentials: false
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - run: python model-maven/scripts/prepare_npm_bundle.py --kind launcher --name '@silverenternal/model-maven' --license MIT --output-dir release
+      - run: python model-maven/scripts/prepare_npm_bundle.py --kind launcher --tui-source model-maven-tui --name '@silverenternal/model-maven' --license MIT --output-dir release
       - uses: actions/upload-artifact@v4
         with:
           name: launcher
@@ -91,6 +130,9 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+        with:
+          path: model-maven
+          persist-credentials: false
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'

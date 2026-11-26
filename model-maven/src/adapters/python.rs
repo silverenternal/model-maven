@@ -183,7 +183,12 @@ fn drain(
 ) -> Vec<u8> {
     let mut kept = Vec::new();
     let mut buffer = [0; 8192];
+    // User stderr can contain arbitrarily long lines. Keep the parser bounded;
+    // the separate log stream receives bytes when it is available.
+    const MAX_PROGRESS_LINE_BYTES: usize = 1024 * 1024;
+    const OMITTED_PROGRESS: &[u8] = b"MODEL_MAVEN_PROGRESS {\"event\":\"progress_line_omitted\",\"message\":\"An oversized progress line was omitted; see the worker log.\"}\n";
     let mut line_buffer = Vec::new();
+    let mut discard_line = false;
     let mut progress_file = progress_path.as_deref().and_then(open_progress_file);
     let capture_progress = forward_progress || progress_file.is_some();
     let mut log_file = log_path.as_deref().and_then(open_log_file);
@@ -197,17 +202,32 @@ fn drain(
             let _ = file.write_all(&buffer[..count]);
         }
         if capture_progress {
-            line_buffer.extend_from_slice(&buffer[..count]);
-            while let Some(end) = line_buffer.iter().position(|byte| *byte == b'\n') {
-                let line = line_buffer.drain(..=end).collect::<Vec<_>>();
-                record_progress_line(&mut progress_file, &line);
-                if forward_progress {
-                    emit_progress_line(&line);
+            for part in buffer[..count].split_inclusive(|byte| *byte == b'\n') {
+                if !discard_line {
+                    if line_buffer.len().saturating_add(part.len()) <= MAX_PROGRESS_LINE_BYTES {
+                        line_buffer.extend_from_slice(part);
+                    } else {
+                        if line_buffer.starts_with(b"MODEL_MAVEN_PROGRESS ")
+                            || (line_buffer.is_empty() && part.starts_with(b"MODEL_MAVEN_PROGRESS ")) {
+                            record_progress_line(&mut progress_file, OMITTED_PROGRESS);
+                            if forward_progress { emit_progress_line(OMITTED_PROGRESS); }
+                        }
+                        line_buffer.clear();
+                        discard_line = true;
+                    }
+                }
+                if part.last() == Some(&b'\n') {
+                    if !discard_line {
+                        record_progress_line(&mut progress_file, &line_buffer);
+                        if forward_progress { emit_progress_line(&line_buffer); }
+                    }
+                    line_buffer.clear();
+                    discard_line = false;
                 }
             }
         }
     }
-    if capture_progress && !line_buffer.is_empty() {
+    if capture_progress && !discard_line && !line_buffer.is_empty() {
         record_progress_line(&mut progress_file, &line_buffer);
         if forward_progress {
             emit_progress_line(&line_buffer);
@@ -217,7 +237,7 @@ fn drain(
 }
 
 fn request_training_timeout_stop(request: &Value) -> bool {
-    if request["operation"] != "train" {
+    if request["operation"] != "train" && request["operation"] != "generic_loop_train" {
         return false;
     }
     let (Some(checkpoint), Some(stop_file)) = (
@@ -264,9 +284,15 @@ fn request_training_timeout_stop(request: &Value) -> bool {
 impl Backend for PythonBackend {
     fn execute(&self, request: &Value) -> Report {
         let operation = request["operation"].as_str().unwrap_or("unknown");
-        let executable = request["runtime"]["python_executable"]
-            .as_str()
-            .unwrap_or(&self.executable);
+        let executable = match request["runtime"].get("python_executable") {
+            None | Some(Value::Null) => (!self.executable.trim().is_empty()).then_some(self.executable.as_str()),
+            Some(Value::String(value)) if !value.trim().is_empty() => Some(value.as_str()),
+            _ => None,
+        };
+        let Some(executable) = executable else {
+            return Report::error(operation, "PYTHON_SELECTION_REQUIRED", "未发现或指定 Python 解释器。",
+                "使用 --python 明确选择解释器后重试；Python worker 尚未启动。");
+        };
         let timeout = Duration::from_secs(
             request["runtime"]["timeout_seconds"]
                 .as_u64()
@@ -275,6 +301,14 @@ impl Backend for PythonBackend {
         );
         let mut request_envelope = request.clone();
         annotate_worker_request(&mut request_envelope);
+        // This per-process opt-in is used for an independent recheck. It must
+        // never change non-probe operations or imply that other inputs are pinned.
+        if operation == "probe"
+            && std::env::var_os("MODEL_MAVEN_FORCE_FRESH_FORWARD").as_deref()
+                == Some(std::ffi::OsStr::new("1"))
+        {
+            request_envelope["_disable_evidence_cache"] = Value::Bool(true);
+        }
         let encoded = serde_json::to_vec(&request_envelope).expect("JSON value serializes");
         if encoded.len() > 1024 * 1024 {
             return Report::error(

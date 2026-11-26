@@ -1,10 +1,10 @@
 {
   "schema_version": 1,
   "policy": {
-    "worker_protocol": "Exact match is required. A mismatch returns PROTOCOL_ERROR before operation execution.",
+    "worker_protocol": "Exact match is required. A mismatch returns PROTOCOL_ERROR before dispatch.",
     "worker_api": "Optional request field; absent means v1. Unsupported versions return WORKER_API_UNSUPPORTED.",
     "required_features": "Every required feature must be registered for the requested operation. Unknown or mismatched requirements return FEATURE_UNAVAILABLE before runtime imports.",
-    "operation_registry": "protocol.py owns the operation-to-feature registry. Dispatcher routes are checked against it, and doctor capability IDs are derived from its feature union plus explicitly registered host features.",
+    "operation_registry": "python/model_maven_worker/protocol.py owns OPERATION_FEATURES and SUPPORTED_REQUIRED_FEATURES. Worker dispatch rejects unregistered operation IDs and missing/unsupported required features before operation code. compatibility.json mirrors that registry; matching it proves protocol registration only.",
     "state_formats": "State format versions are independent of the worker protocol. Unsupported versions are rejected; fields are never guessed or silently migrated.",
     "capability_states": [
       "supported",
@@ -12,7 +12,20 @@
       "conditional",
       "unknown"
     ],
-    "support_claim": "Only operations exercised by the current runtime and platform may be reported supported. Conditional and unknown capabilities include a reason."
+    "support_claim": "Doctor capability descriptors describe the selected Python runtime and host. supported means the registered feature is available under the reported runtime/platform checks; conditional/unknown must carry a reason. This does not prove a specific model, batch, dataset or provider instance can use it.",
+    "capability_evidence_layers": {
+      "cli_interface": "--describe-interface returns CLI interface booleans and version metadata without starting Python. These flags describe the CLI command/API surface only.",
+      "required_features": "required_features and operations are static worker declarations used for pre-import protocol gating.",
+      "worker_runtime": "doctor returns protocol/API/state-format identities and runtime capability descriptors; these apply to the selected interpreter/platform at query time.",
+      "provider_manifest": "component manifest values are provider declarations. Static validation/discovery is not runtime conformance.",
+      "instance_evidence": "Model, batch, transform and data compatibility require selected operation evidence. A missing or unobserved path is unknown."
+    },
+    "unknown_and_legacy": {
+      "unknown": "Missing, malformed, duplicate, or unrecognized required protocol/version/capability evidence must not be converted to supported or success. Protected operations fail closed with a reason and compatible query/recovery option.",
+      "older_cli": "A CLI that rejects --describe-interface has unknown interface capabilities. Clients may expose only explicitly documented legacy-safe read-only actions; they must not infer guarded-write or execution capabilities from the rejection.",
+      "older_worker": "An absent worker_api_version means v1 only where the receiving worker contract explicitly permits it. Worker protocol mismatch, unsupported feature, malformed catalog, or unknown state-format version rejects the protected operation before execution; no silent field migration.",
+      "downgrade": "Compatibility fallback may preserve read-only inspection when its legacy shape is understood. It must not turn missing readiness, a failed catalog query, malformed JSON, or unknown into success."
+    }
   },
   "interfaces": [
     {
@@ -36,12 +49,12 @@
     },
     {
       "id": "operation_contract",
-      "version": 1,
+      "version": 2,
       "owners": [
         "Rust domain",
         "CLI services"
       ],
-      "compatibility": "unsupported contract versions are rejected by OperationPlan::validate"
+      "compatibility": "OperationPlan contract v2 is represented by OperationPlan::validate; unsupported plan contract versions are rejected. Plans are ephemeral snapshots, not persisted project state."
     },
     {
       "id": "component_manifest",
@@ -60,6 +73,34 @@
         "Rust component registry"
       ],
       "compatibility": "API v1 callable remains accepted; API v2 adds a replayable describe/can_edit/plan/candidate/persist/rollback lifecycle. Provider conformance-suite version is independently pinned and must match."
+    },
+    {
+      "id": "cli_interface_catalog",
+      "version": 1,
+      "owners": [
+        "Rust CLI",
+        "TUI clients"
+      ],
+      "compatibility": "m-model --json --no-interactive --describe-interface returns a protocol-v1 Report with data.interface_version, data.cli_version, data.report_protocol_version, data.capabilities (boolean interface flags), python_selection_hint, and scope. Unknown optional fields may be ignored; required field/type/version errors are protocol errors. An older CLI may reject the flag; that result means unknown, not unsupported worker/model capability."
+    },
+    {
+      "id": "operation_readiness",
+      "version": 2,
+      "owners": [
+        "Rust application",
+        "CLI presentation"
+      ],
+      "compatibility": "OperationPlan/Readiness DTO exists and is produced for selected application command families. It is point-in-time and not universal. Current service blocks required missing input and explicitly unsupported capability, but does not block required unknown/conditional. Interactive training confirmation accepts both states without resolving unknown evidence. Unknown must fail closed; conditional may proceed only after its stated condition is resolved and revalidated."
+    },
+    {
+      "id": "diagnostic_details",
+      "version": 1,
+      "owners": [
+        "Rust domain",
+        "application services",
+        "CLI presentation"
+      ],
+      "compatibility": "Legacy code/message/hint remains readable. Optional severity/scope/recovery_actions/evidence_state DTO is defined but producer coverage is partial. A recovery action is advisory, must state availability/reason, and requires fresh validation after explicit selection."
     }
   ],
   "state_formats": [
@@ -80,6 +121,12 @@
       "version": 1,
       "owner": "Python training checkpoint service",
       "legacy_policy": "unknown payload versions are rejected; optimizer/RNG/data state restore is explicit"
+    },
+    {
+      "id": "generic_loop_checkpoint",
+      "version": 1,
+      "owner": "Python framework-neutral user loop checkpoint service",
+      "legacy_policy": "restores require the requested format, exact payload digest and runtime identity; missing signature in older v1 records denotes model-context"
     },
     {
       "id": "model_variant",
@@ -110,36 +157,85 @@
     "data.classification_index",
     "data.dataset_probe",
     "data.preview",
+    "data.preview_runtime_paths_v1",
+    "data.raw_batch_binding_v1",
+    "data.runtime_sampling_seed_v1",
     "edit.assembly_codegen",
+    "edit.assembly_codegen_runtime_paths_v1",
+    "edit.assembly_python_rng_v1",
+    "edit.mixed_source_transaction_v1",
+    "edit.random_variant_seed_v1",
+    "edit.source_factory_device_v1",
+    "environment.device_inventory_v1",
     "environment.library_inventory",
     "environment.library_probe",
+    "environment.operator_catalog_v1",
     "environment.setup",
+    "environment.torch_layer_catalog_v1",
     "environment.wheelhouse",
+    "evaluation.model_device_v1",
     "extensions.component_conformance",
     "extensions.static_discovery",
+    "model.contract_identity_v1",
+    "model.contract_port_paths_v2",
+    "model.contract_preload_v1",
+    "model.direct_factory_params_v1",
     "model.forward_probe",
     "model.inspect",
     "model.layer_edit",
     "model.loss_probe",
+    "model.probe_device_v1",
+    "model.runtime_rng_v1",
+    "model.semantic_anchor_guard",
+    "model.semantic_device_v1",
+    "model.semantic_external_source_v1",
     "model.semantic_marks",
+    "model.variant_base_rng_v1",
+    "model.variant_factory_device_v1",
+    "model.variant_layer_rng_v1",
+    "runtime.project_import_roots",
+    "runtime.user_working_directory",
+    "supervision.bundle_v1",
+    "supervision.conditional_rule_add_v1",
+    "supervision.environment_rule_v1",
+    "supervision.extended_axis_v1",
+    "supervision.port_path_v2",
+    "supervision.preview_device_v1",
+    "supervision.root_mark_v1",
+    "supervision.rule_copy_v1",
+    "training.batch_binding_checkpoint_v1",
+    "training.batch_device_policy_v1",
     "training.checkpoint_resume",
+    "training.custom_optimizer_worker_v1",
     "training.detached",
     "training.evaluation",
     "training.external_loop",
+    "training.generic_device_v1",
+    "training.generic_loop_context_signature_v1",
+    "training.generic_loop_train_v1",
+    "training.generic_loop_trial_v1",
     "training.managed_step",
     "training.manual_step",
+    "training.model_initialization_v1",
     "training.supervision_apply",
     "training.supervision_preview",
     "training.weight_migration"
   ],
   "operations": {
     "assembly_codegen": [
-      "edit.assembly_codegen"
+      "edit.assembly_codegen",
+      "edit.assembly_python_rng_v1",
+      "model.variant_factory_device_v1",
+      "model.variant_layer_rng_v1",
+      "model.variant_base_rng_v1"
     ],
     "assembly_codegen_verify": [
       "edit.assembly_codegen",
+      "edit.assembly_codegen_runtime_paths_v1",
       "model.forward_probe",
-      "data.dataset_probe"
+      "data.dataset_probe",
+      "data.runtime_sampling_seed_v1",
+      "data.raw_batch_binding_v1"
     ],
     "component_discover": [
       "extensions.static_discovery"
@@ -148,21 +244,42 @@
       "extensions.static_discovery"
     ],
     "component_test": [
-      "extensions.component_conformance"
+      "extensions.component_conformance",
+      "data.raw_batch_binding_v1"
     ],
     "component_uninstall": [
       "extensions.static_discovery"
     ],
+    "data_index": [
+      "data.classification_index"
+    ],
     "doctor": [],
     "edit": [
-      "model.layer_edit"
+      "model.layer_edit",
+      "edit.mixed_source_transaction_v1",
+      "edit.random_variant_seed_v1",
+      "data.runtime_sampling_seed_v1",
+      "model.runtime_rng_v1",
+      "edit.source_factory_device_v1",
+      "data.raw_batch_binding_v1",
+      "model.variant_factory_device_v1",
+      "model.variant_layer_rng_v1",
+      "model.variant_base_rng_v1"
     ],
     "environment_check": [],
+    "environment_configure": [
+      "environment.setup"
+    ],
+    "environment_devices": [
+      "environment.device_inventory_v1"
+    ],
     "environment_library_inventory": [
       "environment.library_inventory"
     ],
     "environment_library_probe": [
-      "environment.library_probe"
+      "environment.library_probe",
+      "environment.torch_layer_catalog_v1",
+      "environment.operator_catalog_v1"
     ],
     "environment_lock": [],
     "environment_setup": [
@@ -180,59 +297,132 @@
     ],
     "evaluate": [
       "training.evaluation",
-      "training.checkpoint_resume"
+      "training.checkpoint_resume",
+      "evaluation.model_device_v1",
+      "model.variant_factory_device_v1",
+      "model.variant_layer_rng_v1",
+      "model.variant_base_rng_v1",
+      "training.model_initialization_v1"
     ],
     "extension_bundle_plan": [
       "extensions.static_discovery"
     ],
+    "generic_loop_train": [
+      "training.generic_loop_train_v1",
+      "training.generic_loop_context_signature_v1"
+    ],
+    "generic_loop_trial": [
+      "training.generic_loop_trial_v1",
+      "training.generic_loop_context_signature_v1"
+    ],
     "inspect": [
-      "model.inspect"
+      "model.inspect",
+      "model.runtime_rng_v1",
+      "model.variant_factory_device_v1",
+      "model.variant_layer_rng_v1",
+      "model.variant_base_rng_v1"
     ],
     "layers": [
-      "model.inspect"
-    ],
-    "preview": [
-      "data.preview"
+      "model.inspect",
+      "model.variant_factory_device_v1",
+      "model.variant_layer_rng_v1",
+      "model.variant_base_rng_v1"
     ],
     "preset_catalog": [],
+    "preview": [
+      "data.preview",
+      "data.preview_runtime_paths_v1",
+      "data.raw_batch_binding_v1"
+    ],
     "probe": [
       "model.forward_probe",
-      "data.dataset_probe"
+      "data.dataset_probe",
+      "model.contract_port_paths_v2",
+      "model.contract_identity_v1",
+      "model.contract_preload_v1",
+      "model.probe_device_v1",
+      "model.runtime_rng_v1",
+      "data.runtime_sampling_seed_v1",
+      "data.raw_batch_binding_v1",
+      "model.variant_factory_device_v1",
+      "model.variant_layer_rng_v1",
+      "model.variant_base_rng_v1"
     ],
+    "runtime_capabilities": [],
     "semantic_mark": [
       "model.forward_probe",
       "data.dataset_probe",
-      "model.semantic_marks"
+      "model.semantic_marks",
+      "model.semantic_anchor_guard",
+      "model.semantic_external_source_v1",
+      "supervision.port_path_v2",
+      "supervision.root_mark_v1",
+      "model.semantic_device_v1",
+      "data.runtime_sampling_seed_v1",
+      "data.raw_batch_binding_v1",
+      "model.variant_factory_device_v1",
+      "model.variant_layer_rng_v1",
+      "model.variant_base_rng_v1"
     ],
     "semantic_supervise": [
       "model.forward_probe",
       "data.dataset_probe",
       "model.semantic_marks",
-      "training.supervision_preview"
+      "training.supervision_preview",
+      "supervision.preview_device_v1",
+      "data.runtime_sampling_seed_v1",
+      "supervision.conditional_rule_add_v1",
+      "supervision.rule_copy_v1",
+      "supervision.bundle_v1",
+      "supervision.extended_axis_v1",
+      "supervision.environment_rule_v1",
+      "supervision.port_path_v2",
+      "data.raw_batch_binding_v1",
+      "model.variant_factory_device_v1",
+      "model.variant_layer_rng_v1",
+      "model.variant_base_rng_v1"
     ],
     "train": [
       "training.managed_step",
+      "training.batch_binding_checkpoint_v1",
+      "training.custom_optimizer_worker_v1",
+      "training.generic_device_v1",
       "training.manual_step",
       "training.external_loop",
       "training.checkpoint_resume",
       "training.weight_migration",
-      "training.supervision_apply"
+      "training.supervision_apply",
+      "supervision.port_path_v2",
+      "data.raw_batch_binding_v1",
+      "model.variant_factory_device_v1",
+      "model.variant_layer_rng_v1",
+      "model.variant_base_rng_v1",
+      "training.batch_device_policy_v1",
+      "training.model_initialization_v1"
     ],
     "training_probe": [
       "training.managed_step",
+      "training.custom_optimizer_worker_v1",
+      "training.generic_device_v1",
       "training.manual_step",
       "training.external_loop",
       "training.checkpoint_resume",
-      "training.supervision_apply"
+      "training.supervision_apply",
+      "supervision.port_path_v2",
+      "data.raw_batch_binding_v1",
+      "model.variant_factory_device_v1",
+      "model.variant_layer_rng_v1",
+      "model.variant_base_rng_v1",
+      "training.batch_device_policy_v1",
+      "training.model_initialization_v1"
     ],
     "verify": [
-      "model.loss_probe"
-    ],
-    "data_index": [
-      "data.classification_index"
-    ],
-    "environment_configure": [
-      "environment.setup"
+      "model.loss_probe",
+      "data.runtime_sampling_seed_v1",
+      "data.raw_batch_binding_v1",
+      "model.variant_factory_device_v1",
+      "model.variant_layer_rng_v1",
+      "model.variant_base_rng_v1"
     ]
   },
   "host_state_formats": [
@@ -242,5 +432,17 @@
       "owner": "Rust FileRunStore",
       "legacy_policy": "run.json must declare schema_version=1; unknown versions are refused for read, mutation, checkpoint access, and cleanup without rewriting the record."
     }
-  ]
+  ],
+  "runtime_capability_contract": {
+    "catalog_source": "doctor.data.capabilities is derived from the worker feature registry plus host capability entries. Each descriptor has unique id, state, optional reason, optional provider.",
+    "states": {
+      "supported": "registered and available under this selected runtime/platform check",
+      "unsupported": "registered but unavailable under a known runtime/platform condition; reason required",
+      "conditional": "available only when stated condition is satisfied; reason required",
+      "unknown": "evidence is insufficient; reason required"
+    },
+    "preflight": "For a worker operation, the request declares required_features. The worker checks operation registration and each required feature against its registry before operation imports. The application should query doctor for only the selected Python runtime and compare exact IDs/states.",
+    "limits": "A supported runtime feature does not establish model-instance construction, forward-path coverage, data compatibility, provider conformance, or a safe edit target. Those require operation-specific evidence.",
+    "cache": "Application capability catalog cache is process-local and only reused for the current environment context. It is not a persistent capability guarantee; environment selection changes clear it. No global stale marker is defined."
+  }
 }

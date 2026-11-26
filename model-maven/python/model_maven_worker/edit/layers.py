@@ -1,6 +1,5 @@
 """Layer construction and native container edit operations."""
 
-import re
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -8,6 +7,7 @@ from ..protocol import UserError
 from ..model.structure import registered_storage_key
 from .providers import apply_provider
 from .sharing import clone_selected, share_selected
+from .initialization_rng import layer_rng_scope
 
 
 @dataclass(frozen=True)
@@ -28,29 +28,34 @@ def old_state_names(module):
         return None
 
 
-def new_layer(runtime, edit):
+def new_layer(runtime, edit, *, preserve_factory_device=False):
     if edit.get("component"):
         target = runtime.entrypoint(edit["component"])
     else:
-        catalog = {name: getattr(runtime.torch.nn, name) for name in
-                   ("Linear", "Dropout", "ReLU", "GELU", "LayerNorm", "Conv2d", "Identity")}
-        if edit.get("layer_type") not in catalog:
-            raise UserError("LAYER_TYPE_UNSUPPORTED", "当前类型目录支持 Linear/Dropout/ReLU/GELU/LayerNorm/Conv2d/Identity。",
+        name = edit.get("layer_type")
+        if not isinstance(name, str) or not name.isidentifier() or name.startswith("_"):
+            raise UserError("LAYER_TYPE_UNSUPPORTED", "Layer 类型必须是 torch.nn 中的公开类名。",
                             "自定义层可用 --component module:factory。")
-        target = catalog[edit["layer_type"]]
+        target = getattr(runtime.torch.nn, name, None)
+        if not isinstance(target, type) or not issubclass(target, runtime.torch.nn.Module):
+            raise UserError("LAYER_TYPE_UNSUPPORTED", f"当前 Python 环境的 torch.nn 中没有可用的 Module 类 {name!r}。",
+                            "检查所选 PyTorch 版本，或使用 --component module:factory。")
     try:
         initialization_seed = edit.get("initialization_seed")
         if type(initialization_seed) is int and 0 <= initialization_seed < 2**64:
-            with runtime.torch.random.fork_rng(devices=[]):
-                runtime.torch.random.default_generator.manual_seed(initialization_seed)
+            with layer_rng_scope(runtime.torch, initialization_seed, edit.get("rng_devices", [])):
                 layer = target(**edit.get("params", {}))
         else:
+            if "rng_devices" in edit:
+                raise UserError("LAYER_RNG_SEED_REQUIRED", "指定随机设备时必须同时固定 Layer 初始化种子。")
             layer = target(**edit.get("params", {}))
+    except UserError:
+        raise
     except Exception as error:
         raise UserError("LAYER_CONSTRUCTION_FAILED", str(error)) from error
     if not isinstance(layer, runtime.torch.nn.Module):
         raise UserError("LAYER_TYPE_INVALID", "Layer 工厂必须返回 nn.Module。")
-    return layer.cpu()
+    return layer if preserve_factory_device else layer.cpu()
 
 
 def layer_container_kind(runtime, module):
@@ -61,6 +66,23 @@ def layer_container_kind(runtime, module):
     if isinstance(module, runtime.torch.nn.ModuleDict):
         return "ModuleDict"
     return None
+
+
+def _validate_layer_name(parent, name):
+    """Match nn.Module.add_module's registry-name constraints."""
+    if not isinstance(name, str) or not name or "." in name or hasattr(parent, name):
+        raise UserError(
+            "LAYER_NAME_INVALID",
+            "新层名称必须是非空字符串，不能包含点号，也不能覆盖容器已有属性。",
+        )
+
+
+def _automatic_sequential_name(parent):
+    """Use Sequential's conventional decimal child names without collisions."""
+    index = len(parent._modules)
+    while str(index) in parent._modules or hasattr(parent, str(index)):
+        index += 1
+    return str(index)
 
 
 def replace_module(runtime, model, path, replacement):
@@ -142,7 +164,7 @@ def _preserve_external_shared_state(replacement, shared, compatible):
         registry[local_name] = item["tensor"]
 
 
-def apply_edit(runtime, model, edit):
+def apply_edit(runtime, model, edit, *, preserve_factory_device=False):
     action = edit.get("action")
     if action == "custom":
         return apply_provider(runtime, model, edit)
@@ -180,8 +202,7 @@ def apply_edit(runtime, model, edit):
                 position_before = anchor if before else None
                 position_after = anchor if after else None
         elif container_type == "ModuleDict":
-            if not isinstance(name, str) or not name.isidentifier() or "." in name or name in parent._modules:
-                raise UserError("LAYER_NAME_INVALID", "ModuleDict 分支名必须是未使用的 Python 标识符，且不能包含点号。")
+            _validate_layer_name(parent, name)
             if anchor:
                 anchor = str(anchor).rsplit(".", 1)[-1]
                 if anchor not in parent._modules:
@@ -189,11 +210,13 @@ def apply_edit(runtime, model, edit):
                 position_before = anchor if before else None
                 position_after = anchor if after else None
         else:
-            if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name) or hasattr(parent, name):
-                raise UserError("LAYER_NAME_INVALID", "新层名称必须是唯一标识符，不能与容器属性冲突。")
+            if name in (None, ""):
+                name = _automatic_sequential_name(parent)
+            _validate_layer_name(parent, name)
             if anchor and anchor not in parent._modules:
                 raise UserError("ANCHOR_NOT_FOUND", f"容器中找不到位置：{anchor}")
-        layer = new_layer(runtime, edit)
+        layer = new_layer(runtime, edit, preserve_factory_device=preserve_factory_device)
+        effect["placement_policy"] = "factory" if preserve_factory_device else "legacy_cpu"
         if container_type == "ModuleList":
             rebuilt = list(parent._modules.items())
             insertion_index = next((i for i, (key, _) in enumerate(rebuilt) if key == anchor), len(rebuilt))
@@ -251,9 +274,9 @@ def apply_edit(runtime, model, edit):
             raise UserError("FIELD_INVALID", f"可编辑字段：{', '.join(known)}")
         values = dict(known)
         values.update(params)
-        replacement = new_layer(runtime, {"layer_type": type(old).__name__, "params": values})
+        replacement = new_layer(runtime, {"layer_type": type(old).__name__, "params": values}, preserve_factory_device=preserve_factory_device)
     elif action == "replace":
-        replacement = new_layer(runtime, edit)
+        replacement = new_layer(runtime, edit, preserve_factory_device=preserve_factory_device)
     else:
         if edit.get("strategy") != "bypass":
             raise UserError("STRATEGY_INVALID", "策略应为 remove 或 bypass。")
@@ -261,12 +284,19 @@ def apply_edit(runtime, model, edit):
     _, aliases = runtime.module_entries(model)
     affected_aliases = aliases[id(old)]
     shared_state = _external_shared_state(model, old, affected_aliases)
-    old_parameter = next(old.parameters(), None)
-    if old_parameter is not None:
-        if old_parameter.is_floating_point():
-            replacement.to(device=old_parameter.device, dtype=old_parameter.dtype)
+    old_state = next(old.parameters(), None)
+    if old_state is None:
+        old_state = next(old.buffers(), None)
+    if old_state is not None:
+        effect["placement_policy"] = "old_layer_first_registered_state"
+        effect["placement_reference"] = {"device": str(old_state.device), "dtype": str(old_state.dtype),
+                                         "dtype_applied": bool(old_state.is_floating_point() or old_state.is_complex())}
+        if old_state.is_floating_point() or old_state.is_complex():
+            replacement.to(device=old_state.device, dtype=old_state.dtype)
         else:
-            replacement.to(device=old_parameter.device)
+            replacement.to(device=old_state.device)
+    else:
+        effect["placement_policy"] = "factory" if preserve_factory_device else "legacy_cpu"
     replacement.train(old.training)
     # Only built-in same-class reconstruction has an implicit state mapping.
     state = replacement.state_dict()
@@ -291,10 +321,10 @@ def apply_edit(runtime, model, edit):
     return effect
 
 
-def apply_history_item(runtime, model, item):
+def apply_history_item(runtime, model, item, *, preserve_factory_device=False):
     if item.get("action") != "transaction":
-        return [apply_edit(runtime, model, item)]
+        return [apply_edit(runtime, model, item, preserve_factory_device=preserve_factory_device)]
     operations = item.get("operations")
     if not isinstance(operations, list) or not operations:
         raise UserError("EDIT_PLAN_INVALID", "原子 Layer 计划必须包含至少一项操作。")
-    return [apply_edit(runtime, model, operation) for operation in operations]
+    return [apply_edit(runtime, model, operation, preserve_factory_device=preserve_factory_device) for operation in operations]

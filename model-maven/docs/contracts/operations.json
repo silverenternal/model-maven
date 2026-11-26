@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://model-maven.local/contracts/operations-v2.json",
   "title": "Model-Maven operation plan contract v2",
-  "description": "Version 2 is produced and consumed by the application service for supported operations; conditional capability state is preserved separately from unknown.",
+  "description": "Version 2 describes the application operation-plan DTO and readiness vocabulary. Rust types and selected application paths implement the plan shape; end-to-end gating and normalized operation results are not universal.",
   "type": "object",
   "required": [
     "contract_version",
@@ -725,24 +725,35 @@
     }
   },
   "contract_status": {
-    "protocol": "proposed",
-    "current_report_shell": "implemented",
-    "planner_and_typed_operation_service": "proposed"
+    "protocol": "operation plan DTO v2 is implemented in Rust and emitted for selected application operations",
+    "current_report_shell": "implemented as protocol-v1 Report; operation-specific data remains heterogeneous",
+    "planner_and_typed_operation_service": "partial: selected application commands build plans; no universal planner/service covers every CLI operation",
+    "enforcement": "partial: ApplicationUiServices stops needs_input and unsupported; it does not stop required conditional or unknown plans. The interactive training-plan flow permits explicit start for both without proving the unknown evidence became known; unknown must fail closed.",
+    "explicit_non_claim": "A plan, successful Report, registered worker route, or declared capability does not prove model-instance evidence or authorize an unselected operation."
   },
   "readiness_semantics": {
     "ready": "当前所选操作的必要输入与能力均 available。",
     "needs_input": "一个或多个必要事实为 missing；只阻塞所选操作。",
     "unsupported": "必要能力明确不受当前 provider 支持。",
-    "conditional": "可执行但必须先满足列明的条件或用户决策；conditions 必须非空。",
+    "conditional": "可执行但必须先满足列明的条件或完成明确的用户决策；conditions 必须非空，并在执行前重新验证。",
     "unknown": "没有足够证据判断；不得降格成 available 或成功。",
-    "optional_unknown": "required=false 的事实或能力不会阻止 ready；仍须如实展示。"
+    "optional_unknown": "required=false 的事实或能力不会阻止 ready；仍须如实展示。",
+    "query_scope": "A readiness answer is a point-in-time snapshot for one named operation and selected inputs. It is not a project-wide health score or a reservation; inputs, environment and files can change after it is produced.",
+    "capability_evidence": "CLI interface booleans describe command/schema support. Worker doctor descriptors describe the selected Python/worker runtime. A component manifest describes provider declarations. Model-instance evidence requires the operation-specific inspection/probe and cannot be inferred from any of those catalogs.",
+    "unknown_gate": "Unknown required facts/capabilities remain unknown and fail closed; user acknowledgement alone cannot convert unknown to available. Current ApplicationUiServices and interactive training-plan enforcement gaps are recorded in contract_status.enforcement.",
+    "actions": "Suggested actions are structured alternatives/advice only; they do not run automatically. A user-selected action is planned again against current facts before execution.",
+    "read_only_boundary": "A metadata query may read project configuration and ask doctor for selected-runtime capability facts. It must not construct a user model, call user batch/model/training code, install packages, download weights, or write project files.",
+    "freshness": "Any result derived from mutable project/environment/model/data evidence is point-in-time. Consumers must show its source/revision and mark it stale when that source changes; absence of a revision means freshness is unknown.",
+    "preview_commit": "Preview is non-mutating with respect to the target artifact/configuration; it may execute code only where the individual operation explicitly says so. Commit must require its documented confirmation/revision guard and revalidate. A transport interruption leaves commit outcome unknown until queried.",
+    "cancellation": "Cancellation is cooperative and operation-specific. USER_INTERRUPTED or a stop request is not proof that no side effect occurred; query the request/run/artifact state before retrying. No universal cancellable async-action protocol is implemented."
   },
   "operation_catalog": {
-    "authority": "product.json#/behavior_contracts/G-validation/operation_requirements",
+    "authority": "todo.json#/journey_contracts and the current CLI/worker implementation",
     "execution_owner_semantics": {
       "python_worker": "worker_operation must be a registered key in compatibility.json.operations; dispatch and feature presence are checked against the live worker registry.",
-      "rust_cli": "The operation is completed by Rust-side adapters/services and must not claim a Python worker operation.",
-      "current_cli": "Each documented CLI path must resolve in the derived public Clap command tree; alternatives use slash-separated command names and option tokens are checked on the owning command."
+      "rust_cli": "The operation is completed by Rust-side adapters/services and must not claim a Python worker operation. A command path existing in Clap alone is not execution evidence.",
+      "current_cli": "Each documented CLI path must resolve in the derived public Clap command tree; alternatives use slash-separated command names and option tokens are checked on the owning command.",
+      "plan_status": "Application plans are currently built only for selected command families. The plan DTO is not a guarantee that all CLI commands have a preflight or that all readiness states are enforced."
     },
     "operations": {
       "inspect_model": {
@@ -761,7 +772,7 @@
         "current_cli": "model inspect",
         "worker_operation": "inspect",
         "execution_status": "implemented",
-        "plan_status": "proposed",
+        "plan_status": "implemented_for_selected_application_operations; point_in_time and not a universal execution gate",
         "execution_owner": "python_worker"
       },
       "forward_probe": {
@@ -780,7 +791,7 @@
         "current_cli": "model probe",
         "worker_operation": "probe",
         "execution_status": "implemented",
-        "plan_status": "proposed",
+        "plan_status": "implemented_for_selected_application_operations; point_in_time and not a universal execution gate",
         "execution_owner": "python_worker"
       },
       "loss_probe": {
@@ -794,8 +805,8 @@
         ],
         "current_cli": "model verify --loss",
         "worker_operation": "verify",
-        "execution_status": "partial: 当前 verify 会执行 backward；独立只算 Loss 的操作未接入",
-        "plan_status": "proposed",
+        "execution_status": "partial: `model verify --loss` executes backward/gradient checks; independent loss-only evaluation is not exposed.",
+        "plan_status": "implemented_for_selected_application_operations; point_in_time and not a universal execution gate",
         "execution_owner": "python_worker"
       },
       "training_probe": {
@@ -807,7 +818,7 @@
         "current_cli": "try",
         "worker_operation": "training_probe",
         "execution_status": "implemented",
-        "plan_status": "proposed",
+        "plan_status": "implemented_for_selected_application_operations; point_in_time and not a universal execution gate",
         "execution_owner": "python_worker"
       },
       "managed_train": {
@@ -819,7 +830,7 @@
         "current_cli": "train",
         "worker_operation": "train",
         "execution_status": "implemented",
-        "plan_status": "proposed",
+        "plan_status": "implemented_for_selected_application_operations; point_in_time and not a universal execution gate",
         "execution_owner": "python_worker"
       },
       "external_train": {
@@ -835,7 +846,7 @@
         "current_cli": "train --loop",
         "worker_operation": "train",
         "execution_status": "implemented",
-        "plan_status": "proposed",
+        "plan_status": "implemented_for_selected_application_operations; point_in_time and not a universal execution gate",
         "execution_owner": "python_worker"
       },
       "resume_train": {
@@ -849,8 +860,8 @@
         ],
         "current_cli": "train --resume",
         "worker_operation": "train",
-        "execution_status": "partial: 已支持内建状态恢复；完整自定义状态兼容仍受声明协议限制",
-        "plan_status": "proposed",
+        "execution_status": "partial: supported checkpoint state is restored under explicit compatibility checks; arbitrary user-defined state is restorable only through declared hooks/protocols.",
+        "plan_status": "implemented_for_selected_application_operations; point_in_time and not a universal execution gate",
         "execution_owner": "python_worker"
       },
       "inspect_component": {
@@ -862,7 +873,7 @@
         ],
         "current_cli": "component show/list",
         "execution_status": "implemented",
-        "plan_status": "proposed",
+        "plan_status": "implemented_for_selected_application_operations; point_in_time and not a universal execution gate",
         "execution_owner": "rust_cli"
       },
       "inspect_layers": {
@@ -877,7 +888,7 @@
         "current_cli": "layer list",
         "worker_operation": "layers",
         "execution_status": "implemented",
-        "plan_status": "proposed",
+        "plan_status": "implemented_for_selected_application_operations; point_in_time and not a universal execution gate",
         "execution_owner": "python_worker"
       },
       "plan_layer_edit": {
@@ -892,7 +903,7 @@
         "current_cli": "layer add/set/replace/remove --dry-run",
         "worker_operation": "edit",
         "execution_status": "partial: 当前 CRUD 计划能力已接入；统一多来源计划/冲突状态待 EDIT",
-        "plan_status": "proposed",
+        "plan_status": "implemented_for_selected_application_operations; point_in_time and not a universal execution gate",
         "execution_owner": "python_worker"
       },
       "apply_layer_edit": {
@@ -907,7 +918,7 @@
         "current_cli": "layer add/set/replace/remove",
         "worker_operation": "edit",
         "execution_status": "partial: variant/source 事务已实现；统一 state impact 与迁移能力待 EDIT",
-        "plan_status": "proposed",
+        "plan_status": "implemented_for_selected_application_operations; point_in_time and not a universal execution gate",
         "execution_owner": "python_worker"
       },
       "test_extension": {
@@ -920,7 +931,7 @@
         "current_cli": "component test",
         "worker_operation": "component_test",
         "execution_status": "implemented",
-        "plan_status": "proposed",
+        "plan_status": "implemented_for_selected_application_operations; point_in_time and not a universal execution gate",
         "execution_owner": "python_worker"
       },
       "evaluate": {
@@ -937,7 +948,7 @@
         "current_cli": "evaluate --run <id> --evaluator <module:callable> --data <module:factory>",
         "worker_operation": "evaluate",
         "execution_status": "implemented: custom task evaluator, checkpoint verification and source/data provenance",
-        "plan_status": "proposed",
+        "plan_status": "not_implemented: readiness_request has no evaluate command mapping; evaluation has worker feature gates and CLI report semantics but no OperationPlan here",
         "execution_owner": "python_worker"
       },
       "data_classification_index": {
@@ -953,7 +964,7 @@
         "current_cli": "data index --root <CLASS_FOLDER> --verify",
         "worker_operation": "data_index",
         "execution_status": "implemented",
-        "plan_status": "proposed",
+        "plan_status": "not_implemented: data index is a standalone worker operation and is not covered by plan_operation_inputs",
         "execution_owner": "python_worker",
         "notes": [
           "完整扫描内容指纹；verify 显式解码全部索引图像。",
@@ -961,19 +972,28 @@
           "分类预设只应用根路径与源指纹匹配的项目协议，源内容变化后拒绝静默复用。"
         ]
       }
+    },
+    "scope": "The following 14 entries are user-facing operation concepts, not an exhaustive inventory of CLI subcommands. The exhaustive worker route/feature registry is compatibility.json#/operations and python/model_maven_worker/protocol.py; Rust-owned CLI actions are outside that worker registry.",
+    "capability_evidence_layers": {
+      "cli_interface": "m-model --json --no-interactive --describe-interface returns interface_version, cli_version, report_protocol_version and boolean interface capabilities without starting Python or loading project user code. These booleans do not prove selected-runtime or model support.",
+      "worker_runtime": "doctor returns worker protocol/API versions, state format versions and unique capability descriptors with supported/unsupported/conditional/unknown state. It describes the selected runtime, not a particular model instance.",
+      "required_features": "compatibility.json#/required_features and #/operations are the registered feature gate for worker requests; every required feature must match before worker operation imports. This registry is a software declaration, not runtime/model evidence.",
+      "provider_declaration": "Component manifest capabilities are declarations. Static discovery does not import or execute provider code; conformance/activation evidence is a separate operation.",
+      "model_instance": "Construction, forward, edit candidate, or training evidence is available only from the corresponding explicitly selected operation and its report. A dynamic branch not reached by the selected input remains unknown; one forward is not full coverage. Automatic editability requires observed source/aliases and a supported transaction; absent safe-edit evidence remains unknown or unsupported and may offer same-project manual source editing."
     }
   },
   "current_report_compatibility": {
-    "status": "implemented legacy shell; not equivalent to OperationPlan readiness",
+    "status": "implemented legacy report envelope v1; selected ApplicationUiServices paths may attach readiness, but it is not a normalized result or universal readiness protocol",
     "fields": {
       "protocol_version": "worker/report envelope integer; currently 1",
       "operation": "string. Worker-backed Report.operation commonly uses inspect/probe/verify/training_probe/train/layers/edit; Rust-owned operations use names such as assembly_show, component_show, or runs_list. These are not yet one canonical operation_ref.",
-      "status": "success|error only; does not encode needs_input/unsupported/unknown readiness.",
+      "status": "Current Rust Report constructors emit success or error; inconclusive is recognized by exit-code mapping and can be emitted by selected report producers. Readiness states are separate and are not implied by Report.status.",
       "data": "operation-specific JSON object; fields documented per operation and not globally uniform.",
       "diagnostics[]": {
         "code": "stable machine identifier by existing behavior",
         "message": "human-readable concise explanation",
-        "hint": "optional recovery guidance; not an executable action"
+        "hint": "optional recovery guidance; not executable",
+        "details": "optional DiagnosticDetails shape exists; current producers do not uniformly populate severity/scope/recovery_actions/evidence_state"
       }
     },
     "data_field_mappings": {
@@ -1051,7 +1071,7 @@
           ],
           "reused": "Only matching unaffected per-call structural metadata; never Tensor values or forward computation.",
           "revalidated": "Per-call metadata checked against the current execution.",
-          "root_forward_executed": "true; a new real root forward is required for every probe.",
+          "root_forward_executed": "A whole-probe metadata record can be reused when its evidence identity is accepted; forward_execution and evidence_cache state distinguish reuse from a new forward. An explicit fresh-forward request disables reuse.",
           "tensor_reuse": "false",
           "expanded_scope_reason": "Explains why dynamic, shared, incomplete, or unattributable evidence requires whole-probe validation."
         },
@@ -1379,5 +1399,529 @@
       },
       "inputs": []
     }
+  },
+  "operation_execution_contract": {
+    "read_only_queries": {
+      "implemented": "CLI interface discovery is metadata-only; runs/config/component registries and assembly show --config-only have dedicated non-model query paths. Doctor inspects the selected runtime and worker catalog.",
+      "not_guaranteed": "There is no universal lightweight readiness query for every operation. Application plan construction can invoke doctor to discover runtime capabilities once required inputs are present.",
+      "never_implicit": "Home/landing-page rendering must not invoke user model, batch, transform, training/evaluator code, package installation, downloads, or project mutation. A query with missing evidence returns unknown plus available alternatives."
+    },
+    "async_and_cancel": {
+      "implemented": "Detached training has request identity and run lookup; selected preview flows support cancellation/generation supersession; training stop is cooperative and operation-specific.",
+      "gap": "No common asynchronous operation ID/event/cancel/result envelope covers all long-running CLI operations. Lost receipts and interrupted commits require query/reconciliation before retry."
+    },
+    "cache_and_freshness": {
+      "implemented": "Model evidence cache has identity checks and distinguishes reused metadata from an executed forward; preview publication is request/generation scoped; application runtime capability catalog is process-local.",
+      "gap": "There is no global stale marker or uniform invalidation event for all plans/reports. Consumers must scope cache keys to the evidence identity they actually verify; if identity is incomplete, report unknown and do not reuse."
+    },
+    "mutation_classes": "Read-only query, non-writing preview, guarded commit, and user-code execution are separate operation properties. Every catalog entry must state which applies; the default view is query-only.",
+    "recovery": "Structured DiagnosticDetails is an available DTO, but current wire reports mainly provide code/message/hint. Recovery actions must carry availability/reason and are advice until separately selected and revalidated."
+  },
+  "workspace_entry_matrix": {
+    "authority": "../model-maven-tui/lua/model_maven/workspace.lua keymaps and ../model-maven-tui/lua/model_maven/transport.lua request gates; worker IDs resolve through compatibility.json#/operations.",
+    "entries": [
+      {
+        "entry": "M.open initial panel; k check project",
+        "cli": [
+          "assembly show --config-only"
+        ],
+        "report_operation": "assembly_show",
+        "worker_operation": null,
+        "mode": "read_only_metadata",
+        "cli_capability_ids": [],
+        "evidence": "Saved bindings/config revision only; model construction and forward are not_run. Missing/bad/changed config is unknown, not empty project."
+      },
+      {
+        "entry": "F discover project entrypoints; n/a create or connect; Q/S save model/input configuration",
+        "cli": [
+          "discover",
+          "scaffold or init --dry-run, followed by an explicitly reviewed commit",
+          "config set-model/set-batch preview, followed by --apply --if-current"
+        ],
+        "report_operation": ["project_discover", "scaffold", "init", "config_set_model", "config_set_batch"],
+        "worker_operation": null,
+        "cli_capability_ids": [
+          "project.static_entrypoint_discovery",
+          "project.static_entrypoint_discovery_roots_v1 (selected module roots)",
+          "project.custom_scaffold (custom scaffold)",
+          "project.conditional_model_edit",
+          "project.conditional_batch_edit"
+        ],
+        "mode": "static_discovery_or_preview_then_explicit_guarded_write",
+        "evidence": "Discovery supplies static candidate names, not proof of importability or callable behavior. Plans show proposed files or configuration; committed files and configuration still need execution and validation in the selected environment."
+      },
+      {
+        "entry": "canvas layer edit planning by stable ID",
+        "cli": ["recipe-layer-edit-plan --recipe FILE --if-recipe SHA256 --operations FILE --if-operations SHA256"],
+        "report_operation": "recipe_layer_edit_plan",
+        "worker_operation": null,
+        "cli_capability_ids": ["project.scaffold_layer_ids_v1", "project.recipe_layer_edit_plan_v1"],
+        "mode": "atomic_static_draft_plan_only",
+        "evidence": "The backend plans up to 64 add, remove, replace, set, copy and move operations against the supplied digest; failures leave project files unchanged. Returned IDs, orders, layer digests and static generation status do not prove runtime behavior. Operations and draft are supplied as files to avoid exposing parameter values in command arguments."
+      },
+      {
+        "entry": "canvas layer move planning by stable ID",
+        "cli": ["recipe-layer-plan --recipe FILE --if-recipe SHA256 --moves JSON"],
+        "report_operation": "recipe_layer_plan",
+        "worker_operation": null,
+        "cli_capability_ids": ["project.scaffold_layer_ids_v1", "project.recipe_layer_move_plan_v1"],
+        "mode": "static_draft_plan_only",
+        "evidence": "The input file digest, IDs and same-group targets are checked; the response contains resulting ID orders and static code-generation status. No model code is imported, no project file is modified and runtime compatibility remains unverified. Saving uses the separately reviewed scaffold transaction."
+      },
+      {
+        "entry": "9/0 synchronize saved input or selected training into a canvas declaration",
+        "cli": ["recipe-sync --data or --training-profile preview, followed by --apply --if-plan"],
+        "report_operation": "recipe_sync",
+        "worker_operation": null,
+        "cli_capability_ids": ["project.scaffold_recipe_sync_v1"],
+        "mode": "preview_then_guarded_declaration_write",
+        "evidence": "Only the declaration changes. The saved project configuration and declaration revisions are checked; no model source is regenerated and no model or data factory is executed. External file edits do not participate in the CLI project-configuration lock."
+      },
+      {
+        "entry": "e/E/K select and inspect runtime, CLI and project import paths",
+        "cli": [
+          "--describe-interface",
+          "doctor",
+          "env libraries/probe/devices",
+          "config set-python/set-runtime-paths preview, followed by --apply --if-current"
+        ],
+        "report_operation": ["interface", "environment_library_inventory", "environment_library_probe", "environment_devices", "config_set_python", "config_set_runtime_paths"],
+        "worker_operation": ["environment_library_inventory", "environment_library_probe", "environment_devices"],
+        "cli_capability_ids": [
+          "runtime.project_python_config_v1",
+          "runtime.project_paths_config_v1",
+          "runtime.torch_layer_catalog_v1 (explicit Layer discovery)",
+          "runtime.operator_catalog_v1 (explicit module candidate discovery; compatibility unknown)",
+          "runtime.device_inventory_v1 (device query)"
+        ],
+        "mode": "selection_or_explicit_runtime_inspection_or_guarded_config_write",
+        "evidence": "Selecting a runtime does not install, import or verify dependencies. Explicit inspection can start Python, run startup hooks and import requested libraries; reported inventory and devices are bounded observations. Saving a runtime choice does not pin installed packages or external state."
+      },
+      {
+        "entry": "I capability and evidence overview",
+        "cli": [
+          "--describe-interface",
+          "last successful model inspect/probe report (when current)"
+        ],
+        "report_operation": "interface plus reused last report",
+        "worker_operation": null,
+        "mode": "read_only_metadata",
+        "cli_capability_ids": [
+          "CLI interface catalog v1; individual booleans are rendered as declarations"
+        ],
+        "evidence": "The overview labels CLI booleans as declarations. It may reuse current inspect/layers/probe instance evidence and shows observed scope/unknowns; it does not call doctor or claim a universal per-operation capability preflight. Stale/absent instance evidence is unknown. Opening this action does not run a model."
+      },
+      {
+        "entry": "i inspect model; l browse layers",
+        "cli": [
+          "model inspect",
+          "layer list"
+        ],
+        "report_operation": [
+          "inspect",
+          "layers"
+        ],
+        "worker_operation": [
+          "inspect",
+          "layers"
+        ],
+        "worker_capability_ids": [
+          "model.inspect"
+        ],
+        "mode": "executes_selected_model_factory",
+        "evidence": "Model/module rows are instance evidence for this construction; they do not establish forward behavior or all dynamic paths."
+      },
+      {
+        "entry": "p run forward",
+        "cli": [
+          "model probe"
+        ],
+        "report_operation": "probe",
+        "worker_operation": "probe",
+        "worker_capability_ids": [
+          "model.forward_probe",
+          "data.dataset_probe"
+        ],
+        "mode": "executes_selected_model_and_batch",
+        "evidence": "Calls, outputs and coverage describe only this input and observed paths. Reused metadata is labeled separately from a newly executed forward; unobserved paths remain unknown."
+      },
+      {
+        "entry": "Z browse variants; V in module detail creates a variant edit",
+        "cli": [
+          "variant list/show",
+          "model probe --variant NAME --if-variant-base TOKEN",
+          "layer apply --operation JSON --target variant --variant NAME --dry-run --require-forward",
+          "layer apply with reviewed variant base, input-content digest, source-manifest digest and seed"
+        ],
+        "report_operation": ["variant_list", "variant_show", "probe", "edit"],
+        "worker_operation": ["probe", "edit"],
+        "cli_capability_ids": [
+          "model.conditional_variant_probe_v1 (variant forward)",
+          "edit.conditional_variant_edit_v1 (preview and commit)",
+          "edit.variant_base_rng_v1 (new variant base construction)",
+          "edit.variant_layer_rng_v1 (explicit Layer RNG devices)"
+        ],
+        "mode": "saved_metadata_or_confirmed_variant_forward_or_preview_then_explicit_conditional_commit",
+        "evidence": "Listing and showing are saved metadata, not current model behavior. Variant observation is separate from source-model evidence; a truncated observed trace is distinct from reported structure. Candidate forward and guarded commit cover their reported input, source and variant identities, not arbitrary external state or all side effects."
+      },
+      {
+        "entry": "w preview Layer edit; W compose edit; commit action follows reviewed preview",
+        "cli": [
+          "layer add/set/replace/remove --dry-run",
+          "layer edit with a reviewed base/forward/source guard"
+        ],
+        "report_operation": "edit",
+        "worker_operation": "edit",
+        "worker_capability_ids": [
+          "model.layer_edit",
+          "edit.mixed_source_transaction_v1"
+        ],
+        "mode": "preview_then_explicit_conditional_commit",
+        "evidence": "Candidate validation is operation-specific. Safe editability is not inferred from inspect capability; changed source/variant base or input rejects commit. Unsupported source forms remain manual-source-edit/unknown.",
+        "cli_capability_ids": [
+          "edit.conditional_source_plan",
+          "edit.conditional_source_input",
+          "edit.conditional_source_config",
+          "edit.conditional_source_project_manifest",
+          "edit.source_factory_device_v1",
+          "edit.atomic_source_transaction (source transaction only)",
+          "edit.mixed_source_transaction_v1 (mixed transaction only)"
+        ]
+      },
+      {
+        "entry": "A assemble components/routes",
+        "cli": [
+          "assembly show --config-only",
+          "assembly patch --set/--remove/--route/--encoder-output --apply --if-config-revision",
+          "assembly generate --output ... --if-config-revision (when selected)"
+        ],
+        "report_operation": [
+          "assembly_show",
+          "assembly_patch",
+          "assembly_generate"
+        ],
+        "worker_operation": [
+          "inspect/probe (assembly show without --config-only, depending on batch)",
+          "probe (candidate forward)",
+          "assembly_codegen",
+          "assembly_codegen_verify (generated-source verification)"
+        ],
+        "worker_capability_ids": [
+          "model.inspect or model.forward_probe/data.dataset_probe (assembly show)",
+          "model.forward_probe (candidate verification)",
+          "edit.assembly_codegen",
+          "edit.assembly_codegen_runtime_paths_v1 (generated-source verification)"
+        ],
+        "mode": "config_only_query_or_candidate_forward_then_explicit_revision_guarded_save_or_file_generation",
+        "evidence": "Config-only show does not construct/forward. Patch candidate verification calls worker probe and may import factories/run a representative forward; generation uses assembly_codegen and assembly_codegen_verify. Commit/file creation is explicit and guarded by revision/evidence conditions.",
+        "cli_capability_ids": [
+          "assembly.atomic_patch",
+          "assembly.atomic_patch_evidence",
+          "assembly.atomic_patch_route/assembly.atomic_patch_encoder_output (when selected)",
+          "assembly.generate_runtime_paths_v1 (explicit runtime paths)"
+        ]
+      },
+      {
+        "entry": "t/M/B mark/rebind observed ports; d/D/u manage/preview supervision",
+        "cli": [
+          "model mark/retag/marks/supervise preview/rule operations"
+        ],
+        "report_operation": [
+          "semantic_mark",
+          "semantic_supervise",
+          "supervision_rule_*"
+        ],
+        "worker_operation": [
+          "semantic_mark",
+          "semantic_supervise"
+        ],
+        "worker_capability_ids": [
+          "model.semantic_marks",
+          "model.forward_probe",
+          "supervision.port_path_v2",
+          "training.supervision_preview"
+        ],
+        "mode": "query_or_selected_forward_or_guarded_semantic_mutation",
+        "evidence": "Ports must be observed in the selected model/input; preview is separate from saving a rule. Runtime capability does not prove a target port exists.",
+        "cli_capability_ids": [
+          "supervision.bundle_v1 (supervision import/export)",
+          "supervision.conditional_rule_add_v1",
+          "supervision.conditional_retag",
+          "supervision.conditional_variant_mark_v1 (variant mark)",
+          "supervision.conditional_variant_retag_v1 (variant rebind)",
+          "supervision.conditional_variant_preview_v1 (variant supervision preview)",
+          "supervision.environment_rule_v1",
+          "supervision.conditional_supervision (when enabling for training)",
+          "supervision.preview_device_v1 (selected device only)"
+        ]
+      },
+      {
+        "entry": "y trial; T formal/background training",
+        "cli": [
+          "try",
+          "train",
+          "loop-trial",
+          "loop-run"
+        ],
+        "report_operation": [
+          "training_probe",
+          "train",
+          "generic_loop_trial",
+          "generic_loop_train"
+        ],
+        "worker_operation": [
+          "training_probe",
+          "train",
+          "generic_loop_trial",
+          "generic_loop_train"
+        ],
+        "worker_capability_ids": [
+          "training.managed_step",
+          "training.external_loop",
+          "training.checkpoint_resume (mode-dependent)"
+        ],
+        "mode": "executes_user_training_code_and_may_write_run_artifacts",
+        "evidence": "Selected inputs, runtime and mode are reviewed first; request/run IDs support reconciliation. Capability declarations do not predict model/task success.",
+        "cli_capability_ids": [
+          "training.conditional_config_start",
+          "training.batch_binding_v1 (selected binding only)",
+          "training.batch_device_policy_v1 (selected policy only)",
+          "training.custom_optimizer_factory_v1 (selected factory only)",
+          "training.generic_device_v1 (non-built-in device only)",
+          "training.conditional_supervision (selected rules)",
+          "training.random_run_seed_v1 (generated seed report only)"
+        ]
+      },
+      {
+        "entry": "R runs; H resolve pending start",
+        "cli": [
+          "runs list/show/find-request/stop as selected"
+        ],
+        "report_operation": [
+          "runs_list",
+          "runs_show",
+          "runs_find_request",
+          "runs_stop"
+        ],
+        "worker_operation": null,
+        "mode": "read_only_query_except_explicit_cooperative_stop",
+        "cli_capability_ids": [
+          "runs.lookup_request_id (request lookup)"
+        ],
+        "evidence": "Recorded run state is point-in-time. Stop is cooperative; missing/lost receipts remain unknown and are reconciled before retry."
+      },
+      {
+        "entry": "C request cancellation during an active TUI process",
+        "cli": [
+          "process cancellation via transport request handle"
+        ],
+        "report_operation": "operation report or transport cancellation outcome",
+        "worker_operation": null,
+        "mode": "process_interrupt_with_transport_handle",
+        "cli_capability_ids": [],
+        "evidence": "Cancellation during capability discovery is cancelled_before_start; after the operation starts, the report/transport distinguishes USER_INTERRUPTED, completed-before-cancel, and unknown outcome. Inspect affected project/run state before retry."
+      }
+    ],
+    "transport_contract": {
+      "entrypoint": "M.open creates the workspace panel, binds actions with map(key, callback, description), then calls refresh_project. refresh_project issues assembly show --config-only. Key I calls capability_overview, which requests --describe-interface and combines its declarations with a still-current inspect/layers, probe, or training trial report; opening the panel does not call the user model. Unavailable capability metadata is displayed as unknown without replacing the current report.",
+      "report_validation": "transport.request parses one JSON report; requires protocol_version=1, nonempty operation, status success/error/inconclusive, status/exit agreement, and non-null data on success. Interface reports additionally require interface_version=1, report_protocol_version=1, nonempty cli_version, and a capability table.",
+      "runtime_path_gate": "When explicit runtime-path overrides apply to model/probe/edit/training/preview/assembly routes, transport first requires runtime.workspace_paths_v1 and route-specific interface IDs (for example training.generic_loop_trial_cli_v1 or assembly.generate_runtime_paths_v1). Missing, malformed, or legacy capability metadata stops before that protected request.",
+      "legacy": "A CLI missing or rejecting --describe-interface cannot satisfy guarded capability checks. Independently documented safe metadata queries remain available; clients never infer a missing ID as true."
+    },
+    "not_implemented": [
+      "No single workspace action currently aggregates CLI interface declarations + selected-runtime doctor descriptors + model-instance evidence into an enforced per-operation readiness matrix. The overview is evidence-only; action-specific CLI guards and backend worker feature checks remain the enforcement points."
+    ]
+  },
+  "cli_interface_catalog": {
+    "version": 1,
+    "source": "src/main.rs --describe-interface capability map; exact IDs below are the current interface declarations.",
+    "semantics": "Each listed ID is emitted as true by this CLI build. This establishes CLI surface support only. It is not the selected worker runtime capability, provider conformance, or model-instance evidence. A missing/false ID is not advertised; non-boolean values are protocol errors for a required ID.",
+    "ids": [
+      "input_snapshot.capture_replay",
+      "probe.force_fresh_environment",
+      "probe.model_device_v1",
+      "supervision.mark_device_v1",
+      "supervision.preview_device_v1",
+      "data.preview_no_split_v1",
+      "data.preview_augment_choice_v1",
+      "runtime.workspace_paths_v1",
+      "runtime.project_paths_config_v1",
+      "runtime.project_python_config_v1",
+      "runtime.python_selection_hint_v1",
+      "runtime.data_preview_paths_v1",
+      "runtime.device_inventory_v1",
+      "runtime.offline_environment_create_v1",
+      "project.classification_create",
+      "project.scaffold_recipe_sync_v1",
+      "project.scaffold_layer_ids_v1",
+      "project.scaffold_one_batch_evaluator_v1",
+      "project.scaffold_mse_shape_contract_v1",
+      "project.recipe_layer_move_plan_v1",
+      "project.recipe_layer_edit_plan_v1",
+      "project.recipe_layer_cross_copy_plan_v1",
+      "project.graph_topology_plan_v1",
+      "project.graph_import_scaffold_preview_v1",
+      "project.graph_reorder_plan_v1",
+      "project.graph_reorder_after_v1",
+      "project.graph_recipe_bundle_v1",
+      "project.scaffold_recipe_bundle_v1",
+      "project.graph_declared_shapes_v1",
+      "project.graph_port_dtype_v1",
+      "project.graph_training_step_v1",
+      "project.graph_training_modes_v1",
+      "project.graph_supervision_reference_v1",
+      "project.graph_training_recipe_v1",
+      "project.graph_merge_output_shapes_v1",
+      "project.graph_call_output_style_v1",
+      "project.graph_named_components_v1",
+      "project.graph_source_preview_v1",
+      "project.graph_source_create_v1",
+      "project.graph_registered_components_v1",
+      "project.graph_save_v1",
+      "project.graph_runtime_shape_contract_v1",
+      "project.scaffold_residual_layers_v1",
+      "project.scaffold_parallel_layers_v1",
+      "project.scaffold_custom_loss_v1",
+      "project.custom_scaffold",
+      "project.scaffold_runtime_dtype_v1",
+      "project.scaffold_default_dtype_v1",
+      "project.scaffold_32_inputs_outputs_v1",
+      "project.scaffold_rank8_v1",
+      "project.scaffold_custom_module",
+      "project.scaffold_external_batch",
+      "project.scaffold_external_batch_params",
+      "project.scaffold_initial_bindings",
+      "project.scaffold_native_encoder_output",
+      "project.scaffold_encoder_output_edit",
+      "project.scaffold_encoder_output_evidence",
+      "project.scaffold_named_outputs",
+      "project.scaffold_unicode_outputs_v1",
+      "project.scaffold_unicode_inputs_v1",
+      "project.scaffold_nfkc_collision_v1",
+      "project.scaffold_objectives",
+      "project.scaffold_objective_weights",
+      "data.csv_batch_template",
+      "data.csv_batch_typed",
+      "data.csv_batch_runtime_dtype_v1",
+      "data.csv_batch_rank8_v1",
+      "data.csv_batch_optional_targets_v1",
+      "data.csv_batch_row_split_v1",
+      "project.scaffold_input_routes",
+      "project.scaffold_route_edit",
+      "project.scaffold_route_evidence",
+      "project.scaffold_setting_snapshot",
+      "project.conditional_batch_edit",
+      "project.conditional_batch_edit_previous",
+      "project.conditional_model_edit",
+      "assembly.conditional_config_edit",
+      "assembly.atomic_patch",
+      "assembly.direct_factory_params_v1",
+      "assembly.atomic_patch_encoder_output",
+      "assembly.atomic_patch_route",
+      "assembly.atomic_patch_evidence",
+      "assembly.single_source_evidence",
+      "assembly.single_runtime_paths_v1",
+      "assembly.single_input_evidence",
+      "assembly.single_input_snapshot",
+      "component.conditional_uninstall",
+      "component.project_package_lifecycle",
+      "assembly.atomic_patch_snapshot",
+      "assembly.generated_source_verify",
+      "assembly.generate_runtime_paths_v1",
+      "assembly.show_runtime_paths_v1",
+      "training.conditional_config_start",
+      "training.external_loop_model_choice_v1",
+      "training.generic_loop_trial_cli_v1",
+      "training.generic_loop_train_cli_v1",
+      "training.generic_loop_interface_v1",
+      "training.batch_binding_v1",
+      "training.batch_device_policy_v1",
+      "training.repeat_input_guard_v1",
+      "training.custom_optimizer_factory_v1",
+      "training.generic_device_v1",
+      "training.request_identity",
+      "training.atomic_run_admission",
+      "runs.lookup_request_id",
+      "training.conditional_supervision",
+      "training.random_run_seed_v1",
+      "data.raw_batch_binding_v1",
+      "data.preview_whole_batch_v1",
+      "edit.source_factory_device_v1",
+      "runtime.torch_layer_catalog_v1",
+      "runtime.operator_catalog_v1",
+      "edit.variant_device_policy_v1",
+      "edit.variant_layer_rng_v1",
+      "edit.variant_base_rng_v1",
+      "edit.conditional_variant_edit_v1",
+      "model.conditional_variant_probe_v1",
+      "data.preview_random_seed_v1",
+      "supervision.bundle_v1",
+      "supervision.conditional_retag",
+      "supervision.conditional_rule_add_v1",
+      "supervision.environment_rule_v1",
+      "supervision.observed_anchor_guard_v1",
+      "supervision.root_mark_v1",
+      "model.contract_identity_v1",
+      "model.contract_preload_v1",
+      "supervision.post_forward_scope_v1",
+      "supervision.external_source_anchor_v1",
+      "project.static_entrypoint_discovery",
+      "project.static_entrypoint_discovery_roots_v1",
+      "training.conditional_variant_start",
+      "training.conditional_resume_checkpoint",
+      "runtime.historical_python_v1",
+      "evaluation.conditional_checkpoint",
+      "evaluation.model_device_v1",
+      "export.conditional_checkpoint",
+      "export.explicit_python_fallback_v1",
+      "training.data_fingerprint",
+      "runs.comparison_unverified_data",
+      "augmentation.conditional_config_edit",
+      "augmentation.catalog_v1",
+      "edit.conditional_source_manifest",
+      "edit.conditional_source_plan",
+      "edit.atomic_source_transaction",
+      "edit.mixed_source_transaction_v1",
+      "edit.starter_migration",
+      "edit.conditional_source_input",
+      "edit.conditional_source_config",
+      "edit.conditional_source_project_manifest",
+      "layer.builtin_catalog"
+    ],
+    "platform_conditionals": {
+      "training.generic_loop_detached_cli_v1": "true only when cfg!(target_os = \"linux\"); otherwise false"
+    },
+    "client_rule": "Guarded TUI actions check their required interface IDs before request. The workspace entry-to-route mapping and representative IDs are in workspace_entry_matrix; worker features are separately listed in compatibility.json#/operations."
+  },
+  "integration_handoffs": {
+    "application_readiness_gate": {
+      "task": "P0-03/G1-01 runtime integration owner",
+      "file": "src/presentation/service.rs",
+      "function": "ApplicationUiServices::execute(&mut self, command: &Command) -> Report",
+      "current_behavior": "After plan_operation_inputs, the service blocks needs_input and unsupported, then calls run_with_context for required unknown/conditional. Interactive workbench confirm_training_plan also permits start on both after one generic prompt.",
+      "required_wiring": "Before run_with_context, block required unknown and return protocol-v1 Report with operation, diagnostic, and data.readiness. Conditional may proceed only after every stated condition is resolved and a fresh plan is built; acknowledgement alone cannot resolve unknown. Preserve the existing selected-command operation and user-selected runtime."
+    },
+    "workspace_capability_overview": {
+      "task": "G1-01 per-model capability preflight owner",
+      "file": "../model-maven-tui/lua/model_maven/workspace.lua",
+      "function": "capability_overview(state), dispatched by map('I', ...)",
+      "current_behavior": "Requests --describe-interface and may combine it with the last unchanged inspect/layers/probe report. It does not query doctor or assert a universal operation readiness result.",
+      "required_wiring": "If selected-runtime facts are added, query only the currently user-selected Python for the selected operation; keep CLI declarations, runtime capability descriptors, and model-instance reports as separate evidence fields. Do not auto-bind a new environment, factory, device, or library."
+    },
+    "async_freshness_contract": {
+      "task": "M1-01 related async/freshness follow-up (not a P0-02 prerequisite)",
+      "files": [
+        "../model-maven-tui/lua/model_maven/transport.lua",
+        "../model-maven-tui/lua/model_maven/workspace.lua"
+      ],
+      "functions": [
+        "transport.request",
+        "workspace.run",
+        "refresh_project"
+      ],
+      "current_behavior": "TUI has per-process request handles, project/source/buffer revision checks, and unknown-outcome reconciliation; backend has no common async event/cancel/stale envelope covering every CLI operation.",
+      "required_wiring": "Any later common envelope must preserve operation-specific request/run/artifact queries; cancellation, timeout, or lost receipts remain unknown until reconciled and must never trigger automatic retry."
+    },
+    "scope": "These are explicit source-level follow-ups, not prerequisites in the P0-02 assignment (depends_on is empty). This contract task documents current limits and does not claim those runtime changes are complete."
   }
 }

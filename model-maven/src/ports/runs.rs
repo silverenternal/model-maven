@@ -1,6 +1,20 @@
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 
+/// Identity of the kernel boot and PID namespace in which run PIDs are meaningful.
+pub fn current_process_scope() -> Option<Value> {
+    #[cfg(target_os = "linux")]
+    {
+        let boot = std::fs::read_to_string("/proc/sys/kernel/random/boot_id").ok()?;
+        let namespace = std::fs::read_link("/proc/self/ns/pid").ok()?;
+        let namespace = namespace.to_str()?;
+        if boot.trim().is_empty() || namespace.is_empty() { return None; }
+        Some(serde_json::json!({"boot_id":boot.trim(),"pid_namespace":namespace}))
+    }
+    #[cfg(not(target_os = "linux"))]
+    { None }
+}
+
 /// Persists foreground training probes and exposes their immutable inputs/results.
 pub trait RunRepository {
     fn create(&self, root: &Path, inputs: &Value) -> Result<String, String>;
@@ -34,6 +48,9 @@ pub trait RunRepository {
     fn list(&self, root: &Path) -> Result<Vec<Value>, String>;
     fn find_request(&self, root: &Path, request_id: &str) -> Result<Value, String>;
     fn show(&self, root: &Path, id: &str) -> Result<Value, String>;
+    fn acknowledge_unknown(&self, _root: &Path, _id: &str, _revision: &str, _accept_unverified_host: bool, _accept_different_scope: bool, _check: &dyn Fn(&Value) -> Result<(), String>) -> Result<Value, String> {
+        Err("当前运行存储不支持处理未知运行。".into())
+    }
 }
 
 /// Owns detached process identity and OS signal delivery, separate from run persistence.

@@ -10,6 +10,7 @@ STATE_FORMAT_VERSIONS = {
     "project_config": 1,
     "environment_lock": 1,
     "training_checkpoint": 1,
+    "generic_loop_checkpoint": 1,
     "model_variant": 1,
     "layer_edit_plan": 1,
     "extension_manifest": 1,
@@ -21,39 +22,58 @@ STATE_FORMAT_VERSIONS = {
 # worker capability IDs from this same table.
 OPERATION_FEATURES = {
     "doctor": (),
-    "inspect": ("model.inspect",),
+    "runtime_capabilities": (),
+    "inspect": ("model.inspect", "model.runtime_rng_v1"),
     "layers": ("model.inspect",),
-    "probe": ("model.forward_probe", "data.dataset_probe"),
-    "semantic_mark": ("model.forward_probe", "data.dataset_probe", "model.semantic_marks"),
+    "probe": ("model.forward_probe", "data.dataset_probe", "model.contract_port_paths_v2", "model.contract_identity_v1", "model.contract_preload_v1", "model.probe_device_v1", "model.runtime_rng_v1", "data.runtime_sampling_seed_v1"),
+    "graph_draft_probe": ("model.forward_probe", "data.dataset_probe", "graph.draft_replay_v1"),
+    "semantic_mark": ("model.forward_probe", "data.dataset_probe", "model.semantic_marks", "model.semantic_anchor_guard", "model.semantic_external_source_v1", "supervision.port_path_v2", "supervision.root_mark_v1", "model.semantic_device_v1", "data.runtime_sampling_seed_v1"),
     "semantic_supervise": (
         "model.forward_probe",
         "data.dataset_probe",
         "model.semantic_marks",
         "training.supervision_preview",
+        "supervision.preview_device_v1",
+        "data.runtime_sampling_seed_v1",
+        "supervision.conditional_rule_add_v1",
+        "supervision.rule_copy_v1",
+        "supervision.bundle_v1",
+        "supervision.extended_axis_v1",
+        "supervision.environment_rule_v1",
+        "supervision.port_path_v2",
     ),
-    "preview": ("data.preview",),
+    "preview": ("data.preview", "data.preview_runtime_paths_v1"),
     "data_index": ("data.classification_index",),
     "preset_catalog": (),
-    "verify": ("model.loss_probe",),
-    "edit": ("model.layer_edit",),
-    "assembly_codegen": ("edit.assembly_codegen",),
-    "assembly_codegen_verify": ("edit.assembly_codegen", "model.forward_probe", "data.dataset_probe"),
+    "verify": ("model.loss_probe", "data.runtime_sampling_seed_v1"),
+    "edit": ("model.layer_edit", "edit.mixed_source_transaction_v1", "edit.random_variant_seed_v1", "data.runtime_sampling_seed_v1", "model.runtime_rng_v1", "edit.source_factory_device_v1"),
+    "assembly_codegen": ("edit.assembly_codegen", "edit.assembly_python_rng_v1"),
+    "assembly_codegen_verify": ("edit.assembly_codegen", "edit.assembly_codegen_runtime_paths_v1", "model.forward_probe", "data.dataset_probe", "data.runtime_sampling_seed_v1"),
     "training_probe": (
         "training.managed_step",
+        "training.custom_optimizer_worker_v1",
+        "training.generic_device_v1",
         "training.manual_step",
         "training.external_loop",
         "training.checkpoint_resume",
         "training.supervision_apply",
+        "supervision.port_path_v2",
     ),
+    "generic_loop_trial": ("training.generic_loop_trial_v1", "training.generic_loop_context_signature_v1"),
+    "generic_loop_train": ("training.generic_loop_train_v1", "training.generic_loop_context_signature_v1"),
     "train": (
         "training.managed_step",
+        "training.batch_binding_checkpoint_v1",
+        "training.custom_optimizer_worker_v1",
+        "training.generic_device_v1",
         "training.manual_step",
         "training.external_loop",
         "training.checkpoint_resume",
         "training.weight_migration",
         "training.supervision_apply",
+        "supervision.port_path_v2",
     ),
-    "evaluate": ("training.evaluation", "training.checkpoint_resume"),
+    "evaluate": ("training.evaluation", "training.checkpoint_resume", "evaluation.model_device_v1"),
     "component_install": ("extensions.static_discovery",),
     "component_uninstall": ("extensions.static_discovery",),
     "component_discover": ("extensions.static_discovery",),
@@ -65,21 +85,54 @@ OPERATION_FEATURES = {
     "environment_configure": ("environment.setup",),
     "environment_check": (),
     "environment_library_inventory": ("environment.library_inventory",),
-    "environment_library_probe": ("environment.library_probe",),
+    "environment_library_probe": ("environment.library_probe", "environment.torch_layer_catalog_v1", "environment.operator_catalog_v1"),
+    "environment_devices": ("environment.device_inventory_v1",),
     "environment_wheelhouse_archive": ("environment.wheelhouse",),
     "environment_wheelhouse_check": ("environment.wheelhouse",),
-    "environment_wheelhouse_replay": ("environment.wheelhouse",),
+    "environment_wheelhouse_replay": ("environment.wheelhouse", "environment.wheelhouse_create_v1"),
 }
+for _operation in ("probe", "preview", "verify", "edit", "semantic_mark", "semantic_supervise",
+                   "training_probe", "train", "assembly_codegen_verify", "component_test"):
+    OPERATION_FEATURES[_operation] += ("data.raw_batch_binding_v1",)
+for _operation in ("inspect", "layers", "probe", "verify", "edit", "semantic_mark",
+                   "semantic_supervise", "training_probe", "train", "evaluate", "assembly_codegen"):
+    OPERATION_FEATURES[_operation] += ("model.variant_factory_device_v1",)
+    OPERATION_FEATURES[_operation] += ("model.variant_layer_rng_v1",)
+    OPERATION_FEATURES[_operation] += ("model.variant_base_rng_v1",)
+for _operation in ("training_probe", "train"):
+    OPERATION_FEATURES[_operation] += ("training.batch_device_policy_v1",)
+    OPERATION_FEATURES[_operation] += ("training.model_initialization_v1",)
+OPERATION_FEATURES["evaluate"] += ("training.model_initialization_v1",)
 HOST_FEATURES = frozenset({"training.detached"})
+WORKING_DIRECTORY_OPERATIONS = frozenset({
+    "inspect", "layers", "probe", "preview", "verify", "edit", "semantic_mark", "semantic_supervise", "training_probe", "generic_loop_trial", "generic_loop_train", "train", "evaluate", "environment_library_probe", "environment_devices", "assembly_codegen_verify", "graph_draft_probe",
+})
+PROJECT_IMPORT_ROOT_OPERATIONS = WORKING_DIRECTORY_OPERATIONS | frozenset({
+    "semantic_mark", "semantic_supervise",
+})
 SUPPORTED_REQUIRED_FEATURES = frozenset(
     feature for features in OPERATION_FEATURES.values() for feature in features
-) | HOST_FEATURES
+) | HOST_FEATURES | frozenset({"runtime.user_working_directory", "runtime.project_import_roots", "model.direct_factory_params_v1", "data.raw_batch_binding_v1"})
 
 
 def validate_request(request):
     """Reject incompatible API/features before an operation imports runtime code."""
     if not isinstance(request, dict):
         raise UserError("PROTOCOL_ERROR", "worker 请求必须是 JSON 对象。")
+    if request.get("operation") == "environment_wheelhouse_replay" and "create_environment" in request \
+            and type(request["create_environment"]) is not bool:
+        raise UserError("PROTOCOL_ERROR", "create_environment 必须是布尔值。")
+    policy = request.get("batch_device_policy")
+    if policy is not None:
+        if not isinstance(policy, str) or policy not in {"preserve", "recursive-strict"}:
+            raise UserError("BATCH_DEVICE_POLICY_INVALID", "批次设备策略必须是 preserve 或 recursive-strict。")
+        if request.get("operation") not in {"training_probe", "train"} or request.get("training_mode") == "external-loop":
+            raise UserError("BATCH_DEVICE_POLICY_UNSUPPORTED", "此操作不使用受管或手动批次设备策略。")
+    if request.get("optimizer_factory") is not None and (
+        request.get("operation") not in {"train", "training_probe"}
+        or request.get("training_mode") != "managed-step"
+    ):
+        raise UserError("OPTIMIZER_MODE_UNSUPPORTED", "自定义受管优化器工厂只支持 managed-step。")
     if request.get("protocol_version") != PROTOCOL_VERSION:
         raise UserError("PROTOCOL_ERROR", "请求协议版本不匹配。")
     operation = request.get("operation")
@@ -106,6 +159,13 @@ def validate_request(request):
     ):
         raise UserError("PROTOCOL_ERROR", "required_features 必须是非空且不重复的字符串数组。")
     operation_features = set(OPERATION_FEATURES[operation]) | HOST_FEATURES
+    if operation in {"inspect", "layers", "probe", "verify", "edit", "semantic_mark", "semantic_supervise",
+                     "training_probe", "train", "evaluate", "assembly_codegen_verify"}:
+        operation_features.add("model.direct_factory_params_v1")
+    if operation in WORKING_DIRECTORY_OPERATIONS:
+        operation_features.add("runtime.user_working_directory")
+    if operation in PROJECT_IMPORT_ROOT_OPERATIONS:
+        operation_features.add("runtime.project_import_roots")
     if (
         operation == "preview"
         and isinstance(request.get("preview_source"), dict)

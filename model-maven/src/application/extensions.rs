@@ -18,6 +18,7 @@ impl<B: Backend> Application<B> {
                 path,
                 no_build_isolation,
             } => {
+                let python = match require_python(cli, "component_install") { Ok(value) => value, Err(report) => return report };
                 let installation = self.backend.execute(&json!({
                     "protocol_version":PROTOCOL_VERSION,
                     "operation":"component_install",
@@ -25,7 +26,7 @@ impl<B: Backend> Application<B> {
                     "no_build_isolation":no_build_isolation,
                     "interactive_progress":context.show_progress,
                     "runtime":{
-                        "python_executable":cli.python.as_deref().unwrap_or("python3"),
+                        "python_executable":python,
                         "timeout_seconds":cli.timeout.unwrap_or(1800),
                         "project_root":root
                     }
@@ -95,6 +96,7 @@ impl<B: Backend> Application<B> {
                 force,
                 if_plan,
             } => {
+                let python = match require_python(cli, "component_uninstall") { Ok(value) => value, Err(report) => return report };
                 if if_plan.as_deref().is_some_and(|value| {
                     value.len() != 64
                         || !value
@@ -159,7 +161,7 @@ impl<B: Backend> Application<B> {
                     "if_plan":if_plan,
                     "active_runs":active_runs,
                     "runtime":{
-                        "python_executable":cli.python.as_deref().unwrap_or("python3"),
+                        "python_executable":python,
                         "timeout_seconds":cli.timeout.unwrap_or(30),
                         "project_root":root
                     }
@@ -183,13 +185,14 @@ impl<B: Backend> Application<B> {
                 distribution,
                 paths,
             } => {
+                let python = match require_python(cli, "component_discover") { Ok(value) => value, Err(report) => return report };
                 let request = json!({
                     "protocol_version":PROTOCOL_VERSION,
                     "operation":"component_discover",
                     "distribution":distribution,
                     "paths":paths.iter().map(|path| path.to_string_lossy().into_owned()).collect::<Vec<_>>(),
                     "runtime":{
-                        "python_executable":cli.python.as_deref().unwrap_or("python3"),
+                        "python_executable":python,
                         "timeout_seconds":cli.timeout.unwrap_or(30)
                     }
                 });
@@ -353,6 +356,7 @@ impl<B: Backend> Application<B> {
                 batch_params,
                 batch_binding,
             } => {
+                let python = match require_python(cli, "component_test") { Ok(value) => value, Err(report) => return report };
                 let requested_params = match parameters(params) {
                     Ok(params) => params,
                     Err(error) => {
@@ -443,9 +447,22 @@ impl<B: Backend> Application<B> {
                 let binding = batch_binding.as_ref().map(|binding| match binding {
                     BatchBinding::Envelope => "envelope",
                     BatchBinding::Single => "single",
+                    BatchBinding::SingleRaw => "single-raw",
                     BatchBinding::Args => "args",
                     BatchBinding::Kwargs => "kwargs",
                 });
+                let (seed, seed_source) = match cli.seed {
+                    Some(seed) => (seed, "explicit"),
+                    None => {
+                        let mut bytes = [0_u8; 8];
+                        if let Err(error) = getrandom::fill(&mut bytes) {
+                            return Report::error("component_test", "COMPONENT_SEED_UNAVAILABLE",
+                                format!("无法生成组件验证种子：{error}"),
+                                "检查系统随机数来源，或使用 --seed 明确指定；组件代码尚未执行。");
+                        }
+                        (u64::from_le_bytes(bytes), "generated")
+                    }
+                };
                 let request = json!({
                     "protocol_version":PROTOCOL_VERSION,
                     "operation":"component_test",
@@ -461,13 +478,20 @@ impl<B: Backend> Application<B> {
                     "batch":batch,
                     "batch_params":batch_params,
                     "batch_binding":binding,
-                    "seed":cli.seed.unwrap_or(42),
+                    "seed":seed,
                     "runtime":{
-                        "python_executable":cli.python.as_deref().unwrap_or("python3"),
+                        "python_executable":python,
                         "timeout_seconds":cli.timeout.unwrap_or(30)
                     }
                 });
                 let mut report = self.backend.execute(&request);
+                if report.data.is_null() {
+                    report.data = json!({});
+                }
+                if let Some(data) = report.data.as_object_mut() {
+                    data.insert("seed_decimal".into(), json!(seed.to_string()));
+                    data.insert("seed_source".into(), json!(seed_source));
+                }
                 if report.success() {
                     report.data["component"] = json!({
                         "id":manifest["component_id"],
@@ -495,6 +519,8 @@ impl<B: Backend> Application<B> {
                                 "python_version":report.data["verification_evidence"]["python_version"],
                                 "torch_version":report.data["verification_evidence"]["torch_version"],
                                 "coverage":report.data["coverage"],
+                                "seed_decimal":seed.to_string(),
+                                "seed_source":seed_source,
                                 "recorded_at_unix":recorded_at_unix
                             });
                             let component_id =

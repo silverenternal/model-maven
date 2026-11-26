@@ -331,23 +331,27 @@ fn run_probe_interaction<B: Backend>(
     batch: &mut Option<String>,
     mut command: Command,
 ) -> Option<Value> {
-    let (contract, batch_fingerprint, path, local) = match &command {
+    let (contract, contract_digest, batch_fingerprint, path, local, model_device) = match &command {
         Command::Model {
             command:
                 ModelCommand::Probe {
                     contract,
+                    if_contract_sha256,
                     batch_fingerprint,
                     path,
                     local,
+                    model_device,
                     ..
                 },
         } => (
             contract.clone(),
+            if_contract_sha256.clone(),
             batch_fingerprint.clone(),
             path.clone(),
             *local,
+            model_device.clone(),
         ),
-        _ => (None, None, None, false),
+        _ => (None, None, None, None, false, None),
     };
     loop {
         let report = execute_ui(app, cli, &command);
@@ -390,7 +394,9 @@ fn run_probe_interaction<B: Backend>(
                         inputs: input_snapshot(model, batch),
                         call: "all".into(),
                         contract: contract.clone(),
+                        if_contract_sha256: contract_digest.clone(),
                         batch_fingerprint: batch_fingerprint.clone(),
+                        model_device: model_device.clone(),
                         local,
                     },
                 };
@@ -402,7 +408,9 @@ fn run_probe_interaction<B: Backend>(
                         inputs: input_snapshot(model, batch),
                         call: "all".into(),
                         contract: contract.clone(),
+                        if_contract_sha256: contract_digest.clone(),
                         batch_fingerprint: batch_fingerprint.clone(),
+                        model_device: model_device.clone(),
                         local,
                     },
                 };
@@ -917,6 +925,10 @@ fn source_plan_command(inputs: &Inputs, operations: &[String], dry_run: bool) ->
         command: LayerCommand::Apply {
             operations: operations.to_vec(),
             edit: EditOptions {
+                variant_device_policy: None,
+                layer_rng_devices: Vec::new(),
+                base_rng_scope: None,
+                base_rng_devices: Vec::new(),
                 inputs: inputs.clone(),
                 target: "source".into(),
                 params: Vec::new(),
@@ -974,8 +986,27 @@ fn preview_confirm_source_plan<B: Backend>(
     if preview.success()
         && prompt(confirmation_label).is_some_and(|answer| matches!(answer.as_str(), "yes" | "y"))
     {
+        let (Some(plan), Some(manifest)) = (
+            preview.data["source_plan"]["digest"].as_str(),
+            preview.data["source_manifest_evidence"]["digest"].as_str(),
+        ) else {
+            println!("预览缺少可核对的源码计划或清单；原文件未修改。");
+            return;
+        };
+        let mut confirmed_cli = cli.clone();
+        confirmed_cli.if_source_plan = Some(plan.to_owned());
+        confirmed_cli.if_source_manifest = Some(manifest.to_owned());
+        confirmed_cli.if_source_config = preview.data["config_revision"].as_str().map(str::to_owned);
+        let validation = &preview.data["validation"];
+        if validation["forward"] == "passed" {
+            let Some(input) = validation["batch_content"]["digest"].as_str() else {
+                println!("预览没有可核对的前向输入；原文件未修改。请提供稳定输入后重试。");
+                return;
+            };
+            confirmed_cli.if_input_content = Some(input.to_owned());
+        }
         display(
-            &execute_ui(app, cli, &source_plan_command(&inputs, &operations, false)),
+            &execute_ui(app, &confirmed_cli, &source_plan_command(&inputs, &operations, false)),
             false,
         );
     } else if preview.success() {
@@ -1173,8 +1204,11 @@ fn prompt_preview_command(command: &Command) -> Result<Command, Report> {
             DataCommand::Preview {
                 dataset: current_dataset,
                 batch: current_batch,
+                whole_batch,
                 parameters,
                 split,
+                no_split,
+                augment_split,
                 samples,
                 scan_limit,
                 fingerprint,
@@ -1221,6 +1255,19 @@ fn prompt_preview_command(command: &Command) -> Result<Command, Report> {
         },
         current_entrypoint,
     )?;
+    let selected_whole_batch = if batch {
+        loop {
+            let current = if *whole_batch { "whole" } else { "auto" };
+            let value = preview_form_value("批次返回值：auto 自动识别数据集 / whole 整体作为一项", current, "auto")?;
+            match value.trim().to_ascii_lowercase().as_str() {
+                "auto" => break false,
+                "whole" => break true,
+                _ => eprintln!("请输入 auto 或 whole；输入 back 取消。\n"),
+            }
+        }
+    } else {
+        false
+    };
 
     let mut parameters = parameters.clone();
     loop {
@@ -1261,12 +1308,17 @@ fn prompt_preview_command(command: &Command) -> Result<Command, Report> {
         }
     }
 
-    let split = loop {
-        let value = preview_form_value("切分名称", split, "train")?;
-        if !value.is_empty() {
-            break value;
+    let split = if *no_split {
+        println!("本次不指定切分，也不自动应用项目 train/eval 增强。\n");
+        split.clone()
+    } else {
+        loop {
+            let value = preview_form_value("切分名称", split, "train")?;
+            if !value.is_empty() {
+                break value;
+            }
+            eprintln!("切分名称不能为空；请重新输入或取消预览。\n");
         }
-        eprintln!("切分名称不能为空；请重新输入或取消预览。\n");
     };
     let samples = loop {
         let value = preview_form_value("最多预览样本数（1–64）", &samples.to_string(), "12")?;
@@ -1362,6 +1414,9 @@ fn prompt_preview_command(command: &Command) -> Result<Command, Report> {
             parameters.len()
         );
     }
+    if selected_whole_batch {
+        println!("批次工厂的整个返回值将作为一项预览，不自动采样数据集；项目增强仍按当前选择应用。");
+    }
     if let Some(path) = &transforms {
         println!("有序变换：{}", path.display());
     }
@@ -1370,8 +1425,11 @@ fn prompt_preview_command(command: &Command) -> Result<Command, Report> {
         command: DataCommand::Preview {
             dataset: dataset.then(|| entrypoint.trim().to_owned()),
             batch: batch.then(|| entrypoint.trim().to_owned()),
+            whole_batch: selected_whole_batch,
             parameters,
             split,
+            no_split: *no_split,
+            augment_split: augment_split.clone(),
             samples,
             scan_limit: *scan_limit,
             fingerprint,
@@ -1389,6 +1447,11 @@ fn prompt_preview_command(command: &Command) -> Result<Command, Report> {
 }
 
 pub fn run_command<B: Backend>(app: &Application<B>, cli: &Cli, command: &Command) -> Report {
+    match crate::app::normalize_training_command(command) {
+        Ok(Some(normalized)) => return run_command(app, cli, &normalized),
+        Ok(None) => {},
+        Err(report) => return report,
+    }
     if let Command::Model {
         command:
             ModelCommand::Supervise {
@@ -1779,7 +1842,9 @@ fn run_supervision_guide<B: Backend>(
                 inputs: inputs.clone(),
                 call: "all".into(),
                 contract: None,
+                if_contract_sha256: None,
                 batch_fingerprint: None,
+                model_device: None,
                 local: false,
             },
         },
@@ -1872,6 +1937,8 @@ fn run_supervision_guide<B: Backend>(
                 role: role.clone(),
                 meaning: meaning.clone(),
                 id: None,
+                if_anchor: None,
+                model_device: None,
             },
         },
     );
@@ -1963,13 +2030,13 @@ fn run_supervision_guide<B: Backend>(
         };
         let axis = match guide_required("要对齐的维度序号（通常是 0，批次维）", Some("0"))
         {
-            Ok(value) => match value.parse::<u8>() {
-                Ok(axis) if axis <= 16 => axis,
+            Ok(value) => match value.parse::<u32>() {
+                Ok(axis) => axis,
                 _ => {
                     return Report::error(
                         "semantic_supervision_guide",
                         "SUPERVISION_RULE_VALUE_INVALID",
-                        "对齐维度必须是 0 到 16 的整数。",
+                        "对齐维度必须是非负整数，且须在实际张量维数范围内。",
                         "重新运行引导并填写有效维度。",
                     );
                 }
@@ -2008,6 +2075,7 @@ fn run_supervision_guide<B: Backend>(
             command: ModelCommand::Supervise {
                 command: SuperviseCommand::Rule {
                     command: SupervisionRuleCommand::Add {
+                        if_state_revision: None,
                         mark: mark_id.clone(),
                         kind: match kind {
                             "finite" => SupervisionRuleKind::Finite,
@@ -2026,6 +2094,7 @@ fn run_supervision_guide<B: Backend>(
                         axis,
                         id: None,
                         plugin: None,
+                        plugin_source: None,
                         plugin_params: Vec::new(),
                     },
                 },
@@ -2044,6 +2113,7 @@ fn run_supervision_guide<B: Backend>(
             command: ModelCommand::Supervise {
                 command: SuperviseCommand::Preview {
                     inputs: inputs.clone(),
+                    model_device: None,
                 },
             },
         },
@@ -2182,25 +2252,14 @@ fn run_preview_interaction<B: Backend>(
 }
 
 fn prompt_layer_kind() -> Option<(Option<String>, Option<String>)> {
-    println!("可用内置类型：Linear / Dropout / ReLU / GELU / LayerNorm / Conv2d / Identity");
+    println!("可输入所选 Python 环境中 torch.nn 的公开 Module 类名，例如 Linear 或 Conv2d；实际可用性由运行时验证。");
     let kind = prompt("Layer 类型，或输入 custom 使用本地 Python 工厂")?;
     if kind == "custom" {
         let component =
             prompt("组件 ID（namespace/name[@version]）或 Python 工厂入口（module:callable）")?;
         Some((None, Some(component)))
     } else {
-        let supported = [
-            "Linear",
-            "Dropout",
-            "ReLU",
-            "GELU",
-            "LayerNorm",
-            "Conv2d",
-            "Identity",
-        ];
-        supported
-            .contains(&kind.as_str())
-            .then_some((Some(kind), None))
+        (!kind.is_empty()).then_some((Some(kind), None))
     }
 }
 
@@ -2213,13 +2272,16 @@ fn prompt_layer_parameters<B: Backend>(
     if component.is_none()
         && let Some(layer_type) = layer_type
     {
-        let schema = builtin_layer_schema(layer_type)?;
-        return prompt_schema_object(
-            &schema,
-            &format!("layer.new.{layer_type}"),
-            None,
-            FormMode::Full,
-        );
+        if let Some(schema) = builtin_layer_schema(layer_type) {
+            return prompt_schema_object(
+                &schema,
+                &format!("layer.new.{layer_type}"),
+                None,
+                FormMode::Full,
+            );
+        }
+        println!("此类型没有内置参数表单，请按名称逐项输入 JSON 参数；构造时由所选 Python 环境校验。");
+        return prompt_parameter_map(&format!("layer.new.{layer_type}"));
     }
     prompt_registered_component_parameters(app, cli, component, "layer")
 }
@@ -2407,6 +2469,7 @@ fn repeat_trial_command(run_id: String) -> Command {
         lr: None,
         weight_decay: None,
         apply_supervision: false,
+        no_supervision: false,
         params: Vec::new(),
         loop_params: Vec::new(),
     }
@@ -2458,17 +2521,30 @@ fn confirm_training_plan<B: Backend>(app: &Application<B>, cli: &Cli, command: &
         println!("当前计划有未满足的必需输入或不支持项；没有启动任务。返回表单修正后重试。\n");
         return false;
     }
-    let confirmation = if matches!(state, "conditional" | "unknown") {
-        "检查存在未知项或条件项；确认仍要启动请输入 start，其他输入取消"
-    } else {
-        "确认按以上来源、预算和覆盖启动任务？输入 start 开始，其他输入取消"
-    };
+    if state != "ready" {
+        println!("当前计划仍有未确认的必需能力或条件，无法安全启动。请按上方原因检查运行环境或补齐条件，再重新准备计划。\n");
+        return false;
+    }
+    let confirmation = "确认按以上来源、预算和覆盖启动任务？输入 start 开始，其他输入取消";
     if prompt_allow_empty(confirmation).is_some_and(|answer| {
         matches!(
             answer.trim().to_ascii_lowercase().as_str(),
             "start" | "开始"
         )
     }) {
+        let current = match app.plan_operation_inputs(cli, command) {
+            Ok(plan) => plan.and_then(|plan| serde_json::to_value(plan).ok()),
+            Err(report) => {
+                display(&report, false);
+                return false;
+            }
+        };
+        if current != readiness
+            || current.as_ref().and_then(|plan| plan["readiness"]["state"].as_str()) != Some("ready")
+        {
+            println!("确认期间计划或能力状态已变化，或无法重新核对；任务未启动。请重新准备并审核。\n");
+            return false;
+        }
         true
     } else {
         println!("已取消；没有启动训练或写入运行记录。\n");
@@ -2910,6 +2986,7 @@ fn prompt_evaluation_command(run_id: String) -> Option<Command> {
         if_checkpoint_sha256: None,
         split: nonempty_or(split, "test"),
         evaluator: evaluator.trim().to_owned(),
+        device: None,
         data: data.trim().to_owned(),
         samples,
         preview_samples,
@@ -3268,12 +3345,13 @@ fn recover_background_preview<B: PythonRuntimeControl>(
                 );
                 println!("{}", render_environment(&environment).join("\n"));
                 if environment.success() && cli.python.is_none() {
-                    let executable = environment.data["python"]
-                        .as_str()
-                        .unwrap_or(".venv/bin/python")
-                        .to_owned();
-                    cli.python = Some(executable.clone());
-                    ApplicationUiServices::select_python(app, executable);
+                    if let Some(executable) = environment.data["python"].as_str().filter(|value| !value.is_empty()) {
+                        let executable = executable.to_owned();
+                        cli.python = Some(executable.clone());
+                        ApplicationUiServices::select_python(app, executable);
+                    } else {
+                        println!("环境准备回执没有解释器路径；请检查环境并明确选择 Python。\n");
+                    }
                 }
                 continue;
             }
@@ -3317,6 +3395,7 @@ fn offer_preview_trial<B: Backend>(
         command:
             DataCommand::Preview {
                 batch: Some(batch),
+                whole_batch,
                 parameters,
                 ..
             },
@@ -3332,6 +3411,9 @@ fn offer_preview_trial<B: Backend>(
     println!(
         "可将当前模型 `{model}` 与预览使用的批次工厂 `{batch}` 作为一份新输入快照，启动 1 步 managed-step 试跑。试跑会重新调用批次工厂，不复用预览中的临时样本；开始前会显示并校验运行计划。"
     );
+    if *whole_batch {
+        println!("试跑记录将使用 single-raw 绑定；训练步骤仍由用户代码决定如何使用返回值。");
+    }
     let Some(step) = prompt("训练步骤入口 module:step；输入 back 留在工作台") else {
         return;
     };
@@ -3350,6 +3432,7 @@ fn offer_preview_trial<B: Backend>(
             model: Some(model.into()),
             batch: Some(batch.clone()),
             batch_params: parameters.clone(),
+            batch_binding: (*whole_batch).then_some(BatchBinding::SingleRaw),
             ..TrainingInputs::default()
         },
         repeat: None,
@@ -3361,6 +3444,7 @@ fn offer_preview_trial<B: Backend>(
         lr: None,
         weight_decay: None,
         apply_supervision: false,
+        no_supervision: false,
         params: Vec::new(),
         loop_params: Vec::new(),
     };
@@ -3472,8 +3556,11 @@ fn manage_background_preview<B: PythonRuntimeControl>(
         command: DataCommand::Preview {
             dataset: None,
             batch: batch.map(str::to_owned),
+            whole_batch: false,
             parameters: Vec::new(),
             split: "train".into(),
+            no_split: false,
+            augment_split: None,
             samples: 12,
             scan_limit: None,
             fingerprint: None,
@@ -3668,7 +3755,9 @@ pub fn interactive<B: PythonRuntimeControl>(app: &mut Application<B>, cli: &mut 
             .register(render_onboarding(
                 &current_path,
                 session.model.is_some(),
-                &python_environment_summary(cli.python.as_deref().unwrap_or("python3")),
+                &cli.python.as_deref().filter(|value| !value.trim().is_empty())
+                    .map(python_environment_summary)
+                    .unwrap_or_else(|| "尚未选择或发现 Python；请用 --python 指定解释器".into()),
             ))
             .expect("onboarding page ID is unique");
         pages
@@ -3815,7 +3904,9 @@ pub fn interactive<B: PythonRuntimeControl>(app: &mut Application<B>, cli: &mut 
                                 },
                                 call: "all".into(),
                                 contract: None,
+                                if_contract_sha256: None,
                                 batch_fingerprint: None,
+                                model_device: None,
                                 local: false,
                             },
                         };
@@ -3994,7 +4085,9 @@ pub fn interactive<B: PythonRuntimeControl>(app: &mut Application<B>, cli: &mut 
                                 },
                                 call: "all".into(),
                                 contract: None,
+                                if_contract_sha256: None,
                                 batch_fingerprint: None,
+                                model_device: None,
                                 local: false,
                             },
                         };
@@ -4151,6 +4244,7 @@ pub fn interactive<B: PythonRuntimeControl>(app: &mut Application<B>, cli: &mut 
                         &data_root,
                         preset,
                         classes.len(),
+                        None,
                     ) {
                         Ok(source) => source,
                         Err(error) => {
@@ -4206,7 +4300,9 @@ pub fn interactive<B: PythonRuntimeControl>(app: &mut Application<B>, cli: &mut 
                             },
                             call: "all".into(),
                             contract: None,
+                            if_contract_sha256: None,
                             batch_fingerprint: None,
+                            model_device: None,
                             local: false,
                         },
                     };
@@ -4264,6 +4360,10 @@ pub fn interactive<B: PythonRuntimeControl>(app: &mut Application<B>, cli: &mut 
                 println!("无法切换到项目目录 {}：{error}\n", target.display());
                 continue;
             }
+            // Worker capabilities describe a Python environment, not the
+            // workspace process. A new project may select a different one.
+            *app.runtime_capabilities.borrow_mut() = None;
+            *app.runtime_declarations.borrow_mut() = None;
             session_root = target.clone();
             onboarding_draft = match session_store::load(&session_root) {
                 Ok(draft) => draft,
@@ -4279,23 +4379,50 @@ pub fn interactive<B: PythonRuntimeControl>(app: &mut Application<B>, cli: &mut 
                     None
                 }
             };
-            if !cli.python_explicit {
-                cli.python = crate::project_python_executable().or_else(|| Some("python3".into()));
-                app.backend
-                    .select_python(cli.python.clone().unwrap_or_else(|| "python3".into()));
-            }
             let loaded_defaults =
                 match ApplicationUiServices::new(app, cli).project_defaults(&target) {
                     Ok(defaults) => defaults,
                     Err(error) => {
                         println!("项目配置无法读取：{error}\n");
+                        if !cli.python_explicit {
+                            cli.python = Some(String::new());
+                            app.backend.select_python(String::new());
+                        }
                         defaults = None;
                         session.model = None;
                         session.batch = None;
+                        project = target.file_name().map(|name| name.to_string_lossy().into_owned())
+                            .unwrap_or_else(|| target.to_string_lossy().into_owned());
                         session.current_page = PageId::new("onboarding");
                         continue;
                     }
                 };
+            if !cli.python_explicit {
+                let selected = loaded_defaults.as_ref()
+                    .and_then(|config| config["runtime_python"].as_str().map(str::to_owned));
+                let environment = if selected.is_none() { crate::project_python_executable() } else { None };
+                if selected.is_none() && environment.is_none()
+                    && std::fs::symlink_metadata(".model-maven/environment.json").is_ok()
+                {
+                    println!("目标项目的 Python 环境配置无效或解释器不可用；请修复环境或显式指定 --python。\n");
+                    // Do not keep using the previous project's interpreter in
+                    // the newly selected directory. An empty executable fails
+                    // closed until the user repairs or explicitly selects one.
+                    crate::record_project_python_selection(&target, None);
+                    cli.python = Some(String::new());
+                    app.backend.select_python(String::new());
+                    defaults = loaded_defaults;
+                    session.model = None;
+                    session.batch = None;
+                    project = target.file_name().map(|name| name.to_string_lossy().into_owned())
+                        .unwrap_or_else(|| target.to_string_lossy().into_owned());
+                    session.current_page = PageId::new("onboarding");
+                    continue;
+                }
+                crate::record_project_python_selection(&target, selected.clone());
+                cli.python = selected.or(environment).or_else(crate::path_python_executable);
+                app.backend.select_python(cli.python.clone().unwrap_or_default());
+            }
             defaults = loaded_defaults;
             session.model = defaults
                 .as_ref()
@@ -4500,13 +4627,14 @@ pub fn interactive<B: PythonRuntimeControl>(app: &mut Application<B>, cli: &mut 
             ) && report.success();
             println!("{}", render_environment(&report).join("\n"));
             if setup_succeeded && cli.python.is_none() {
-                let executable = report.data["python"]
-                    .as_str()
-                    .unwrap_or(".venv/bin/python")
-                    .to_owned();
-                cli.python = Some(executable.clone());
-                ApplicationUiServices::select_python(app, executable);
-                println!("本次工作台会话已切换到项目虚拟环境。");
+                if let Some(executable) = report.data["python"].as_str().filter(|value| !value.is_empty()) {
+                    let executable = executable.to_owned();
+                    cli.python = Some(executable.clone());
+                    ApplicationUiServices::select_python(app, executable);
+                    println!("本次工作台会话已切换到项目虚拟环境。");
+                } else {
+                    println!("环境准备回执没有解释器路径；请检查环境并明确选择 Python。\n");
+                }
             }
             continue;
         }
@@ -4925,11 +5053,12 @@ pub fn interactive<B: PythonRuntimeControl>(app: &mut Application<B>, cli: &mut 
                 .is_some_and(|config| config["batch"].is_string());
             let has_batch = batch.is_some() || has_default_batch;
             let batch_binding = if has_batch {
-                match prompt("批次绑定 envelope / single / args / kwargs（留空自动推断）")
+                match prompt("批次绑定 envelope / single / single-raw / args / kwargs（single-raw 整体传入；留空自动推断）")
                     .as_deref()
                 {
                     Some("envelope") => Some(BatchBinding::Envelope),
                     Some("single") => Some(BatchBinding::Single),
+                    Some("single-raw") => Some(BatchBinding::SingleRaw),
                     Some("args") => Some(BatchBinding::Args),
                     Some("kwargs") => Some(BatchBinding::Kwargs),
                     _ => None,
@@ -5654,6 +5783,10 @@ pub fn interactive<B: PythonRuntimeControl>(app: &mut Application<B>, cli: &mut 
                 command: LayerCommand::Apply {
                     operations: vec![operation.clone()],
                     edit: EditOptions {
+                variant_device_policy: None,
+                layer_rng_devices: Vec::new(),
+                base_rng_scope: None,
+                base_rng_devices: Vec::new(),
                         inputs: inputs.clone(),
                         target: "variant".into(),
                         params: Vec::new(),
@@ -5762,6 +5895,15 @@ pub fn interactive<B: PythonRuntimeControl>(app: &mut Application<B>, cli: &mut 
                             println!("先添加至少一项 Layer 参数修改。");
                             continue;
                         }
+                        let Some(policy_choice) = prompt_allow_empty(
+                            "变体设备策略：留空沿用已有策略（新变体基础模型及新增层保留工厂设备） / factory / cpu；替换层参考旧层首个状态",
+                        ) else { continue; };
+                        let variant_device_policy = match policy_choice.trim().to_ascii_lowercase().as_str() {
+                            "" => None,
+                            "factory" => Some("factory".to_owned()),
+                            "cpu" => Some("legacy-cpu".to_owned()),
+                            _ => { println!("请输入 factory、cpu 或留空；未开始预览。"); continue; }
+                        };
                         let command = Command::Layer {
                             command: LayerCommand::Apply {
                                 operations: operations
@@ -5772,6 +5914,10 @@ pub fn interactive<B: PythonRuntimeControl>(app: &mut Application<B>, cli: &mut 
                                     })
                                     .collect(),
                                 edit: EditOptions {
+                                    variant_device_policy,
+                                    layer_rng_devices: Vec::new(),
+                base_rng_scope: None,
+                base_rng_devices: Vec::new(),
                                     inputs: inputs.clone(),
                                     target: "variant".into(),
                                     params: Vec::new(),
@@ -5799,6 +5945,26 @@ pub fn interactive<B: PythonRuntimeControl>(app: &mut Application<B>, cli: &mut 
                             );
                             continue;
                         }
+                        let Some(preview_seed) = preview.data["variant"]["seed"].as_u64() else {
+                            println!("候选没有返回可重建的初始化种子；未提交，请检查 worker 版本。\n");
+                            continue;
+                        };
+                        let base = &preview.data["variant_base"];
+                        let Some(base_token) = base["token"].as_str().filter(|token| {
+                            *token == "absent" || (token.len() == 64 && token.bytes().all(|byte|
+                                byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)))
+                        }) else {
+                            println!("候选未返回可核对的变体基准；未提交，请重新预览。\n");
+                            continue;
+                        };
+                        if base["name"].as_str() != Some(target)
+                            || base["algorithm"] != "canonical-json-sha256-v1" {
+                            println!("候选变体基准与当前目标不一致；未提交。\n");
+                            continue;
+                        }
+                        println!("候选初始化种子：{preview_seed}；提交时将沿用该种子。外部状态仍可能变化。");
+                        println!("变体设备策略：{}；工厂设备策略不会自动迁移输入。",
+                            preview.data["variant"]["device_policy"].as_str().unwrap_or("legacy_cpu"));
                         if !prompt(
                             "候选检查通过。提交以上完整计划为一个可撤销变体版本？输入 yes 确认",
                         )
@@ -5823,7 +5989,10 @@ pub fn interactive<B: PythonRuntimeControl>(app: &mut Application<B>, cli: &mut 
                             }
                             _ => unreachable!("variant plan constructs a Layer Apply command"),
                         };
-                        let result = execute_ui(app, cli, &committed);
+                        let mut commit_cli = cli.clone();
+                        commit_cli.seed = Some(preview_seed);
+                        commit_cli.if_variant_base = Some(base_token.to_owned());
+                        let result = execute_ui(app, &commit_cli, &committed);
                         let committed_successfully = result.success();
                         display(&result, false);
                         if committed_successfully {
@@ -6206,6 +6375,10 @@ pub fn interactive<B: PythonRuntimeControl>(app: &mut Application<B>, cli: &mut 
                 };
             let make_command = |dry_run| {
                 let edit = EditOptions {
+                variant_device_policy: None,
+                layer_rng_devices: Vec::new(),
+                base_rng_scope: None,
+                base_rng_devices: Vec::new(),
                     inputs: inputs.clone(),
                     target: "source".into(),
                     params: parameters_for_cli(&params),
@@ -6281,8 +6454,10 @@ pub fn interactive<B: PythonRuntimeControl>(app: &mut Application<B>, cli: &mut 
                         inputs,
                         call: "all".into(),
                         contract: (!path.trim().is_empty()).then(|| PathBuf::from(path.trim())),
+                        if_contract_sha256: None,
                         batch_fingerprint: (!fingerprint.trim().is_empty())
                             .then(|| fingerprint.trim().to_owned()),
+                        model_device: None,
                         local: !module_path.is_empty(),
                     }
                 },
@@ -6330,6 +6505,7 @@ pub fn interactive<B: PythonRuntimeControl>(app: &mut Application<B>, cli: &mut 
                         lr: None,
                         weight_decay: None,
                         apply_supervision: false,
+                        no_supervision: false,
                         params: Vec::new(),
                         loop_params,
                     }
@@ -6366,6 +6542,7 @@ pub fn interactive<B: PythonRuntimeControl>(app: &mut Application<B>, cli: &mut 
                         lr: Some(1e-4),
                         weight_decay: Some(0.01),
                         apply_supervision: false,
+                        no_supervision: false,
                         params,
                         loop_params: Vec::new(),
                     }
@@ -6515,6 +6692,10 @@ pub fn interactive<B: PythonRuntimeControl>(app: &mut Application<B>, cli: &mut 
                         layer_type,
                         component,
                         edit: EditOptions {
+                variant_device_policy: None,
+                layer_rng_devices: Vec::new(),
+                base_rng_scope: None,
+                base_rng_devices: Vec::new(),
                             inputs,
                             target: "variant".into(),
                             params: parameters_for_cli(&params),
@@ -6548,6 +6729,10 @@ pub fn interactive<B: PythonRuntimeControl>(app: &mut Application<B>, cli: &mut 
                     command: LayerCommand::Set {
                         path,
                         edit: EditOptions {
+                variant_device_policy: None,
+                layer_rng_devices: Vec::new(),
+                base_rng_scope: None,
+                base_rng_devices: Vec::new(),
                             inputs,
                             target: "variant".into(),
                             params,
@@ -6578,6 +6763,10 @@ pub fn interactive<B: PythonRuntimeControl>(app: &mut Application<B>, cli: &mut 
                         layer_type,
                         component,
                         edit: EditOptions {
+                variant_device_policy: None,
+                layer_rng_devices: Vec::new(),
+                base_rng_scope: None,
+                base_rng_devices: Vec::new(),
                             inputs,
                             target: "variant".into(),
                             params: parameters_for_cli(&params),
@@ -6600,6 +6789,10 @@ pub fn interactive<B: PythonRuntimeControl>(app: &mut Application<B>, cli: &mut 
                         path,
                         strategy,
                         edit: EditOptions {
+                variant_device_policy: None,
+                layer_rng_devices: Vec::new(),
+                base_rng_scope: None,
+                base_rng_devices: Vec::new(),
                             inputs,
                             target: "variant".into(),
                             params: Vec::new(),
@@ -6721,6 +6914,10 @@ pub fn interactive<B: PythonRuntimeControl>(app: &mut Application<B>, cli: &mut 
                         payload: serde_json::to_string(&payload)
                             .expect("Provider payload serializes"),
                         edit: EditOptions {
+                variant_device_policy: None,
+                layer_rng_devices: Vec::new(),
+                base_rng_scope: None,
+                base_rng_devices: Vec::new(),
                             inputs,
                             target: "variant".into(),
                             params: Vec::new(),

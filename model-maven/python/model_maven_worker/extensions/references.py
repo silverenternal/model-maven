@@ -229,7 +229,7 @@ def verify_component_references(runtime, edit, project_root, allow_unverified=Fa
 
 def verify_model_injection_references(runtime, injections, project_root):
     for slot, specification in injections.items():
-        if not isinstance(specification, dict):
+        if not isinstance(specification, dict) or "component_ref" not in specification:
             continue
         verify_component_references(
             runtime,

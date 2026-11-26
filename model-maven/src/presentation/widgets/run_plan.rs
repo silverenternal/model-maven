@@ -25,6 +25,29 @@ pub fn render(
         lines.push("当前命令不是训练操作。".into());
         return lines;
     }
+    let (requested_policy, historical) = match command {
+        Command::Try { inputs, repeat, .. } => (inputs.batch_device_policy.as_deref(), repeat.is_some()),
+        Command::Train { inputs, resume, .. } => (inputs.batch_device_policy.as_deref(), resume.is_some()),
+        _ => (None, false),
+    };
+    if mode == Some(TrainingMode::ExternalLoop) {
+        lines.push("批次设备：由用户循环管理。".into());
+    } else if let Some(policy) = requested_policy {
+        lines.push(format!("批次设备策略：{policy}（显式选择；续训仍需与原记录一致）。"));
+    } else if historical {
+        let policy = match source_record {
+            None => "来源记录不可用，未知",
+            Some(record) if !record["inputs"].is_object() => "来源输入不可用，未知",
+            Some(record) => match record["inputs"].get("batch_device_policy") {
+                None | Some(Value::Null) => "历史递归行为（未记录策略）",
+                Some(Value::String(value)) if matches!(value.as_str(), "preserve" | "recursive-strict") => value.as_str(),
+                _ => "记录无效或不受支持",
+            },
+        };
+        lines.push(format!("批次设备策略：{policy}。"));
+    } else {
+        lines.push("批次设备策略：recursive-strict（新运行默认；不透明对象由用户步骤处理）。".into());
+    }
 
     if let Some(plan) = readiness {
         for key in ["model", "batch", "training_step", "training_loop"] {
@@ -68,6 +91,7 @@ pub fn render(
             steps,
             lr,
             weight_decay,
+            no_supervision,
             params,
             loop_params,
             ..
@@ -80,6 +104,9 @@ pub fn render(
                 lines.push(format!(
                     "来源运行：{run_id}；读取该运行保存的原始输入快照。"
                 ));
+                if *no_supervision {
+                    lines.push("监督：本次明确关闭，不继承历史监督规则。".into());
+                }
                 lines.push(format!(
                     "本次显式覆盖：{}",
                     if params.is_empty()
@@ -201,33 +228,39 @@ fn command_mode(command: &Command, source_record: Option<&Value>) -> Option<Trai
         Command::Try {
             training_mode,
             training_loop,
+            step,
             ..
-        }
-        | Command::Train {
+        } => training_mode.or_else(|| {
+            let previous = source_training_mode(source_record);
+            if training_loop.is_some() {
+                Some(TrainingMode::ExternalLoop)
+            } else if step.is_some() && previous == Some(TrainingMode::ExternalLoop) {
+                Some(TrainingMode::ManagedStep)
+            } else {
+                previous
+            }
+        }),
+        Command::Train {
             training_mode,
             training_loop,
             ..
-        } => training_mode.or_else(|| {
-            let source_mode = source_record
-                .and_then(|record| {
-                    record["record"]["training_mode"]
-                        .as_str()
-                        .or_else(|| record["inputs"]["training_mode"].as_str())
-                })
-                .and_then(|mode| match mode {
-                    "managed-step" => Some(TrainingMode::ManagedStep),
-                    "manual-step" => Some(TrainingMode::ManualStep),
-                    "external-loop" => Some(TrainingMode::ExternalLoop),
-                    _ => None,
-                });
-            source_mode.or_else(|| {
-                training_loop
-                    .is_some()
-                    .then_some(TrainingMode::ExternalLoop)
-            })
-        }),
+        } => training_mode.or_else(|| if training_loop.is_some() {
+            Some(TrainingMode::ExternalLoop)
+        } else { source_training_mode(source_record) }),
         _ => None,
     }
+}
+
+fn source_training_mode(record: Option<&Value>) -> Option<TrainingMode> {
+    record.and_then(|record| {
+        record["inputs"]["training_mode"].as_str()
+            .or_else(|| record["record"]["training_mode"].as_str())
+    }).and_then(|mode| match mode {
+        "managed-step" => Some(TrainingMode::ManagedStep),
+        "manual-step" => Some(TrainingMode::ManualStep),
+        "external-loop" => Some(TrainingMode::ExternalLoop),
+        _ => None,
+    })
 }
 
 fn display_value(binding: &Value) -> String {
@@ -403,6 +436,7 @@ mod tests {
             lr: Some(0.0001),
             weight_decay: Some(0.01),
             apply_supervision: false,
+            no_supervision: false,
             params: vec![
                 "learning_rate=0.001".into(),
                 "api_token=secret-value".into(),
@@ -441,6 +475,7 @@ mod tests {
             lr: Some(0.0002),
             weight_decay: None,
             apply_supervision: false,
+            no_supervision: false,
             params: vec!["dropout=0.2".into()],
             loop_params: Vec::new(),
         };

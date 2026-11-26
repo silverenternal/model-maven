@@ -19,7 +19,7 @@ use app::Application;
 use clap::{CommandFactory, Parser, error::ErrorKind};
 use cli::*;
 use domain::Report;
-use ports::{Backend, RunRepository, RunSupervisor};
+use ports::{Backend, ProjectConfigStore, RunRepository, RunSupervisor};
 use presentation::{
     terminal::display,
     workbench::{interactive, run_command},
@@ -63,7 +63,7 @@ fn internal_run(project_root: &Path, run_id: &str, cli: &Cli) -> Report {
             return Report::error("train", "BACKGROUND_REQUEST_INVALID", error.to_string(), "");
         }
     };
-    if request["operation"] != "train" || request["project_root"].as_str() != root.to_str() {
+    if !matches!(request["operation"].as_str(), Some("train" | "generic_loop_train")) || request["project_root"].as_str() != root.to_str() {
         return Report::error(
             "train",
             "BACKGROUND_REQUEST_INVALID",
@@ -76,6 +76,9 @@ fn internal_run(project_root: &Path, run_id: &str, cli: &Cli) -> Report {
         Ok(record) => record,
         Err(error) => return Report::error("train", "RUN_STORE_FAILED", error, ""),
     };
+    if record["record"]["operation"] != request["operation"] {
+        return Report::error("train", "BACKGROUND_IDENTITY_INVALID", "请求操作与登记运行不匹配。", "");
+    }
     let supervisor = NativeRunSupervisor;
     let pid = record["record"]["supervisor"]["pid"]
         .as_u64()
@@ -102,11 +105,13 @@ fn internal_run(project_root: &Path, run_id: &str, cli: &Cli) -> Report {
     let expected_progress = run_directory.join("progress.jsonl");
     let expected_stop = run_directory.join("stop.request");
     let expected_log = run_directory.join("worker.log");
+    let expected_snapshot = run_directory.join("snapshot");
     for (key, expected) in [
         ("checkpoint_dir", &expected_checkpoint),
         ("progress_path", &expected_progress),
         ("stop_file", &expected_stop),
         ("log_path", &expected_log),
+        ("snapshot_dir", &expected_snapshot),
     ] {
         if request[key].as_str() != expected.to_str() {
             return Report::error(
@@ -171,7 +176,7 @@ fn internal_run(project_root: &Path, run_id: &str, cli: &Cli) -> Report {
     let backend = PythonBackend {
         executable: request["runtime"]["python_executable"]
             .as_str()
-            .unwrap_or("python3")
+            .unwrap_or_default()
             .to_owned(),
         timeout: Duration::from_secs(
             request["runtime"]["timeout_seconds"]
@@ -202,6 +207,30 @@ fn internal_run(project_root: &Path, run_id: &str, cli: &Cli) -> Report {
         );
     }
     report
+}
+
+// Keep the project choice separately from the fallback interpreter selected
+// later. This lets an operation detect that a saved choice was removed, not
+// just that it changed to a different nonempty value.
+static STARTUP_PROJECT_PYTHON: std::sync::Mutex<Option<(std::path::PathBuf, Option<String>)>> = std::sync::Mutex::new(None);
+
+fn record_project_python_selection(root: &Path, choice: Option<String>) {
+    let canonical_root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    *STARTUP_PROJECT_PYTHON.lock().unwrap_or_else(|error| error.into_inner()) = Some((canonical_root, choice));
+}
+
+fn project_python_selection_changed(root: &Path, cli: &Cli, current: Option<&str>) -> bool {
+    if cli.python_explicit { return false; }
+    let canonical_root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    let snapshot = STARTUP_PROJECT_PYTHON.lock().unwrap_or_else(|error| error.into_inner());
+    match snapshot.as_ref() {
+        Some((startup_root, choice)) if *startup_root == canonical_root => {
+            choice.as_deref() != current || current.is_some_and(|python| cli.python.as_deref() != Some(python))
+        },
+        // Embedded or later-switched projects may lack a startup snapshot.
+        // Retain the previous conservative check for an explicit current value.
+        _ => current.is_some_and(|python| cli.python.as_deref() != Some(python)),
+    }
 }
 
 fn project_python_executable() -> Option<String> {
@@ -263,6 +292,32 @@ fn project_python_executable() -> Option<String> {
         .then(|| python_path.to_string_lossy().into_owned())
 }
 
+// Follow PATH order (including an activated environment) without starting or
+// installing Python. Keep the path as selected rather than canonicalizing a
+// virtualenv interpreter symlink to its base interpreter.
+fn path_python_executable() -> Option<String> {
+    let path = std::env::var_os("PATH")?;
+    let current = std::env::current_dir().ok()?;
+    let names: &[&str] = if cfg!(windows) { &["python.exe", "python3.exe"] } else { &["python3", "python"] };
+    for directory in std::env::split_paths(&path) {
+        let directory = if directory.as_os_str().is_empty() { current.clone() }
+            else if directory.is_absolute() { directory }
+            else { current.join(directory) };
+        for name in names {
+            let candidate = directory.join(name);
+            let Ok(metadata) = std::fs::metadata(&candidate) else { continue; };
+            if !metadata.is_file() { continue; }
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                if metadata.permissions().mode() & 0o111 == 0 { continue; }
+            }
+            if let Some(value) = candidate.to_str() { return Some(value.to_owned()); }
+        }
+    }
+    None
+}
+
 #[derive(Parser)]
 #[command(name = "internal-run")]
 struct InternalRunArgs {
@@ -276,6 +331,10 @@ fn main() -> ExitCode {
     #[cfg(unix)]
     let _early_interrupt = PythonBackend::prepare_interrupt_handling();
     let raw_args = std::env::args_os().collect::<Vec<_>>();
+    if raw_args.len() == 2 && raw_args[1] == "--build-source-revision" {
+        println!("{}", option_env!("MODEL_MAVEN_BUILD_REVISION").unwrap_or("unknown"));
+        return ExitCode::SUCCESS;
+    }
     if raw_args
         .get(1)
         .is_some_and(|argument| argument == "internal-run")
@@ -351,10 +410,109 @@ fn main() -> ExitCode {
                 "",
             )
         } else {
-            let capabilities = [
+            let mut capabilities = [
                 "input_snapshot.capture_replay",
+                "probe.force_fresh_environment",
+                "probe.model_device_v1",
+                "supervision.mark_device_v1",
+                "supervision.preview_device_v1",
+                "data.preview_no_split_v1",
+                "data.preview_augment_choice_v1",
+                "runtime.workspace_paths_v1",
+                "runtime.project_paths_config_v1",
+                "runtime.project_python_config_v1",
+                "runtime.python_selection_hint_v1",
+                "runtime.data_preview_paths_v1",
+                "runtime.device_inventory_v1",
+                "runtime.offline_environment_create_v1",
                 "project.classification_create",
+                "project.classification_recipe_v1",
+                "project.classification_recipe_training_supervision_v1",
+                "project.classification_recipe_source_snapshot_v1",
+                "project.classification_recipe_bundle_v1",
+                "project.graph_recipe_bundle_v1",
+                "project.scaffold_recipe_bundle_v1",
+                "project.classification_recipe_runtime_paths_v1",
+                "project.scaffold_recipe_sync_v1",
+                "project.discovery_file_candidates_v1",
                 "project.custom_scaffold",
+                "project.scaffold_recipe_v1",
+                "project.scaffold_recipe_assembly_v1",
+                "project.scaffold_recipe_encoder_layers_v1",
+                "project.scaffold_recipe_encoder_widths_v1",
+                "project.scaffold_recipe_native_encoders_v1",
+                "project.scaffold_recipe_component_params_v1",
+                "project.scaffold_recipe_data_v1",
+                "project.scaffold_recipe_training_v1",
+                "project.scaffold_recipe_optimizer_v1",
+                "project.scaffold_recipe_supervision_ref_v1",
+                "training.recipe_entry_v1",
+                "project.scaffold_recipe_factory_layers_v1",
+                "project.scaffold_residual_layers_v1",
+                "project.scaffold_parallel_layers_v1",
+                "project.scaffold_custom_loss_v1",
+                "project.scaffold_layer_ids_v1",
+                "project.scaffold_one_batch_evaluator_v1",
+                "project.scaffold_mse_shape_contract_v1",
+                "project.recipe_layer_move_plan_v1",
+                "project.recipe_layer_edit_plan_v1",
+                "project.recipe_layer_cross_copy_plan_v1",
+                "project.graph_topology_plan_v1",
+                "project.graph_edit_batch_plan_v1",
+                "project.graph_boundary_annotations_v1",
+                "project.graph_data_objectives_v1",
+                "project.graph_edit_group_copy_v1",
+                "project.graph_edit_group_set_v1",
+                "project.graph_runtime_containers_v1",
+                "project.graph_container_list_children_v1",
+                "project.graph_edit_settings_v1",
+                "project.graph_generate_replace_v1",
+                "project.graph_draft_replay_v1",
+                "project.graph_import_scaffold_preview_v1",
+                "project.graph_import_editable_layers_v1",
+                "project.graph_import_project_data_v1",
+                "project.graph_unicode_ids_v1",
+                "project.graph_output_name_v1",
+                "project.graph_legacy_snapshot_v1",
+                "project.graph_cast_parameter_dtype_v1",
+                "project.graph_dynamic_mean_v1",
+                "project.graph_factory_contract_v1",
+                "project.graph_dtype_sequence_guard_v1",
+                "project.graph_clone_node_v1",
+                "project.graph_assert_batch_v1",
+                "project.graph_after_node_v1",
+                "project.graph_list_call_v1",
+                "project.graph_bind_project_v1",
+                "project.graph_bind_create_v1",
+                "project.graph_optional_training_v1",
+                "project.graph_reorder_dtype_sync_v1",
+                "project.graph_reorder_plan_v1",
+                "project.graph_reorder_after_v1",
+                "project.graph_declared_shapes_v1",
+                "project.graph_port_dtype_v1",
+                "project.graph_training_step_v1",
+                "project.graph_training_modes_v1",
+                "project.graph_supervision_reference_v1",
+                "project.graph_training_recipe_v1",
+                "project.graph_merge_output_shapes_v1",
+                "project.graph_call_output_style_v1",
+                "project.graph_named_components_v1",
+                "project.graph_source_preview_v1",
+                "project.graph_source_create_v1",
+                "project.graph_registered_components_v1",
+                "project.graph_save_v1",
+                "project.graph_delivery_review_v1",
+                "project.graph_delivery_recovery_v1",
+                "project.graph_delivery_status_v1",
+                "project.graph_delivery_archive_v1",
+                "project.graph_generic_batch_transforms_v1",
+                "project.graph_runtime_shape_contract_v1",
+                "project.scaffold_recipe_update_v1",
+                "project.scaffold_reconcile_assembly_v1",
+                "project.scaffold_runtime_dtype_v1",
+                "project.scaffold_default_dtype_v1",
+                "project.scaffold_32_inputs_outputs_v1",
+                "project.scaffold_rank8_v1",
                 "project.scaffold_custom_module",
                 "project.scaffold_external_batch",
                 "project.scaffold_external_batch_params",
@@ -363,49 +521,137 @@ fn main() -> ExitCode {
                 "project.scaffold_encoder_output_edit",
                 "project.scaffold_encoder_output_evidence",
                 "project.scaffold_named_outputs",
+                "project.scaffold_unicode_outputs_v1",
+                "project.scaffold_unicode_inputs_v1",
+                "project.scaffold_nfkc_collision_v1",
                 "project.scaffold_objectives",
                 "project.scaffold_objective_weights",
                 "data.csv_batch_template",
                 "data.csv_batch_typed",
+                "data.csv_batch_runtime_dtype_v1",
+                "data.csv_batch_rank8_v1",
+                "data.csv_batch_optional_targets_v1",
+                "data.csv_batch_row_split_v1",
                 "project.scaffold_input_routes",
                 "project.scaffold_route_edit",
                 "project.scaffold_route_evidence",
                 "project.scaffold_setting_snapshot",
                 "project.conditional_batch_edit",
+                "project.conditional_batch_edit_previous",
+                "project.conditional_model_edit",
                 "assembly.conditional_config_edit",
                 "assembly.atomic_patch",
+                "assembly.direct_factory_params_v1",
                 "assembly.atomic_patch_encoder_output",
                 "assembly.atomic_patch_route",
                 "assembly.atomic_patch_evidence",
                 "assembly.single_source_evidence",
+                "assembly.single_runtime_paths_v1",
                 "assembly.single_input_evidence",
                 "assembly.single_input_snapshot",
                 "component.conditional_uninstall",
                 "component.project_package_lifecycle",
                 "assembly.atomic_patch_snapshot",
                 "assembly.generated_source_verify",
+                "assembly.generate_runtime_paths_v1",
+                "assembly.show_runtime_paths_v1",
                 "training.conditional_config_start",
+                "training.external_loop_model_choice_v1",
+                "training.generic_loop_trial_cli_v1",
+                "training.generic_loop_train_cli_v1",
+                "training.generic_loop_interface_v1",
+                "training.batch_binding_v1",
+                "training.batch_device_policy_v1",
+                "training.repeat_input_guard_v1",
+                "training.custom_optimizer_factory_v1",
+                "training.generic_device_v1",
                 "training.request_identity",
+                "training.atomic_run_admission",
                 "runs.lookup_request_id",
                 "training.conditional_supervision",
+                "training.random_run_seed_v1",
+                "training.model_initialization_v1",
+                "data.raw_batch_binding_v1",
+                "data.preview_whole_batch_v1",
+                "edit.source_factory_device_v1",
+                "runtime.torch_layer_catalog_v1",
+                "runtime.operator_catalog_v1",
+                "edit.variant_device_policy_v1",
+                "edit.variant_layer_rng_v1",
+                "edit.variant_base_rng_v1",
+                "edit.conditional_variant_edit_v1",
+                "model.conditional_variant_probe_v1",
+                "data.preview_random_seed_v1",
+                "supervision.conditional_retag",
+                "supervision.conditional_rule_add_v1",
+                "supervision.rule_copy_v1",
+                "supervision.bundle_v1",
+                "supervision.extended_axis_cli_v1",
+                "supervision.environment_rule_v1",
+                "supervision.observed_anchor_guard_v1",
+                "supervision.root_mark_v1",
+                "model.contract_identity_v1",
+                "model.contract_preload_v1",
+                "supervision.post_forward_scope_v1",
+                "supervision.external_source_anchor_v1",
+                "project.static_entrypoint_discovery",
+                "project.static_entrypoint_discovery_roots_v1",
                 "training.conditional_variant_start",
                 "training.conditional_resume_checkpoint",
+                "training.resume_allow_state_reset_v1",
+                "runtime.historical_python_v1",
                 "evaluation.conditional_checkpoint",
+                "evaluation.model_device_v1",
                 "export.conditional_checkpoint",
+                "export.explicit_python_fallback_v1",
                 "training.data_fingerprint",
                 "runs.comparison_unverified_data",
                 "augmentation.conditional_config_edit",
+                "augmentation.catalog_v1",
                 "edit.conditional_source_manifest",
                 "edit.conditional_source_plan",
+                "edit.atomic_source_transaction",
+                "edit.mixed_source_transaction_v1",
                 "edit.starter_migration",
                 "edit.conditional_source_input",
                 "edit.conditional_source_config",
                 "edit.conditional_source_project_manifest",
                 "layer.builtin_catalog",
+                "workspace.authorization_identity_v1",
             ]
             .into_iter()
             .map(|name| (name, true))
             .collect::<std::collections::BTreeMap<_, _>>();
+            capabilities.insert("training.generic_loop_detached_cli_v1", cfg!(target_os = "linux"));
+            capabilities.insert("training.detached_cli_v1", cfg!(target_os = "linux"));
+            capabilities.insert("supervision.conditional_variant_mark_v1", true);
+            capabilities.insert("supervision.conditional_variant_retag_v1", true);
+            capabilities.insert("supervision.conditional_variant_preview_v1", true);
+            // Metadata only: inspect the same project/PATH candidates used by
+            // ordinary non-environment, non-historical commands. Do not run
+            // Python; the candidate can still change before execution.
+            let python_hint = if let Some(python) = cli.python.as_deref() {
+                serde_json::json!({"status":"selected", "source":"explicit", "python":python})
+            } else {
+                match std::env::current_dir().map_err(|e| e.to_string())
+                    .and_then(|root| FileProjectConfigStore.load(&root)) {
+                    Err(_) => serde_json::json!({"status":"unknown", "source":"invalid_project_config"}),
+                    Ok(config) => {
+                        let saved = config.as_ref().and_then(|value| value["runtime_python"].as_str());
+                        if let Some(python) = saved {
+                            serde_json::json!({"status":"selected", "source":"project", "python":python})
+                        } else if let Some(python) = project_python_executable() {
+                            serde_json::json!({"status":"selected", "source":"project_environment", "python":python})
+                        } else if std::fs::symlink_metadata(".model-maven/environment.json").is_ok() {
+                            serde_json::json!({"status":"unknown", "source":"project_environment_unavailable"})
+                        } else if let Some(python) = path_python_executable() {
+                            serde_json::json!({"status":"selected", "source":"path", "python":python})
+                        } else {
+                            serde_json::json!({"status":"unavailable", "source":"none"})
+                        }
+                    }
+                }
+            };
             Report::ok(
                 "interface",
                 serde_json::json!({
@@ -413,6 +659,9 @@ fn main() -> ExitCode {
                     "cli_version": env!("CARGO_PKG_VERSION"),
                     "report_protocol_version": domain::PROTOCOL_VERSION,
                     "capabilities": capabilities,
+                    "classification_create_presets": cli::CLASSIFICATION_CREATE_PRESETS,
+                    "scaffold_encoder_layers": app::scaffold_encoder_layer_catalog(),
+                    "python_selection_hint": python_hint,
                     "scope": "CLI interface only; runtime availability is determined separately"
                 }),
             )
@@ -436,19 +685,67 @@ fn main() -> ExitCode {
                 | EnvironmentCommand::Setup { .. }
                 | EnvironmentCommand::Check { .. }
                 | EnvironmentCommand::Libraries { .. }
+                | EnvironmentCommand::Devices { .. }
+                | EnvironmentCommand::Probe { .. }
                 | EnvironmentCommand::Wheelhouse { .. }
         })
     );
-    if cli.python.is_none() && !environment_command {
+    // These handlers do not run the Python worker. Let them report their
+    // own configuration errors or help recover a broken environment.
+    let environment_independent = matches!(cli.command.as_ref(),
+        Some(Command::Discover { .. } | Command::Init { .. } | Command::Config { .. } | Command::Runs { .. }
+            | Command::Assembly { command: AssemblyCommand::Show { config_only: true, .. } }
+            | Command::Layer { command: LayerCommand::Catalog }
+            | Command::Data { command: DataCommand::CsvTemplate { .. } }
+            | Command::Component { command: ComponentCommand::Scaffold { .. } | ComponentCommand::List { .. }
+                | ComponentCommand::Show { .. } | ComponentCommand::Check { .. } }
+            | Command::Scaffold { .. } | Command::RecipeLayerPlan { .. } | Command::RecipeLayerEditPlan { .. }));
+    // Export is based on the saved run and may not need Python at all. Do not
+    // bind it to a newly selected or broken project environment before the
+    // export handler can inspect the recorded runtime.
+    let historical_export = matches!(cli.command.as_ref(), Some(Command::Export { .. } | Command::LoopRun { resume: Some(_), .. }));
+    if cli.python.is_none() && !historical_export {
+        match std::env::current_dir().map_err(|error| error.to_string())
+            .and_then(|root| FileProjectConfigStore.load(&root).map(|config| (root, config))) {
+            Ok((root, config)) => {
+                let choice = config.as_ref().and_then(|value| value["runtime_python"].as_str()).map(str::to_owned);
+                record_project_python_selection(&root, choice.clone());
+                cli.python = choice;
+            },
+            Err(error) if !environment_independent => {
+                let report = Report::error("environment", "PROJECT_CONFIG_INVALID", error,
+                    "检查项目配置或明确使用 --python；没有自动忽略配置中的运行时选择。");
+                display(&report, cli.json);
+                return ExitCode::from(report.exit_code() as u8);
+            },
+            Err(_) => {},
+        }
+    }
+    if cli.python.is_none() && !environment_command && !historical_export {
         cli.python = project_python_executable();
+        let saved_environment_exists = std::fs::symlink_metadata(".model-maven/environment.json").is_ok();
+        if cli.python.is_none() && saved_environment_exists && !environment_independent {
+            let report = Report::error(
+                "environment",
+                "PROJECT_ENVIRONMENT_UNAVAILABLE",
+                "项目保存的 Python 环境配置无效或所选解释器不可用。",
+                "检查 .model-maven/environment.json 和所选环境，或明确使用 --python 指定解释器；未自动改用其他环境。",
+            );
+            display(&report, cli.json);
+            return ExitCode::from(report.exit_code() as u8);
+        }
+    }
+    if cli.python.is_none() && !historical_export {
+        cli.python = path_python_executable();
     }
     let mut app = Application {
         backend: PythonBackend {
-            executable: cli.python.clone().unwrap_or_else(|| "python3".into()),
+            executable: cli.python.clone().unwrap_or_default(),
             timeout: Duration::from_secs(cli.timeout.unwrap_or(30)),
             verbose: cli.verbose,
         },
         runtime_capabilities: std::cell::RefCell::new(None),
+        runtime_declarations: std::cell::RefCell::new(None),
         variants: Box::new(FileVariantStore),
         runs: Box::new(FileRunStore),
         exporter: Box::new(FileArtifactExporter),

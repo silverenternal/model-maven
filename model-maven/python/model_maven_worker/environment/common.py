@@ -77,7 +77,7 @@ def safe_project_path(value, label, must_exist=False):
             raise UserError(
                 "ENVIRONMENT_INPUT_MISSING",
                 f"找不到{label}：{relative}",
-                "在项目中创建 requirements.txt 并列出需要的运行依赖（包括 PyTorch），然后重试。",
+                "在项目中创建 requirements.txt 并列出自己需要的运行依赖，然后重试。",
             ) from error
         raise UserError("ENVIRONMENT_PATH_UNSAFE", f"{label} 路径无效：{relative}") from error
     except (OSError, ValueError) as error:
@@ -140,7 +140,7 @@ def redact_environment_output(value, limit=4000):
     return value
 
 
-def run_environment_process(arguments, label, timeout=1800, stream_output=False, source_build=False):
+def run_environment_process(arguments, label, timeout=1800, stream_output=False, source_build=False, working_directory=None):
     environment = os.environ.copy()
     environment.update({
         "PIP_NO_INPUT": "1",
@@ -151,7 +151,7 @@ def run_environment_process(arguments, label, timeout=1800, stream_output=False,
         if stream_output:
             process = subprocess.Popen(
                 arguments,
-                cwd=Path.cwd(),
+                cwd=working_directory or Path.cwd(),
                 env=environment,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
@@ -201,7 +201,7 @@ def run_environment_process(arguments, label, timeout=1800, stream_output=False,
         else:
             result = subprocess.run(
                 arguments,
-                cwd=Path.cwd(),
+                cwd=working_directory or Path.cwd(),
                 env=environment,
                 capture_output=True,
                 text=True,

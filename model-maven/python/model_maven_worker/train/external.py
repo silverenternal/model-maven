@@ -257,12 +257,13 @@ class ExternalLoopContext:
                 values = gradient.coalesce().values() if gradient.is_sparse else gradient
                 if not bool(self.runtime.torch.isfinite(values).all().item()):
                     raise UserError("GRADIENT_NONFINITE", f"参数 {name} 的梯度包含 NaN 或无穷大。")
-            self._supervised_updates += 1
-
         def after_step(current, args, kwargs):
             for name, parameter in self.model.named_parameters():
                 if not bool(self.runtime.torch.isfinite(parameter.detach()).all().item()):
                     raise UserError("PARAMETER_NONFINITE", f"本步更新后参数 {name} 含 NaN 或无穷大。")
+            # A pre-hook only means an update was attempted. Count it after
+            # the optimizer returned and post-update checks completed.
+            self._supervised_updates += 1
 
         self._optimizer_hooks[identity] = (pre_hook(before_step), post_hook(after_step))
         return optimizer
@@ -477,6 +478,15 @@ def run_external_loop(
         ) from error
     finally:
         context.close()
+    if context.supervision is not None:
+        # Returning after catching a supervision exception is not successful
+        # training, even when earlier steps were reported and checkpointed.
+        try:
+            context.supervision._raise_captured_failure()
+        except UserError as error:
+            error.data = {**error.data, "training_mode": "external-loop",
+                          "completed_steps": context.completed_steps, "total_steps": steps}
+            raise
     if context.timeout_requested:
         context._timeout_reached = True
     if context.completed_steps == completed:

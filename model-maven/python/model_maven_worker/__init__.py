@@ -13,12 +13,51 @@ import traceback
 
 _WORKER_STARTED_AT = time.monotonic()
 
+
+def _working_directory():
+    try:
+        return os.getcwd()
+    except OSError:
+        return None
+
+
+def _select_user_working_directory(request):
+    """Apply an explicitly selected directory only in supported model workers.
+
+    The caller keeps project_root and all Model-Maven managed paths absolute;
+    the directory is solely the process cwd seen by project Python code.
+    """
+    runtime = request.get("runtime")
+    selected = runtime.get("working_directory") if isinstance(runtime, dict) else None
+    if selected is None:
+        return
+    if request.get("operation") not in WORKING_DIRECTORY_OPERATIONS:
+        raise UserError("WORKING_DIRECTORY_UNSUPPORTED", "此操作尚不支持指定运行工作目录。")
+    if not isinstance(selected, str) or not selected or "\x00" in selected:
+        raise UserError("WORKING_DIRECTORY_INVALID", "运行工作目录必须是非空的绝对路径。")
+    path = Path(selected)
+    if not path.is_absolute():
+        raise UserError("WORKING_DIRECTORY_INVALID", "运行工作目录必须是绝对路径。")
+    try:
+        resolved = path.resolve(strict=True)
+        if not resolved.is_dir():
+            raise NotADirectoryError(str(resolved))
+        if resolved != path:
+            raise UserError("WORKING_DIRECTORY_CONFLICT", "运行目录的规范路径在准备后发生变化。",
+                            "重新选择并确认目录；本次未执行模型代码。")
+        os.chdir(resolved)
+    except (OSError, RuntimeError, ValueError) as error:
+        raise UserError("WORKING_DIRECTORY_UNAVAILABLE", f"无法使用运行工作目录：{error}",
+                        "检查目录是否存在以及当前用户是否有访问权限。") from error
+    request["_selected_working_directory"] = str(resolved)
+
 from model_maven_worker.protocol import (
     MAX_CALLS, PROTOCOL_VERSION, PROVIDER_CONFORMANCE_SUITE_VERSION,
-    VALID_EDIT_ACTIONS, InconclusiveError, UserError, compatibility_report, validate_request,
+    VALID_EDIT_ACTIONS, WORKING_DIRECTORY_OPERATIONS, InconclusiveError, UserError, compatibility_report, validate_request,
 )
 from model_maven_worker.runtime.capabilities import doctor_report as _doctor_report
 from model_maven_worker.runtime.entrypoints import entrypoint as _entrypoint
+from model_maven_worker.runtime.entrypoints import configure_project_import_roots
 from model_maven_worker.environment import *  # noqa: F401,F403
 from model_maven_worker.data.batch import make_batch
 from model_maven_worker.data.index import run_index_operation as _run_index_operation
@@ -27,9 +66,13 @@ from model_maven_worker.data.transforms import run_transform_pipeline as _run_tr
 from model_maven_worker.model.tensor_tree import tree
 from model_maven_worker.model.structure import module_entries, normalize_path, resolve_module, shared_state_groups
 from model_maven_worker.model.probe import probe as _probe, verify_gradients as _verify_gradients
+from model_maven_worker.model.contracts import load_contract as _load_contract
 from model_maven_worker.model.semantics import (
     add_from_probe as _add_semantic_mark,
     add_rule as _add_supervision_rule,
+    copy_rule as _copy_supervision_rule,
+    export_bundle as _export_supervision_bundle,
+    import_bundle as _import_supervision_bundle,
     audit_marks as _audit_semantic_marks,
     binding_context as _semantic_binding_context,
     list_marks as _list_semantic_marks,
@@ -99,6 +142,7 @@ from model_maven_worker.edit.source_candidates import (
     source_sequential_transaction_candidate as _source_sequential_transaction_candidate,
     apply_source_set_candidate as _apply_source_set_candidate,
     source_set_transaction_candidate as _source_set_transaction_candidate,
+    source_mixed_transaction_candidate as _source_mixed_transaction_candidate,
 )
 from model_maven_worker.edit.source_set import source_set_candidate as _source_set_candidate
 from model_maven_worker.edit.source_dispatch import (
@@ -145,6 +189,8 @@ from model_maven_worker.model.inspection import (
     editable_params as _editable_params,
     has_module_state,
     inspect_model as _inspect_model,
+    model_state_summary as _model_state_summary,
+    _state_placement as _registered_state_placement,
     source_editable_fields as _source_editable_fields,
     source_set_block_reason as _source_set_block_reason,
 )
@@ -186,9 +232,36 @@ from model_maven_worker.extensions.catalog import (
 
 _ACTIVE_CODE_ROOT = None
 _ACTIVE_PROJECT_ROOT = None
+_ACTIVE_IMPORT_ROOTS = None
 
 SOURCE_LOCATIONS = {}
 SOURCE_SITE_COUNTS = {}
+
+
+def _module_alias_evidence(model):
+    """Observe registered module identity after construction, without implying forward coverage."""
+    try:
+        _, aliases = module_entries(model)
+        shared = sorted(sorted(paths) for paths in aliases.values() if len(paths) > 1)
+        return {
+            "status": "observed",
+            "scope": "registered_module_identity_after_construction",
+            "group_count": len(shared),
+            "groups": [paths[:32] for paths in shared[:32]],
+            "truncated": len(shared) > 32 or any(len(paths) > 32 for paths in shared[:32]),
+        }
+    except Exception:
+        return {"status": "unavailable"}
+
+
+def _shared_state_evidence(model):
+    try:
+        groups = shared_state_groups(model)
+        unknown = any(group.get("kind") == "storage_unavailable" for group in groups)
+        return {"status": "partial" if unknown else "observed", "groups": groups,
+                "scope": "registered_parameter_buffer_objects_and_inspectable_storage"}
+    except Exception:
+        return {"status": "unavailable"}
 
 
 def _training_runtime():
@@ -200,7 +273,7 @@ def _training_runtime():
         scalar_value=scalar_value,
         scalar_map=scalar_map,
         add_finite_total=add_finite_total,
-        move_batch=lambda batch, device: _move_nested_batch(torch, batch, device),
+        move_batch=lambda batch, device, **kwargs: _move_nested_batch(torch, batch, device, **kwargs),
     )
 
 
@@ -210,10 +283,13 @@ def _prepare_training_device(model, request):
     request["_resolved_device"] = str(selection.device)
     request["_device_selection"] = selection
     request["_device_report"] = selection.report()
+    # Check a resumed or repeated run before invoking user-defined model.to().
+    # Resolving the device itself can still initialize an accelerator runtime.
+    _verify_expected_device(selection, request)
     _reset_peak_memory(torch, selection)
     if model is not None:
         try:
-            model.to(selection.device)
+            placed = model.to(selection.device)
         except Exception as error:
             if _is_out_of_memory(torch, error):
                 raise _out_of_memory_error(torch, selection, "model placement", error) from error
@@ -223,6 +299,13 @@ def _prepare_training_device(model, request):
                 "检查模型是否包含不能迁移的自定义状态；训练步骤尚未执行。",
                 {"device": selection.label, "phase": "model placement"},
             ) from error
+        if placed is not model:
+            raise UserError(
+                "DEVICE_MODEL_PLACEMENT_UNCONFIRMED",
+                "模型的设备迁移没有返回原模型实例；训练步骤未执行。",
+                "检查自定义 to() 实现；迁移可能已经产生副作用。",
+                {"device": selection.label, "phase": "model placement"},
+            )
     return selection
 
 
@@ -305,6 +388,20 @@ def run_external_loop(
 
 
 def run_evaluation(model, request):
+    def prepare_evaluation_device(model, request):
+        selection = _resolve_device(torch, request["evaluation_device"])
+        try:
+            placed = model.to(selection.device)
+        except Exception as error:
+            raise UserError("EVALUATION_DEVICE_PLACEMENT_FAILED",
+                            f"无法将模型迁移至评估设备：{type(error).__name__}: {error}",
+                            "检查设备和模型的迁移支持；评估入口尚未执行。") from error
+        if placed is not model:
+            raise UserError("EVALUATION_DEVICE_PLACEMENT_UNCONFIRMED",
+                            "模型设备迁移未返回原模型实例；评估入口尚未执行。",
+                            "检查自定义 to() 实现；迁移可能已有副作用。")
+        return selection.report()
+
     return _run_evaluation(
         EvaluationRuntime(
             torch=torch,
@@ -312,6 +409,7 @@ def run_evaluation(model, request):
             verify_manifest=verify_manifest,
             scalar_value=scalar_value,
             source_manifest=source_manifest,
+            prepare_device=prepare_evaluation_device,
         ),
         model,
         request,
@@ -366,7 +464,7 @@ def construct_model(factory, params, project_root, injections=None):
     SOURCE_LOCATIONS = {}
     SOURCE_SITE_COUNTS = {}
     model, evidence, locations, site_counts = _construct_model(
-        factory, params, project_root, injections,
+        factory, params, _ACTIVE_CODE_ROOT or project_root, injections,
         torch_module=torch,
         resolve_entrypoint=entrypoint,
         module_entries_fn=module_entries,
@@ -530,6 +628,7 @@ def source_manifest(root):
         root,
         list(sys.modules.values()),
         code_root=_ACTIVE_CODE_ROOT,
+        import_roots=_ACTIVE_IMPORT_ROOTS,
     )
 
 
@@ -601,8 +700,7 @@ def run_training_probe(model, request):
     if request.get("apply_supervision") is True and "_training_supervision" not in request:
         request["_training_supervision"] = _prepare_training_supervision(model, request, torch)
         request["supervision_snapshot"] = request["_training_supervision"].snapshot()
-    selection = _prepare_training_device(model, request)
-    _verify_expected_device(selection, request)
+    _prepare_training_device(model, request)
     try:
         result = _run_training_mode(
             TrainingModeRuntime(
@@ -645,7 +743,6 @@ def run_training_run(model, request, source_manifest):
         request["_training_supervision"] = _prepare_training_supervision(model, request, torch)
         request["supervision_snapshot"] = request["_training_supervision"].snapshot()
     selection = _prepare_training_device(model, request)
-    _verify_expected_device(selection, request)
     try:
         result = _run_training_run(
             TrainingRunRuntime(
@@ -722,8 +819,8 @@ def _layer_edit_runtime():
     )
 
 
-def new_layer(edit):
-    return _new_layer(_layer_edit_runtime(), edit)
+def new_layer(edit, *, preserve_factory_device=False):
+    return _new_layer(_layer_edit_runtime(), edit, preserve_factory_device=preserve_factory_device)
 
 
 def layer_container_kind(module):
@@ -738,8 +835,8 @@ def apply_edit(model, edit):
     return _apply_edit(_layer_edit_runtime(), model, edit)
 
 
-def apply_history_item(model, item):
-    return _apply_history_item(_layer_edit_runtime(), model, item)
+def apply_history_item(model, item, *, preserve_factory_device=False):
+    return _apply_history_item(_layer_edit_runtime(), model, item, preserve_factory_device=preserve_factory_device)
 
 
 def _edit_plan_runtime():
@@ -804,7 +901,7 @@ def _source_candidate_runtime():
         source_factory_expression=source_factory_expression,
         source_module_expression=source_module_expression,
         source_sequential_rebind=source_sequential_rebind,
-        new_layer=new_layer,
+        new_layer=lambda edit: new_layer(edit, preserve_factory_device=True),
         probe=probe,
         inspect_model=inspect_model,
         editable_params=editable_params,
@@ -855,6 +952,9 @@ def _source_edit_dispatch_runtime():
         source_sequential_candidate=source_sequential_candidate,
         source_set_transaction_candidate=source_set_transaction_candidate,
         source_sequential_transaction_candidate=source_sequential_transaction_candidate,
+        source_mixed_transaction_candidate=lambda request, edit: _source_mixed_transaction_candidate(
+            _source_candidate_runtime(), request, edit
+        ),
         starter_migration_candidate=lambda request, edit: starter_migration_candidate(
             _source_candidate_runtime(), request, edit
         ),
@@ -867,20 +967,24 @@ def source_edit_candidate(request):
 
 def doctor():
     import importlib.util
+    from model_maven_worker.environment.common import redact_environment_output
 
     present = importlib.util.find_spec("torch") is not None
     version = None
+    import_error = None
     if present:
         try:
             import torch
             version = str(torch.__version__)
-        except Exception:
+        except Exception as error:
             present = False
+            import_error = redact_environment_output(f"{type(error).__name__}: {error}", limit=1000)
     return _doctor_report(
         python=sys.executable,
         python_version=sys.version.split()[0],
         torch_available=present,
         torch_version=version,
+        torch_import_error=import_error,
         platform=sys.platform,
         compatibility=compatibility_report(),
     )
@@ -914,19 +1018,35 @@ def component_test(request):
 def dispatch(request):
     validate_request(request)
     operation = request["operation"]
+    if operation == "probe":
+        # Capture the contract before project model/data imports. The probe
+        # uses this exact validated object even if the file changes later.
+        request["_resolved_contract"] = _load_contract(request)
     runtime_options = request.get("runtime", {})
     timeout_seconds = (
         runtime_options.get("timeout_seconds")
         if isinstance(runtime_options, dict)
         else None
     )
-    if operation in {"training_probe", "train"} and type(timeout_seconds) is int and timeout_seconds > 0:
+    if operation in {"training_probe", "generic_loop_trial", "generic_loop_train", "train"} and type(timeout_seconds) is int and timeout_seconds > 0:
         request["_worker_deadline_monotonic"] = _WORKER_STARTED_AT + timeout_seconds
-    global _ACTIVE_CODE_ROOT, _ACTIVE_PROJECT_ROOT
+    global _ACTIVE_CODE_ROOT, _ACTIVE_PROJECT_ROOT, _ACTIVE_IMPORT_ROOTS
     _ACTIVE_CODE_ROOT = None
     _ACTIVE_PROJECT_ROOT = None
+    roots = runtime_options.get("project_import_roots") if isinstance(runtime_options, dict) else None
+    _ACTIVE_IMPORT_ROOTS = roots if isinstance(roots, list) else None
     if operation == "doctor":
         return doctor()
+    if operation == "runtime_capabilities":
+        # Metadata only: a framework-neutral loop must not import torch as a
+        # side effect of preparing its own runtime.
+        result = _doctor_report(
+            python=sys.executable, python_version=sys.version.split()[0],
+            torch_available=None, torch_version=None, platform=sys.platform,
+            compatibility=compatibility_report(),
+        )
+        result["capability_probe"] = "worker_declarations_only"
+        return result
     if operation == "data_index":
         return _run_index_operation(request)
     if operation == "preset_catalog":
@@ -961,6 +1081,13 @@ def dispatch(request):
             plugin = None
             kind = action.get("kind")
             if kind in {"custom-validator", "custom-penalty"}:
+                # This metadata operation explicitly imports user code. Match
+                # the chosen runtime before resolving the rule callable.
+                project = str(Path(request["project_root"]).resolve())
+                if project not in sys.path:
+                    sys.path.insert(0, project)
+                _select_user_working_directory(request)
+                configure_project_import_roots(request)
                 raw_params = action.get("plugin_params", [])
                 if not isinstance(raw_params, list) or len(raw_params) > 64:
                     raise UserError("SUPERVISION_PLUGIN_PARAMS_INVALID", "自定义规则参数须为最多 64 项的 NAME=JSON 数组。")
@@ -978,6 +1105,7 @@ def dispatch(request):
                 plugin = _pin_custom_supervision_plugin(
                     request["project_root"], kind,
                     action.get("plugin_entrypoint"), plugin_params,
+                    source_kind=action.get("plugin_source") or "project",
                 )
             return _add_supervision_rule(
                 request["project_root"], action.get("mark_id"),
@@ -985,7 +1113,14 @@ def dispatch(request):
                 minimum=action.get("min"), maximum=action.get("max"),
                 weight=action.get("weight"), target_path=action.get("target_path"),
                 axis=action.get("axis"), rule_id=action.get("id"), plugin=plugin,
+                expected_state_revision=action.get("if_state_revision"),
             )
+        if action.get("action") == "bundle_export":
+            return _export_supervision_bundle(request["project_root"], action.get("if_state_revision"))
+        if action.get("action") == "bundle_import":
+            return _import_supervision_bundle(request["project_root"], action.get("file"), action.get("if_sha256"), action.get("if_state_revision"), action.get("apply") is True)
+        if action.get("action") == "rule_copy":
+            return _copy_supervision_rule(request["project_root"], action.get("id"), action.get("mark_id"), action.get("if_state_revision"))
         if action.get("action") == "rule_list":
             return _list_supervision_rules(request["project_root"])
         if action.get("action") == "rule_remove":
@@ -1019,6 +1154,8 @@ def dispatch(request):
         return inspect_environment_libraries(request)
     if operation == "environment_library_probe":
         return probe_environment_libraries(request)
+    if operation == "environment_devices":
+        return probe_environment_libraries({**request, "libraries": ["torch"], "device_inventory": True})
     if operation == "environment_wheelhouse_archive":
         return archive_environment_wheels(
             request.get("runtime", {}).get("python_executable") or sys.executable,
@@ -1036,8 +1173,9 @@ def dispatch(request):
             request.get("venv"),
             request.get("relative"),
             request.get("interactive_progress") is True,
+            request.get("create_environment") is True,
         )
-    if operation in {"training_probe", "train", "evaluate"} and request.get("snapshot_dir"):
+    if operation in {"training_probe", "generic_loop_train", "train", "evaluate"} and request.get("snapshot_dir"):
         variant = request.get("variant")
         required_source_manifest = (
             variant.get("source_manifest", {}) if isinstance(variant, dict) else {}
@@ -1046,20 +1184,254 @@ def dispatch(request):
             request["project_root"],
             request["snapshot_dir"],
             required_source_manifest,
+            request.get("runtime", {}).get("project_import_roots"),
         )
         _ACTIVE_CODE_ROOT = snapshot["root"]
         _ACTIVE_PROJECT_ROOT = str(Path(request["project_root"]).resolve())
         request["code_snapshot"] = snapshot
         request["code_snapshot_root"] = _ACTIVE_CODE_ROOT
         sys.path.insert(0, _ACTIVE_CODE_ROOT)
+    _select_user_working_directory(request)
+    if operation == "generic_loop_train":
+        import hashlib
+        from model_maven_worker.run.provenance import check_snapshot_project_imports
+        from model_maven_worker.train.generic_checkpoint import load_generic_checkpoint, save_generic_checkpoint
+        from model_maven_worker.train.generic_loop import GenericLoopContext, run_generic_loop
+
+        if request.get("model") is not None or request.get("apply_supervision") is True:
+            raise UserError("GENERIC_LOOP_UNSUPPORTED", "纯 Python 用户循环不接管模型或监督规则。")
+        snapshot = request.get("code_snapshot")
+        if not isinstance(snapshot, dict) or not isinstance(snapshot.get("sha256"), str):
+            raise UserError("SOURCE_SNAPSHOT_REQUIRED", "纯 Python 正式运行需要源码快照。")
+        reference, params = request.get("training_loop"), request.get("training_params", {})
+        loop_interface = request.get("loop_interface", "model-context")
+        if not isinstance(loop_interface, str) or loop_interface not in {"context", "model-context"}:
+            raise UserError("GENERIC_LOOP_INVALID", "循环签名必须为 context 或 model-context。")
+        if not isinstance(reference, str) or not reference or not isinstance(params, dict):
+            raise UserError("GENERIC_LOOP_INVALID", "需要用户循环入口和参数对象。")
+        directory = request.get("checkpoint_dir")
+        if not isinstance(directory, str) or not directory:
+            raise UserError("GENERIC_CHECKPOINT_PATH_INVALID", "纯 Python 正式运行需要 checkpoint 目录。")
+        def digest_json(value):
+            try:
+                raw = json.dumps(value, sort_keys=True, ensure_ascii=False, allow_nan=False,
+                                 separators=(",", ":")).encode("utf-8")
+            except (TypeError, ValueError, RecursionError) as error:
+                raise UserError("GENERIC_LOOP_INVALID", "循环参数和运行路径必须是有限 JSON。") from error
+            return hashlib.sha256(raw).hexdigest()
+        inventory = environment_snapshot("training_start")
+        runtime = request.get("runtime") or {}
+        identity = {"loop": reference, "python_executable": sys.executable,
+                    "python_version": sys.version.split()[0], "source_manifest_sha256": snapshot["sha256"],
+                    "environment_fingerprint_sha256": inventory.get("fingerprint_sha256"),
+                    "parameters_sha256": digest_json(params),
+                    "runtime_paths_sha256": digest_json({"working_directory": runtime.get("working_directory"),
+                                                          "project_import_roots": runtime.get("project_import_roots")})}
+        if loop_interface == "context":
+            identity["loop_interface"] = "context"
+        prior = None
+        if request.get("generic_checkpoint_input") is not None:
+            prior = load_generic_checkpoint(request["generic_checkpoint_input"], expected_identity=identity,
+                                            expected_sha256=request.get("expected_checkpoint_sha256"))
+        code_root = request["code_snapshot_root"]
+        def check_snapshot():
+            from model_maven_worker.run.file_digest import sha256_file
+            root = Path(code_root).resolve(strict=True)
+            manifest = snapshot.get("manifest")
+            if not isinstance(manifest, dict):
+                raise UserError("SOURCE_SNAPSHOT_INVALID", "纯 Python 运行缺少源码快照清单。")
+            for relative, expected in manifest.items():
+                if not isinstance(relative, str) or not isinstance(expected, str):
+                    raise UserError("SOURCE_SNAPSHOT_INVALID", "源码快照清单无效。")
+                path = root / relative
+                try:
+                    if (path.is_symlink() or not path.is_file() or not path.resolve().is_relative_to(root)
+                            or sha256_file(path) != expected):
+                        raise ValueError(relative)
+                except (OSError, ValueError) as error:
+                    raise UserError("SOURCE_SNAPSHOT_CHANGED", f"源码快照已变化：{relative}",
+                                    "恢复点不会作为基于原源码的结果保存。") from error
+            check_snapshot_project_imports(request["project_root"], code_root,
+                                           import_roots=runtime.get("project_import_roots"))
+        if code_root in sys.path:
+            sys.path.remove(code_root)
+        sys.path.insert(0, code_root)
+        configure_project_import_roots(request)
+        loop = entrypoint(reference)
+        check_snapshot()
+        latest = {"manifest": None}
+        def emit(step, metrics, state):
+            saved = False
+            if state is not None:
+                check_snapshot()
+                previous = latest["manifest"]
+                latest["manifest"] = save_generic_checkpoint(directory, completed_steps=step, state=state,
+                    identity=identity, expected_previous=previous["sha256"] if previous else None)
+                saved = True
+            _emit_training_progress({"step": step, "total": request.get("steps"),
+                                     "metrics": metrics, "checkpoint": saved})
+        context = GenericLoopContext(request.get("steps"), completed_steps=prior["completed_steps"] if prior else 0,
+                                     resume_state=prior["state"] if prior else None,
+                                     stop_file=request.get("stop_file"),
+                                     deadline_monotonic=request.get("_worker_deadline_monotonic"),
+                                     report_callback=emit)
+        try:
+            result = run_generic_loop(loop, context, params, interface=loop_interface)
+            check_snapshot()
+        except UserError as error:
+            # Preserve the original diagnostic while separating the user's
+            # last accepted report from the last durable state. The stored
+            # checkpoint is independently verified when a recovery is chosen.
+            details = dict(error.data) if isinstance(error.data, dict) else {}
+            saved_checkpoint = latest["manifest"]
+            details.update({
+                "training_mode": "generic-external-loop",
+                "loop_interface": loop_interface,
+                "completed_steps": context.completed_steps,
+                "requested_steps": context.total_steps,
+                "last_metrics": context._last_metrics,
+                "checkpoint_saved": saved_checkpoint is not None,
+                "checkpoint": saved_checkpoint,
+                "checkpoint_completed_steps": saved_checkpoint["completed_steps"] if saved_checkpoint else None,
+                "recovery_status": "checkpoint_recorded_verify_before_resume" if saved_checkpoint else "no_user_state_reported",
+                "state_scope": "user_declared_json; external files and RNG are not captured",
+            })
+            error.data = details
+            raise
+        saved_checkpoint = latest["manifest"]
+        result.update({"checkpoint_saved": saved_checkpoint is not None, "checkpoint": saved_checkpoint,
+                       "checkpoint_completed_steps": saved_checkpoint["completed_steps"] if saved_checkpoint else None,
+                       "source_snapshot": snapshot, "environment_snapshot": inventory,
+                       "runtime": {"python_executable": sys.executable,
+                                   "python_version": sys.version.split()[0], "framework": "user_managed"},
+                       "state_scope": "user_declared_json; external files and RNG are not captured",
+                       "recovery_status": "checkpoint_available" if saved_checkpoint else "no_user_state_reported"})
+        return result
+    if operation == "generic_loop_trial":
+        from model_maven_worker.train.generic_loop import GenericLoopContext, run_generic_loop
+
+        if request.get("model") is not None or request.get("apply_supervision") is True:
+            raise UserError("GENERIC_LOOP_UNSUPPORTED", "纯 Python 循环试跑不接管模型或监督规则。")
+        loop_interface = request.get("loop_interface", "model-context")
+        if not isinstance(loop_interface, str) or loop_interface not in {"context", "model-context"}:
+            raise UserError("GENERIC_LOOP_INVALID", "循环签名必须为 context 或 model-context。")
+        reference = request.get("training_loop")
+        if not isinstance(reference, str) or not reference:
+            raise UserError("EXTERNAL_LOOP_REQUIRED", "请选择用户循环入口。")
+        project_root = str(Path(request["project_root"]).resolve(strict=True))
+        if project_root not in sys.path:
+            sys.path.insert(0, project_root)
+        configure_project_import_roots(request)
+        loop = entrypoint(reference)
+        before = source_manifest(project_root)
+        def emit(step, metrics, state):
+            _emit_training_progress({"step": step, "total": request.get("steps"),
+                                     "metrics": metrics, "checkpoint": False})
+        context = GenericLoopContext(request.get("steps"), stop_file=request.get("stop_file"),
+                                     deadline_monotonic=request.get("_worker_deadline_monotonic"),
+                                     report_callback=emit)
+        result = run_generic_loop(loop, context, request.get("training_params", {}), interface=loop_interface)
+        after = source_manifest(project_root)
+        before_paths, after_paths = set(before), set(after)
+        changed_paths = sorted(path for path in before_paths & after_paths if before[path] != after[path])
+        added_paths = sorted(after_paths - before_paths)
+        missing_paths = sorted(before_paths - after_paths)
+        result.update({"source_manifest": before, "source_changed_during_run": before != after,
+                       "source_observation_delta": {
+                           "scope": "loaded_project_modules_and_package_trees",
+                           "baseline_timing": "after_loop_entrypoint_import",
+                           "changed_content_count": len(changed_paths),
+                           "newly_observed_count": len(added_paths),
+                           "no_longer_observed_count": len(missing_paths),
+                           "changed_content_paths": changed_paths[:32],
+                           "newly_observed_paths": added_paths[:32],
+                           "no_longer_observed_paths": missing_paths[:32],
+                           "paths_truncated": any(len(paths) > 32 for paths in (changed_paths, added_paths, missing_paths)),
+                       },
+                       "runtime": {"python_executable": sys.executable,
+                                   "python_version": sys.version.split()[0],
+                                   "framework": "user_managed"},
+                       "checkpoint_saved": False,
+                       "state_persistence": "not_available_for_trial"})
+        return result
     global torch
     try:
         import torch
     except ImportError as error:
         raise UserError("TORCH_UNAVAILABLE", "指定 Python 环境没有可导入的 PyTorch。", "用 --python 指定已安装 PyTorch 的解释器。") from error
-    torch.set_num_threads(1)
     if operation == "component_test":
         return component_test(request)
+    if operation == "graph_draft_probe":
+        import hashlib
+        import random
+        import types
+        source = request.get("generated_source")
+        expected_source = request.get("generated_source_sha256")
+        expected_input = request.get("expected_input_content")
+        if not isinstance(source, str) or len(source.encode("utf-8")) > 4 * 1024 * 1024 \
+                or hashlib.sha256(source.encode("utf-8")).hexdigest() != expected_source:
+            raise UserError("GRAPH_DRAFT_SOURCE_INVALID", "图草稿源码缺失、过大或摘要不匹配。")
+        if not isinstance(expected_input, str) or len(expected_input) != 64 or any(c not in "0123456789abcdef" for c in expected_input) \
+                or not isinstance(request.get("replay_input_from"), str):
+            raise UserError("GRAPH_DRAFT_INPUT_REQUIRED", "草稿预览需要可重放的已捕获输入及其摘要。")
+        project_root = str(Path(request["project_root"]).resolve())
+        if project_root not in sys.path:
+            sys.path.insert(0, project_root)
+        configure_project_import_roots(request)
+        module_name = "_model_maven_graph_draft_" + expected_source[:24]
+        if module_name in sys.modules:
+            raise UserError("GRAPH_DRAFT_MODULE_CONFLICT", "草稿模块名称已被使用。")
+        module = types.ModuleType(module_name)
+        module.__file__ = "<model-maven-graph-draft>"
+        sys.modules[module_name] = module
+        try:
+            seed = request.get("seed")
+            if seed is not None:
+                if type(seed) is not int or not 0 <= seed < 2**64:
+                    raise UserError("GRAPH_DRAFT_SEED_INVALID", "种子必须是无符号 64 位整数。")
+                random.seed(seed)
+                torch.manual_seed(seed)
+            exec(compile(source, module.__file__, "exec"), module.__dict__)
+            model = module.model()
+            if not isinstance(model, torch.nn.Module):
+                raise UserError("GRAPH_DRAFT_MODEL_INVALID", "草稿工厂没有返回 torch.nn.Module。")
+            requested_device = request.get("probe_device")
+            if requested_device is not None:
+                if not isinstance(requested_device, str) or not requested_device or len(requested_device) > 128:
+                    raise UserError("PROBE_DEVICE_INVALID", "前向设备标识无效。")
+                selection = _resolve_device(torch, requested_device)
+                try:
+                    placed = model.to(selection.device)
+                except Exception as error:
+                    raise UserError("PROBE_DEVICE_PLACEMENT_FAILED", f"无法迁移草稿模型：{type(error).__name__}: {error}") from error
+                if placed is not model:
+                    raise UserError("PROBE_DEVICE_PLACEMENT_UNCONFIRMED", "模型设备迁移没有返回原模型实例。")
+                request["_probe_device_report"] = selection.report()
+            request["model"] = module_name + ":model"
+            request["_disable_evidence_cache"] = True
+            result = probe(model, request)
+            result["draft_source_sha256"] = expected_source
+            result["draft_graph_sha256"] = request.get("draft_graph_sha256")
+            result["preview_scope"] = "fresh-worker-graph-draft"
+            result["weights_loaded"] = False
+            result["runtime"] = {"python_executable": sys.executable, "python_version": sys.version.split()[0],
+                                 "pytorch_version": torch.__version__, "project_import_roots": request.get("runtime", {}).get("project_import_roots"),
+                                 "probe_device": request.get("_probe_device_report")}
+            return result
+        except UserError as error:
+            error.data["draft_source_sha256"] = expected_source
+            error.data["draft_graph_sha256"] = request.get("draft_graph_sha256")
+            error.data["preview_scope"] = "fresh-worker-graph-draft"
+            error.data["weights_loaded"] = False
+            if error.code == "FORWARD_FAILED" and error.__cause__ is not None:
+                frames = traceback.extract_tb(error.__cause__.__traceback__)
+                lines = [frame.lineno for frame in frames
+                         if frame.filename == module.__file__ and frame.name == "forward"]
+                if lines:
+                    error.data["draft_forward_line"] = lines[-1]
+            raise
+        finally:
+            sys.modules.pop(module_name, None)
     if operation == "assembly_codegen_verify":
         import importlib.util
         import tempfile
@@ -1069,6 +1441,7 @@ def dispatch(request):
         project_root = str(Path(request["project_root"]).resolve())
         if project_root not in sys.path:
             sys.path.insert(0, project_root)
+        configure_project_import_roots(request)
         with tempfile.TemporaryDirectory(prefix="model-maven-codegen-") as directory:
             generated = Path(directory) / "generated_assembly.py"
             generated.write_text(source, encoding="utf-8")
@@ -1081,6 +1454,9 @@ def dispatch(request):
                     raise TypeError("build_model() did not return torch.nn.Module")
             except Exception as error:
                 raise UserError("ASSEMBLY_GENERATED_CONSTRUCTION_FAILED", f"生成代码重导入或构造失败：{type(error).__name__}: {error}", "检查组件工厂与生成适配器；没有发布输出文件。") from error
+            alias_evidence = _module_alias_evidence(model)
+            shared_state_evidence = _shared_state_evidence(model)
+            placement_evidence = _registered_state_placement(model)
             if request.get("batch"):
                 request["_disable_evidence_cache"] = True
                 forward_evidence = probe(model, request).get("batch_content")
@@ -1088,7 +1464,7 @@ def dispatch(request):
             else:
                 forward_evidence = None
                 forward = "not_run"
-            return {"construction":"passed", "forward":forward, "weights":"not_loaded", "scope":"fresh-worker-generated-source", "source_manifest": source_manifest(request["project_root"]), "input_evidence":forward_evidence}
+            return {"construction":"passed", "forward":forward, "weights":"not_loaded", "scope":"fresh-worker-generated-source", "source_manifest": source_manifest(request["project_root"]), "input_evidence":forward_evidence, "module_aliases": alias_evidence, "shared_state": shared_state_evidence, "model_state_placement": placement_evidence, "weight_equality": "not_compared"}
     if operation == "preview":
         return _run_preview_operation(request, torch, entrypoint, _source_manifest)
     if operation == "edit":
@@ -1099,6 +1475,7 @@ def dispatch(request):
         return result
     if operation == "evaluate" and request.get("expected_source_manifest") is not None:
         verify_manifest(request["expected_source_manifest"])
+    request["_working_directory_before_model"] = _working_directory()
     external_training = (
         operation in {"training_probe", "train"}
         and request.get("training_mode") == "external-loop"
@@ -1113,10 +1490,24 @@ def dispatch(request):
         if code_root in sys.path:
             sys.path.remove(code_root)
         sys.path.insert(0, code_root)
-        if project_root != code_root and project_root not in sys.path:
-            sys.path.insert(1, project_root)
+        configure_project_import_roots(request)
     else:
         model, origin, seed, effects = load_model(request)
+    if operation in {"probe", "semantic_mark", "semantic_supervise"} and request.get("probe_device") is not None:
+        requested_device = request["probe_device"]
+        if not isinstance(requested_device, str) or not requested_device or len(requested_device) > 128:
+            raise UserError("PROBE_DEVICE_INVALID", "前向设备标识无效。", "指定所选 PyTorch 支持的设备；输入不会自动迁移。")
+        selection = _resolve_device(torch, requested_device)
+        try:
+            placed = model.to(selection.device)
+        except Exception as error:
+            raise UserError("PROBE_DEVICE_PLACEMENT_FAILED", f"无法将模型迁移到所选设备：{type(error).__name__}: {error}",
+                            "检查用户模型的设备迁移支持；输入工厂也需要提供兼容设备的输入。") from error
+        if placed is not model:
+            raise UserError("PROBE_DEVICE_PLACEMENT_UNCONFIRMED", "模型的设备迁移没有返回原模型实例。",
+                            "检查自定义 to() 实现；迁移可能已产生副作用，未执行前向。")
+        request["_probe_device_report"] = selection.report()
+    request["_working_directory_after_model"] = _working_directory()
     request["_model_origin"] = origin
     if operation in {"training_probe", "train"}:
         result = training_probe_with_source_evidence(model, request)
@@ -1124,6 +1515,10 @@ def dispatch(request):
             "python_executable": sys.executable,
             "python_version": sys.version.split()[0],
             "pytorch_version": torch.__version__,
+            "working_directory_before_model": request["_working_directory_before_model"],
+            "working_directory_after_model": request["_working_directory_after_model"],
+            "working_directory_after_training": _working_directory(),
+            "project_import_roots": request.get("runtime", {}).get("project_import_roots"),
         })
         if request.get("_environment_fingerprint_sha256"):
             result["runtime"]["environment_fingerprint_sha256"] = request[
@@ -1131,6 +1526,10 @@ def dispatch(request):
             ]
         result.update({"origin": origin, "seed": seed, "variant_applied": request.get("variant") is not None,
                        "edit_effects": effects})
+        result["seed_source"] = request.get("seed_source")
+        result["seed_decimal"] = str(seed) if type(seed) is int else None
+        if request.get("training_mode") != "external-loop":
+            result["batch_device_policy"] = request.get("batch_device_policy") or "legacy-recursive"
         return result
     if operation == "evaluate":
         result = run_evaluation(model, request)
@@ -1154,12 +1553,16 @@ def dispatch(request):
                     observed,
                     request.get("variant"),
                     source_manifest(request["project_root"]),
+                    request.get("runtime"),
                 ),
             )
         if not isinstance(action, dict) or action.get("action") not in {"add", "update"}:
             raise UserError("SEMANTIC_ACTION_INVALID", "当前语义标记操作需要 action=add 或 update。")
         request["_disable_evidence_cache"] = True
         observation = probe(model, request)
+        observation["model_device"] = request.get("_probe_device_report")
+        observation["reported_seed"] = seed
+        observation["seed_policy"] = "runtime" if seed is None else "fixed"
         result = _add_semantic_mark(
             request["project_root"],
             {**observation, "origin": origin},
@@ -1169,10 +1572,14 @@ def dispatch(request):
             meaning=action.get("meaning"),
             mark_id=action.get("id"),
             replace_existing=action.get("action") == "update",
+            expected_state_revision=action.get("if_state_revision"),
+            expected_anchor=action.get("if_anchor"),
+            variant_name=request.get("semantic_variant_name"),
             context=_semantic_binding_context(
                 {**observation, "origin": origin},
                 request.get("variant"),
                 source_manifest(request["project_root"]),
+                request.get("runtime"),
             ),
         )
         return {**result, "observation": {
@@ -1187,9 +1594,9 @@ def dispatch(request):
             entrypoint(request["batch"])
         current_source_manifest = source_manifest(request["project_root"])
         context = _semantic_binding_context(
-            {"origin": origin}, request.get("variant"), current_source_manifest
+            {"origin": origin}, request.get("variant"), current_source_manifest, request.get("runtime")
         )
-        return _preview_supervision(
+        result = _preview_supervision(
             model,
             request,
             context=context,
@@ -1198,6 +1605,10 @@ def dispatch(request):
             resolve_entrypoint=entrypoint,
             module_entries_fn=module_entries,
         )
+        result["model_device"] = request.get("_probe_device_report")
+        result["seed"] = seed
+        result["seed_policy"] = "runtime" if seed is None else "fixed"
+        return result
     if operation not in {"inspect", "probe", "layers"}:
         raise UserError("FEATURE_UNAVAILABLE", f"当前未实现操作：{operation}")
     result = inspect_model(
@@ -1206,12 +1617,29 @@ def dispatch(request):
         request.get("layer_type"),
         request.get("search"),
     )
+    if request.get("collect_source_manifest"):
+        result["module_aliases"] = _module_alias_evidence(model)
+        result["shared_state"] = _shared_state_evidence(model)
     if operation == "inspect" and request.get("collect_source_manifest"):
         result["source_manifest"] = source_manifest(request["project_root"])
     if operation == "probe":
         if request.get("collect_source_manifest"):
             request["_disable_evidence_cache"] = True
         result.update(probe(model, request))
+        if result.get("forward_execution") == "executed":
+            result["model_state_after_forward"] = _model_state_summary(model)
+        # Runtime facts describe this worker only; they do not establish that
+        # dependencies, weights, or later executions are identical.
+        result["runtime"] = {
+            "python_executable": sys.executable,
+            "python_version": sys.version.split()[0],
+            "pytorch_version": torch.__version__,
+            "working_directory_before_model": request["_working_directory_before_model"],
+            "working_directory_after_model": request["_working_directory_after_model"],
+            "working_directory_after_probe": _working_directory(),
+            "project_import_roots": request.get("runtime", {}).get("project_import_roots"),
+            "probe_device": request.get("_probe_device_report"),
+        }
         if request.get("collect_source_manifest"):
             if request.get("replay_input_from") and request.get("batch"):
                 # Replayed values do not call the batch factory, but its module
@@ -1232,8 +1660,20 @@ def dispatch(request):
         if not isinstance(expected_shared, list) or actual_shared != expected_shared:
             raise UserError("SOURCE_SHARED_STATE_MISMATCH", "源码重新加载后的共享参数或 Buffer 与候选模型不一致。", "检查构造及共享赋值的位置；原源码编辑将回滚。", {"expected": expected_shared, "actual": actual_shared})
         result["shared_state_verification"] = {"status": "passed", "scope": "registered_object_and_storage_after_validation", "group_count": len(actual_shared), "unavailable_storage_count": sum(group["kind"] == "storage_unavailable" for group in actual_shared)}
-    result.update({"origin": origin, "seed": seed, "variant_applied": request.get("variant") is not None,
+    result.update({"origin": origin, "seed": seed, "seed_policy": "runtime" if seed is None else "fixed",
+                   "variant_applied": request.get("variant") is not None,
                    "edit_effects": effects})
+    if operation == "probe":
+        variant = request.get("variant")
+        requested_seed = request.get("seed")
+        construction_seed = variant.get("seed") if isinstance(variant, dict) else requested_seed
+        result["randomness"] = {
+            "construction_seed_decimal": str(construction_seed) if type(construction_seed) is int else None,
+            "execution_seed_decimal": str(requested_seed) if isinstance(variant, dict) and type(requested_seed) is int else None,
+            "forward_rng_policy": "reset_after_variant" if isinstance(variant, dict) and type(requested_seed) is int
+                else "construction_stream" if type(construction_seed) is int else "runtime",
+            "scope": "worker seed actions before batch construction; user code and other random libraries may change state",
+        }
     return result
 
 
@@ -1244,8 +1684,12 @@ def main():
     sys.stdout = sys.stderr
     operation = "unknown"
     try:
-        request = json.load(sys.stdin)
-        operation = request.get("operation", "unknown")
+        try:
+            request = json.load(sys.stdin)
+        except (json.JSONDecodeError, UnicodeDecodeError) as error:
+            raise UserError("PROTOCOL_ERROR", "worker 请求不是有效的 UTF-8 JSON。", "检查请求格式后重试；目标操作尚未启动。") from error
+        if isinstance(request, dict) and isinstance(request.get("operation"), str):
+            operation = request["operation"]
         result = {"protocol_version": PROTOCOL_VERSION, "operation": operation,
                   "status": "success", "data": dispatch(request), "diagnostics": []}
     except InconclusiveError as error:

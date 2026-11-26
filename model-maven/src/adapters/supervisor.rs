@@ -75,7 +75,10 @@ impl RunSupervisor for NativeRunSupervisor {
                 return Err("后台运行请求超过 1 MiB 限制。".into());
             }
             let mut log_options = OpenOptions::new();
-            log_options.create_new(true).write(true);
+            // The supervisor and worker can both write this file. Append on
+            // every descriptor prevents supervisor output from overwriting
+            // worker output after the worker has extended the log.
+            log_options.create_new(true).append(true);
             #[cfg(unix)]
             log_options.mode(0o600);
             let log = log_options

@@ -10,6 +10,7 @@ pub(super) fn handle<B: Backend>(
     if_checkpoint_sha256: Option<&str>,
     split: &str,
     evaluator: &str,
+    device: Option<&str>,
     data: &str,
     samples: Option<u64>,
     preview_samples: Option<u64>,
@@ -17,6 +18,9 @@ pub(super) fn handle<B: Backend>(
     params: &[String],
     data_params: &[String],
 ) -> Report {
+    if device.is_some_and(|value| value.is_empty() || value.len() > 128 || value.trim() != value || value.chars().any(char::is_control)) {
+        return Report::error("evaluate", "DEVICE_INVALID", "设备标识必须为 1..128 个可见字符，且不能有首尾空格。", "输入当前 PyTorch 环境支持的设备标识。");
+    }
     if if_checkpoint_sha256.is_some_and(|digest| {
         digest.len() != 64
             || !digest
@@ -74,7 +78,12 @@ pub(super) fn handle<B: Backend>(
     }
     // The source training request identifies that launch only. Evaluation is
     // a separate run, linked by source_run_id, and must not reuse its dedupe key.
-    request.as_object_mut().unwrap().remove("request_id");
+    let source_inputs = request.as_object_mut().unwrap();
+    for field in ["request_id", "batch_device_policy", "optimizer_factory", "optimizer_params"] {
+        // Evaluation reconstructs the model and checkpoint, but its own data
+        // and evaluator manage batches; it does not construct an optimizer.
+        source_inputs.remove(field);
+    }
     if request["model"].as_str().is_none() && request["variant"].is_null() {
         return Report::error(
             "evaluate",
@@ -127,6 +136,7 @@ pub(super) fn handle<B: Backend>(
     request["expected_checkpoint_sha256"] = json!(if_checkpoint_sha256);
     request["source_run_id"] = json!(source_run_id);
     request["evaluation_entrypoint"] = json!(evaluator);
+    request["evaluation_device"] = json!(device);
     request["evaluation_data"] = json!(data);
     request["evaluation_data_params"] = json!(evaluation_data_params);
     request["evaluation_params"] = json!(evaluation_params);
@@ -186,10 +196,28 @@ pub(super) fn handle<B: Backend>(
     request["evaluation_augment"] = json!(evaluation_augment);
     request["expected_source_manifest"] =
         source_record["report"]["data"]["source_manifest"].clone();
+    let selected_python = if cli.python_explicit {
+        cli.python.as_deref().filter(|value| !value.trim().is_empty())
+    } else {
+        source_record["inputs"]["runtime"]["python_executable"].as_str().filter(|value| !value.trim().is_empty())
+            .or(cli.python.as_deref().filter(|value| !value.trim().is_empty()))
+    };
+    let Some(selected_python) = selected_python else {
+        return Report::error("evaluate", "PYTHON_SELECTION_REQUIRED",
+            "未记录或发现可用的 Python 选择。", "使用 --python 明确选择解释器后重试；评估尚未启动。");
+    };
     request["runtime"] = json!({
-        "python_executable": cli.python.as_deref().unwrap_or("python3"),
+        "python_executable": selected_python,
         "timeout_seconds": cli.timeout.unwrap_or(30),
+        "working_directory": source_record["inputs"]["runtime"]["working_directory"].clone(),
+        "project_import_roots": source_record["inputs"]["runtime"]["project_import_roots"].clone(),
     });
+    if let Err(report) = super::run::resolve_worker_directory("evaluate", &root, &mut request["runtime"], true) {
+        return report;
+    }
+    if let Err(report) = super::run::resolve_worker_import_roots("evaluate", &root, &mut request["runtime"], true) {
+        return report;
+    }
     crate::domain::capability::annotate_worker_request(&mut request);
 
     let mut stored_inputs = request.clone();
@@ -207,7 +235,7 @@ pub(super) fn handle<B: Backend>(
                     "evaluate",
                     "RUN_ALREADY_ACTIVE",
                     message,
-                    "先查看当前运行；运行结束或明确恢复状态后再开始评估。只读查看仍可继续。",
+                    "先查看运行和进程；状态未知时可用 m-model runs acknowledge-unknown <ID> 审核。只读查看仍可继续。",
                 );
             }
             if let Some(message) = error.strip_prefix("RUN_STATE_UNKNOWN:") {

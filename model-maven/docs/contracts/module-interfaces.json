@@ -1,18 +1,18 @@
 {
   "schema_version": "1.0.0",
   "contract_version": 2,
-  "status": "proposed_except_legacy_report_and_current_ports",
+  "status": "implemented_legacy_report_and_selected_operation_plan; typed domain handoff remains partial",
   "authority": [
     "product.json modular_architecture",
     "product.json behavior_contracts/G-validation",
     "product.json agent_integration",
     "moduletodo.json ownership and dependency rules"
   ],
-  "implementation_boundary": "This file defines cross-module field ownership and planned service seams. A type or trait existing in Rust does not prove that the application produces, persists, or enforces it. Per-field status is authoritative.",
+  "implementation_boundary": "This file defines cross-module field ownership and current seams. A Rust type proves serialization shape only; per-field status records whether the application produces, persists, and enforces it. CLI interface, worker runtime, provider declaration, and model-instance evidence are distinct.",
   "shared_envelopes": {
     "operation_request": {
       "type": "domain::operation::OperationRequest",
-      "status": "proposed",
+      "status": "proposed; current CLI command builders are not uniformly adapted to this DTO",
       "fields": {
         "contract_version": "Required contract major/minor generation; incompatible changes require a new version.",
         "operation": "Canonical operation_ref selected by the user or caller.",
@@ -22,7 +22,7 @@
     },
     "operation_plan": {
       "type": "domain::operation::OperationPlan",
-      "status": "implemented_for_selected_application_operations",
+      "status": "implemented_for_selected_application_operations; enforcement incomplete",
       "fields": [
         "contract_version",
         "plan_id",
@@ -33,9 +33,11 @@
       ],
       "rules": [
         "The plan is for one selected operation; unrelated missing project fields do not block it.",
-        "ready requires every required fact, input, and capability to be available.",
-        "actions are suggestions with availability and reason; the CLI decides how to present them.",
-        "needs_input, unsupported, conditional, and unknown are distinct; conditional capability state is serialized as conditional and carries an explanation, while unknown is never treated as success."
+        "The DTO preserves ready, needs_input, conditional, unsupported, and unknown as distinct states.",
+        "ready structurally requires all required facts, inputs, and capabilities to be available.",
+        "Current ApplicationUiServices blocks needs_input and unsupported but does not block required conditional or unknown. Interactive training confirmation permits start for both without resolving unknown evidence; unknown must fail closed, while conditional may proceed only after its stated condition is resolved and revalidated.",
+        "Actions are suggestions with availability and reason; they do not execute automatically.",
+        "Plans are point-in-time and do not reserve source/config/runtime state. Recompute before mutation or execution."
       ]
     },
     "legacy_report": {
@@ -56,7 +58,7 @@
     },
     "diagnostic": {
       "type": "domain::diagnostic::Diagnostic",
-      "status": "legacy_wire_shape_implemented; details_contract_proposed",
+      "status": "legacy code/message/hint wire shape implemented; optional DiagnosticDetails type exists, producer coverage partial",
       "fields": [
         "code",
         "message",
@@ -69,10 +71,10 @@
         "recovery_actions[]",
         "evidence_state"
       ],
-      "rule": "A recovery action is advice until an application service confirms it is available and executes it."
+      "rule": "Recovery actions are advice, not commands. Availability/reason/confirmation are required before presentation; executing one requires explicit selection and fresh validation. Legacy hint remains display-only."
     },
     "identity_and_revision": {
-      "status": "proposed_envelope; provider semantics_owned_by_domain_modules",
+      "status": "partial DTO primitives exist (InputSource); cross-domain identity and consistent revision production remain proposed",
       "types": [
         "ModelIdentity",
         "ModuleInvocationIdentity",
@@ -93,7 +95,7 @@
       }
     },
     "state_and_event": {
-      "status": "proposed_envelope; concrete state formats_owned_by_domain_modules",
+      "status": "partial: run progress/event records and artifact references exist in operation-specific forms; no universal OperationEvent/ArtifactRef DTO",
       "types": [
         "EditPlanContract",
         "StateImpact",
@@ -129,7 +131,7 @@
         "an operation is executable because its CLI command exists",
         "a missing event means no work occurred"
       ],
-      "status": "contracts_proposed; legacy Report and existing Backend ports implemented"
+      "status": "Report v1, worker protocol/capability DTO, operation/readiness DTOs and selected application planning implemented; universal plan enforcement and typed report adapters remain incomplete"
     },
     "model": {
       "owner": "MODEL",
@@ -188,7 +190,7 @@
         "EditPlanState",
         "StateImpact"
       ],
-      "status": "planned; existing CRUD is implemented in app/worker but not the unified plan contract"
+      "status": "partial: operation-specific preview/commit and source/variant transaction flows exist; unified cross-target EditPlanContract/StateImpact is not the wire contract"
     },
     "train": {
       "owner": "TRAIN",
@@ -212,7 +214,7 @@
         "checkpoint compatibility",
         "metric identity"
       ],
-      "status": "planned; existing try/train/resume paths are implemented with documented limits"
+      "status": "implemented with mode-specific checkpoint, metric and user-state limits; unified typed event/artifact DTO remains proposed"
     },
     "run": {
       "owner": "RUN",
@@ -266,7 +268,7 @@
         "manifest_digest",
         "dependency references"
       ],
-      "status": "planned; local component metadata and dependency resolution are implemented"
+      "status": "local manifest discovery, dependency resolution, conformance and lifecycle operations implemented; local declarations are not model-instance proof"
     },
     "data": {
       "owner": "DATA",
@@ -340,7 +342,7 @@
         "model/training algorithms",
         "business file persistence"
       ],
-      "status": "current CLI pages are partly implemented; typed application service consumption is proposed"
+      "status": "CLI pages and selected application service planning are implemented; not every command consumes OperationPlan and typed event/artifact service contracts remain partial"
     },
     "acceptance": {
       "owner": "QA",
@@ -391,19 +393,27 @@
   },
   "current_vs_proposed": {
     "implemented": [
-      "Report envelope v1",
-      "Backend.execute(JSON)->Report",
-      "current Rust command and Python worker operations",
-      "native model/batch/step/loop callables"
+      "Report envelope v1 and worker protocol/API v1 compatibility checks",
+      "Static worker operation-to-required-feature registry and doctor runtime capability descriptors",
+      "CLI interface catalog v1 metadata response",
+      "OperationPlan/Readiness/InputSource DTOs and input-only planning for selected application commands",
+      "Selected-run progress/cancellation and preview async lifecycle with operation-specific semantics",
+      "Operation-specific preview/guarded commit, request IDs, stale-input revision checks and model-evidence cache identity checks"
+    ],
+    "partial": [
+      "ApplicationUiServices rejects required missing inputs and explicitly unsupported capabilities; required unknown/conditional readiness is not yet blocked there",
+      "Legacy diagnostic producers mostly emit code/message/hint; optional structured recovery details are not populated uniformly",
+      "Runtime capability cache invalidation and model/preview cache invalidation are source-specific, not one universal stale protocol",
+      "Typed operation identity, event and artifact DTOs are not consumed across all modules"
     ],
     "proposed": [
-      "canonical OperationRef",
-      "per-operation readiness plan",
-      "typed input provenance/revisions",
-      "unified diagnostic recovery actions",
-      "typed event/artifact references",
-      "domain module ownership DTOs"
+      "Canonical OperationRef end-to-end",
+      "Universal lightweight per-operation query covering all CLI actions",
+      "Universal cancellable async action/result/event protocol",
+      "Global stale-evidence marker and invalidation bus",
+      "Uniform structured DiagnosticDetails producer/consumer path",
+      "Cross-domain typed event/artifact handoff and complete module ownership DTOs"
     ],
-    "explicit_non_claim": "Proposed contracts are not evidence that readiness planning, a service, a protocol adapter, persistence, or a user workflow is implemented."
+    "explicit_non_claim": "A DTO, catalog entry, route, successful legacy Report, or declared provider capability does not prove a selected model instance supports an operation. No homepage readiness query may execute user code or mutate/install/download."
   }
 }

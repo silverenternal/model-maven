@@ -1,5 +1,125 @@
 use super::*;
 
+fn resolve_model_initialization(
+    operation: &'static str,
+    inputs: &TrainingInputs,
+    prior: &Value,
+    resume: bool,
+) -> Result<(Option<String>, Option<u64>), Report> {
+    let recorded_policy = match prior.get("model_initialization_policy") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(value)) if matches!(value.as_str(), "runtime" | "seeded") => Some(value.as_str()),
+        _ => return Err(Report::error(operation, "MODEL_INITIALIZATION_POLICY_INVALID", "历史模型构造策略无效。", "检查运行记录。")),
+    };
+    let recorded_seed = match prior.get("model_initialization_seed") {
+        None | Some(Value::Null) => None,
+        Some(value) => Some(value.as_u64().ok_or_else(|| Report::error(operation,
+            "MODEL_INITIALIZATION_SEED_INVALID", "历史模型构造种子无效。", "检查运行记录。"))?),
+    };
+    let requested = inputs.model_initialization.as_deref();
+    if resume && (requested.is_some_and(|value| Some(value) != recorded_policy)
+        || inputs.model_initialization_seed.is_some_and(|value| Some(value) != recorded_seed)) {
+        return Err(Report::error(operation, "RESUME_MODEL_INITIALIZATION_CONFLICT",
+            "续训必须沿用原模型构造策略和种子。", "省略模型构造选项或创建新运行。"));
+    }
+    let policy = requested.or(recorded_policy);
+    let seed = if requested.is_some() && requested != recorded_policy {
+        inputs.model_initialization_seed
+    } else {
+        inputs.model_initialization_seed.or(recorded_seed)
+    };
+    if policy != Some("seeded") && seed.is_some() {
+        return Err(Report::error(operation, "MODEL_INITIALIZATION_POLICY_CONFLICT",
+            "模型构造种子需要 seeded 策略。", "选择 seeded 或移除构造种子。"));
+    }
+    Ok((policy.map(str::to_owned), seed))
+}
+
+fn resolve_batch_device_policy(operation: &'static str, inputs: &TrainingInputs, prior: &Value,
+    historical: bool, resume: bool, external: bool) -> Result<Option<String>, Report> {
+    let recorded = match prior.get("batch_device_policy") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(value)) if matches!(value.as_str(), "preserve" | "recursive-strict") => Some(value.as_str()),
+        _ => return Err(Report::error(operation, "BATCH_DEVICE_POLICY_INVALID", "历史运行的批次设备策略无效或不受支持。", "检查运行记录；没有启动训练。")),
+    };
+    let requested = inputs.batch_device_policy.as_deref();
+    if external {
+        if requested.is_some() || (resume && recorded.is_some()) {
+            return Err(Report::error(operation, "BATCH_DEVICE_POLICY_UNSUPPORTED", "完整用户循环自行管理批次设备。", "移除 --batch-device-policy。"));
+        }
+        return Ok(None);
+    }
+    if resume && requested.is_some() && requested != recorded {
+        return Err(Report::error(operation, "RESUME_BATCH_DEVICE_POLICY_CONFLICT", "续训必须沿用原批次设备策略。", "省略 --batch-device-policy 或创建新运行。"));
+    }
+    Ok(requested.or(recorded).or(if historical { None } else { Some("recursive-strict") }).map(str::to_owned))
+}
+
+// Hash the same parsed inputs used to build the repeated job, not status or
+// presentation annotations that can change while the user reviews the run.
+pub(super) fn repeat_inputs_sha256(record: &Value) -> Option<String> {
+    use sha2::{Digest, Sha256};
+    if !record.get("inputs")?.is_object() { return None; }
+    let bytes = serde_json::to_vec(&record["inputs"]).ok()?;
+    Some(format!("{:x}", Sha256::digest(bytes)))
+}
+
+fn recorded_batch_binding(inputs: &Value) -> Result<Option<BatchBinding>, String> {
+    match inputs.get("batch_binding") {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(value)) => match value.as_str() {
+            "envelope" => Ok(Some(BatchBinding::Envelope)),
+            "single" => Ok(Some(BatchBinding::Single)),
+            "single-raw" => Ok(Some(BatchBinding::SingleRaw)),
+            "args" => Ok(Some(BatchBinding::Args)),
+            "kwargs" => Ok(Some(BatchBinding::Kwargs)),
+            _ => Err("历史运行的输入绑定不受支持。".into()),
+        },
+        _ => Err("历史运行的输入绑定格式无效。".into()),
+    }
+}
+
+// Resolve custom managed optimizer declarations without importing user code.
+// A resumed checkpoint cannot switch factory or parameters; a repeated trial
+// may explicitly choose a different factory and is then a distinct observation.
+fn resolve_managed_optimizer(
+    operation: &'static str,
+    inputs: &TrainingInputs,
+    prior: &Value,
+    mode: &TrainingMode,
+    resume: bool,
+) -> Result<(Option<String>, Map<String, Value>), Report> {
+    let previous = prior["optimizer_factory"].as_str();
+    let factory = inputs.optimizer_factory.as_deref().or_else(|| {
+        (*mode == TrainingMode::ManagedStep).then_some(previous).flatten()
+    });
+    if factory.is_some() && *mode != TrainingMode::ManagedStep {
+        return Err(Report::error(operation, "OPTIMIZER_MODE_UNSUPPORTED",
+            "自定义受管优化器仅支持 managed-step。", "选择 managed-step，或在用户完整循环中管理优化器。"));
+    }
+    let Some(factory) = factory else {
+        return Ok((None, Map::new()));
+    };
+    let Some((module, target)) = factory.split_once(':') else {
+        return Err(Report::error(operation, "OPTIMIZER_FACTORY_INVALID", "优化器工厂须为 module:callable。", "填写可导入的工厂入口。"));
+    };
+    if module.is_empty() || target.is_empty() || target.contains(':') || factory.chars().any(char::is_whitespace) || factory.len() > 1024 {
+        return Err(Report::error(operation, "OPTIMIZER_FACTORY_INVALID", "优化器工厂入口无效。", "填写有效的 module:callable。"));
+    }
+    let params = if inputs.optimizer_factory.as_deref().is_some_and(|value| Some(value) != previous) {
+        parameters(&inputs.optimizer_params)
+    } else {
+        snapshot_params(prior, "optimizer_params", &inputs.optimizer_params)
+    }.map_err(|error| Report::error(operation, "OPTIMIZER_PARAMETERS_INVALID", error, "使用 --optimizer-param NAME=JSON。"))?;
+    if params.len() > 64 || has_redacted_value(&Value::Object(params.clone())) {
+        return Err(Report::error(operation, "OPTIMIZER_PARAMETERS_INVALID", "优化器参数过多或包含已脱敏的历史值。", "检查参数并明确重新提供所需值。"));
+    }
+    if resume && (previous != Some(factory) || prior["optimizer_params"].as_object().cloned().unwrap_or_default() != params) {
+        return Err(Report::error(operation, "RESUME_OPTIMIZER_CONFLICT", "续训必须沿用原优化器工厂与参数。", "使用原运行记录，或创建新的训练运行。"));
+    }
+    Ok((Some(factory.to_owned()), params))
+}
+
 fn read_weight_migration_plan(path: &Path) -> Result<Value, String> {
     let metadata = std::fs::symlink_metadata(path)
         .map_err(|error| format!("无法读取权重迁移计划：{error}"))?;
@@ -126,9 +246,16 @@ impl<B: Backend> Application<B> {
                 lr,
                 weight_decay,
                 apply_supervision,
+                no_supervision,
                 params,
                 loop_params,
             } => {
+                if *apply_supervision && *no_supervision {
+                    return Err(Report::error(
+                        "training_probe", "SUPERVISION_SELECTION_CONFLICT",
+                        "不能同时启用和关闭本次试跑的监督。", "只选择一种监督设置。",
+                    ));
+                }
                 let requested_device = inputs.device.clone();
                 let prior = if let Some(requested) = repeat {
                     let root = match std::env::current_dir().and_then(|path| path.canonicalize()) {
@@ -156,6 +283,15 @@ impl<B: Backend> Application<B> {
                 } else {
                     None
                 };
+                if let Some(expected) = inputs.if_repeat_inputs_sha256.as_deref() {
+                    if expected.len() != 64 || !expected.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)) {
+                        return Err(Report::error("training_probe", "REPEAT_INPUT_DIGEST_INVALID", "历史输入摘要必须是小写 SHA-256。", "重新查看历史试跑。"));
+                    }
+                    let actual = prior.as_ref().and_then(|(_, record)| repeat_inputs_sha256(record));
+                    if actual.as_deref() != Some(expected) {
+                        return Err(Report::error("training_probe", "REPEAT_INPUT_CHANGED", "历史试跑输入缺失或已变化，没有启动试跑。", "重新查看历史试跑并确认。"));
+                    }
+                }
                 let empty_snapshot = Value::Null;
                 let prior_inputs = prior
                     .as_ref()
@@ -167,10 +303,22 @@ impl<B: Backend> Application<B> {
                     .unwrap_or(previous_device)
                     .to_owned();
                 let device_changed = prior.is_some() && resolved_device != previous_device;
-                let external_loop_requested = training_mode.as_ref()
-                    == Some(&TrainingMode::ExternalLoop)
-                    || training_loop.is_some()
-                    || prior_inputs["training_mode"].as_str() == Some("external-loop");
+                let external_loop_requested = match training_mode.as_ref() {
+                    Some(mode) => *mode == TrainingMode::ExternalLoop,
+                    None if training_loop.is_some() => true,
+                    None if step.is_some() => false,
+                    None => prior_inputs["training_mode"].as_str() == Some("external-loop"),
+                };
+                if inputs.no_model && (!external_loop_requested || prior.is_some() || cli.variant.is_some()
+                    || inputs.model_initialization.is_some()) {
+                    return Err(Report::error("training_probe", "NO_MODEL_UNSUPPORTED",
+                        "--no-model 仅支持不使用变体的新 external-loop。",
+                        "移除 --no-model，或启动不指定模型初始化策略的新完整循环。"));
+                }
+                if external_loop_requested && (inputs.batch.is_some() || !inputs.batch_params.is_empty() || inputs.batch_binding.is_some()) {
+                    return Err(Report::error("training_probe", "EXTERNAL_LOOP_BATCH_UNUSED",
+                        "完整循环自行管理输入，不接受独立批次、参数或绑定。", "移除批次相关选项，或改用受管／手动步骤。"));
+                }
                 if !params.is_empty() && !loop_params.is_empty() {
                     return Err(Report::error(
                         "training_probe",
@@ -200,29 +348,80 @@ impl<B: Backend> Application<B> {
                 } else {
                     params
                 };
+                let model_replaced = prior.is_some() && inputs.model.as_deref()
+                    .is_some_and(|value| Some(value) != prior_inputs["model"].as_str());
+                let batch_replaced = prior.is_some() && ((external_loop_requested && prior_inputs["batch"].as_str().is_some())
+                    || inputs.batch.as_deref().is_some_and(|value| Some(value) != prior_inputs["batch"].as_str()));
+                let training_replaced = prior.is_some() && (step.as_deref()
+                    .is_some_and(|value| Some(value) != prior_inputs["training_step"].as_str())
+                    || training_loop.as_deref()
+                        .is_some_and(|value| Some(value) != prior_inputs["training_loop"].as_str())
+                    || training_mode.as_ref().is_some_and(|mode| Some(match mode {
+                        TrainingMode::ManagedStep => "managed-step", TrainingMode::ManualStep => "manual-step",
+                        TrainingMode::ExternalLoop => "external-loop",
+                    }) != prior_inputs["training_mode"].as_str()));
                 let mut resolved_inputs: Inputs = inputs.clone().into();
+                if prior.is_some() && prior_inputs["model"].is_null() && inputs.model.is_none() {
+                    resolved_inputs.no_project_model = true;
+                }
                 if resolved_inputs.model.is_none() {
                     resolved_inputs.model = prior_inputs["model"].as_str().map(str::to_owned);
                 }
-                if resolved_inputs.batch.is_none() {
+                if resolved_inputs.batch.is_none() && !external_loop_requested {
                     resolved_inputs.batch = prior_inputs["batch"].as_str().map(str::to_owned);
+                }
+                if prior.is_some() && inputs.batch_binding.is_none()
+                    && resolved_inputs.batch.as_deref() == prior_inputs["batch"].as_str()
+                {
+                    resolved_inputs.batch_binding = match recorded_batch_binding(prior_inputs) {
+                        Ok(binding) => binding,
+                        Err(error) => return Err(Report::error("training_probe", "REPEAT_BINDING_INVALID", error, "检查历史运行输入。")),
+                    };
                 }
                 if resolved_inputs.injections.is_empty()
                     && resolved_inputs.injection_params.is_empty()
+                    && !model_replaced
                 {
                     resolved_inputs.saved_injections = Some(saved_model_injections(prior_inputs));
                 }
 
                 let mut repeat_overrides = Vec::new();
-                if prior.is_some()
-                    && inputs.data_fingerprint.as_deref().is_some_and(|value| {
-                        Some(value.trim()) != prior_inputs["data_fingerprint"].as_str()
-                    })
+                let (model_initialization, model_initialization_seed) =
+                    resolve_model_initialization("training_probe", inputs, prior_inputs, false)?;
+                if prior.is_some() && (model_initialization.as_deref() != prior_inputs["model_initialization_policy"].as_str()
+                    || model_initialization_seed != prior_inputs["model_initialization_seed"].as_u64()) {
+                    repeat_overrides.push("model_initialization".into());
+                }
+                let batch_device_policy = resolve_batch_device_policy("training_probe", inputs, prior_inputs,
+                    prior.is_some(), false, external_loop_requested)?;
+                if prior.is_some() && batch_device_policy.as_deref() != prior_inputs["batch_device_policy"].as_str() {
+                    repeat_overrides.push("batch_device_policy".into());
+                }
+                if batch_replaced && inputs.batch.is_none() {
+                    repeat_overrides.push("batch".into());
+                }
+                if batch_replaced && inputs.batch_binding.is_none() && prior_inputs["batch_binding"].as_str().is_some() {
+                    repeat_overrides.push("batch_binding".into());
+                }
+                if prior.is_some() && inputs.batch_binding.is_some() {
+                    let recorded = match recorded_batch_binding(prior_inputs) {
+                        Ok(binding) => binding,
+                        Err(error) => return Err(Report::error("training_probe", "REPEAT_BINDING_INVALID", error, "检查历史运行输入。")),
+                    };
+                    if inputs.batch_binding != recorded {
+                        repeat_overrides.push("batch_binding".into());
+                    }
+                }
+                let resolved_data_fingerprint = inputs.data_fingerprint.clone().or_else(|| {
+                    if batch_replaced { None } else { prior_inputs["data_fingerprint"].as_str().map(str::to_owned) }
+                });
+                if prior.is_some() && resolved_data_fingerprint.as_deref().map(str::trim)
+                    != prior_inputs["data_fingerprint"].as_str()
                 {
                     repeat_overrides.push("data_fingerprint".into());
                 }
-                let apply_supervision = *apply_supervision
-                    || prior_inputs["apply_supervision"].as_bool().unwrap_or(false);
+                let apply_supervision = !*no_supervision && (*apply_supervision
+                    || prior_inputs["apply_supervision"].as_bool().unwrap_or(false));
                 if prior.is_some()
                     && apply_supervision
                         != prior_inputs["apply_supervision"].as_bool().unwrap_or(false)
@@ -258,7 +457,7 @@ impl<B: Backend> Application<B> {
                 }
 
                 let model_params =
-                    match snapshot_params(prior_inputs, "model_params", &inputs.model_params) {
+                    match if model_replaced { parameters(&inputs.model_params) } else { snapshot_params(prior_inputs, "model_params", &inputs.model_params) } {
                         Ok(values) => values,
                         Err(error) => {
                             return Err(Report::error(
@@ -270,7 +469,7 @@ impl<B: Backend> Application<B> {
                         }
                     };
                 let batch_params =
-                    match snapshot_params(prior_inputs, "batch_params", &inputs.batch_params) {
+                    match if batch_replaced { parameters(&inputs.batch_params) } else { snapshot_params(prior_inputs, "batch_params", &inputs.batch_params) } {
                         Ok(values) => values,
                         Err(error) => {
                             return Err(Report::error(
@@ -281,11 +480,8 @@ impl<B: Backend> Application<B> {
                             ));
                         }
                     };
-                let training_params = match snapshot_params(
-                    prior_inputs,
-                    "training_params",
-                    supplied_params,
-                ) {
+                let training_params = match if training_replaced { parameters(supplied_params) }
+                    else { snapshot_params(prior_inputs, "training_params", supplied_params) } {
                     Ok(values) => values,
                     Err(error) => {
                         return Err(Report::error(
@@ -296,7 +492,7 @@ impl<B: Backend> Application<B> {
                         ));
                     }
                 };
-                let model_params_changed =
+                let model_params_changed = model_replaced ||
                     params_changed(prior_inputs, "model_params", &inputs.model_params)
                         .expect("model params were parsed above");
                 let injection_root =
@@ -311,7 +507,7 @@ impl<B: Backend> Application<B> {
                             ));
                         }
                     };
-                let model_injections_changed = match injections_changed(
+                let model_injections_changed = model_replaced || match injections_changed(
                     &prior_inputs["model_injections"],
                     &inputs.injections,
                     &inputs.injection_params,
@@ -328,10 +524,10 @@ impl<B: Backend> Application<B> {
                         ));
                     }
                 };
-                let batch_params_changed =
+                let batch_params_changed = batch_replaced ||
                     params_changed(prior_inputs, "batch_params", &inputs.batch_params)
                         .expect("batch params were parsed above");
-                let training_params_changed =
+                let training_params_changed = training_replaced ||
                     params_changed(prior_inputs, "training_params", supplied_params)
                         .expect("training params were parsed above");
                 if has_redacted_value(&json!({
@@ -390,6 +586,9 @@ impl<B: Backend> Application<B> {
                         if training_loop.is_some() {
                             return Some(TrainingMode::ExternalLoop);
                         }
+                        if step.is_some() && prior_inputs["training_mode"].as_str() == Some("external-loop") {
+                            return Some(TrainingMode::ManagedStep);
+                        }
                         match prior_inputs["training_mode"].as_str() {
                             Some("external-loop") => Some(TrainingMode::ExternalLoop),
                             Some("manual-step") => Some(TrainingMode::ManualStep),
@@ -399,7 +598,7 @@ impl<B: Backend> Application<B> {
                     })
                     .unwrap_or_default();
                 if prior.is_some()
-                    && training_mode.is_some()
+                    && prior_inputs["training_mode"].as_str().is_some()
                     && prior_inputs["training_mode"].as_str()
                         != Some(match mode {
                             TrainingMode::ManagedStep => "managed-step",
@@ -408,6 +607,12 @@ impl<B: Backend> Application<B> {
                         })
                 {
                     repeat_overrides.push("training_mode".into());
+                }
+                let (optimizer_factory, optimizer_params) = resolve_managed_optimizer(
+                    "training_probe", inputs, prior_inputs, &mode, false)?;
+                if prior.is_some() && (optimizer_factory.as_deref() != prior_inputs["optimizer_factory"].as_str()
+                    || prior_inputs["optimizer_params"].as_object().cloned().unwrap_or_default() != optimizer_params) {
+                    repeat_overrides.push("optimizer".into());
                 }
                 let resolved_loop = training_loop
                     .clone()
@@ -463,7 +668,12 @@ impl<B: Backend> Application<B> {
                 let resolved_steps = steps
                     .or_else(|| prior_inputs["steps"].as_u64().map(|v| v as u32))
                     .unwrap_or(3);
-                let (resolved_lr, resolved_weight_decay) = if mode == TrainingMode::ExternalLoop {
+                let (resolved_lr, resolved_weight_decay) = if optimizer_factory.is_some() {
+                    if lr.is_some() || weight_decay.is_some() {
+                        return Err(Report::error("training_probe", "OPTIMIZER_PARAMETER_CONFLICT", "自定义工厂不使用 AdamW 的 --lr 或 --weight-decay。", "使用 --optimizer-param 传递工厂参数。"));
+                    }
+                    (None, None)
+                } else if mode == TrainingMode::ExternalLoop {
                     if lr.is_some() || weight_decay.is_some() {
                         return Err(Report::error(
                             "training_probe",
@@ -497,16 +707,16 @@ impl<B: Backend> Application<B> {
                         Some(id.clone()),
                         if repeat_overrides
                             .iter()
-                            .any(|name| ["model", "batch", "step", "loop"].contains(&name.as_str()))
+                            .any(|name| ["model", "batch", "step", "loop", "optimizer"].contains(&name.as_str()))
                         {
                             None
                         } else {
                             Some(record["report"]["data"]["source_manifest"].clone())
                         },
                         if device_changed
-                            || cli.python.as_deref().is_some_and(|value| {
+                            || (cli.python_explicit && cli.python.as_deref().is_some_and(|value| {
                                 prior_inputs["runtime"]["python_executable"].as_str() != Some(value)
-                            })
+                            }))
                         {
                             None
                         } else {
@@ -516,16 +726,23 @@ impl<B: Backend> Application<B> {
                     None => (None, None, None),
                 };
                 let saved_runtime = &prior_inputs["runtime"];
+                let selected_python = if cli.python_explicit {
+                    cli.python.as_deref().filter(|value| !value.trim().is_empty())
+                } else {
+                    saved_runtime["python_executable"].as_str().filter(|value| !value.trim().is_empty())
+                        .or(cli.python.as_deref().filter(|value| !value.trim().is_empty()))
+                }.ok_or_else(|| Report::error("training_probe", "PYTHON_SELECTION_REQUIRED",
+                    "未记录或发现可用的 Python 选择。", "使用 --python 明确选择解释器后重试；试跑尚未启动。"))?;
                 let runtime = json!({
-                    "python_executable": cli.python.as_deref()
-                        .or_else(|| saved_runtime["python_executable"].as_str())
-                        .unwrap_or("python3"),
+                    "python_executable": selected_python,
                     "timeout_seconds": cli.timeout
                         .or_else(|| saved_runtime["timeout_seconds"].as_u64())
                         .unwrap_or(30),
                     "device": resolved_device,
+                    "working_directory": saved_runtime["working_directory"].clone(),
+                    "project_import_roots": saved_runtime["project_import_roots"].clone(),
                 });
-                if prior.is_some()
+                if prior.is_some() && cli.python_explicit
                     && cli.python.as_deref().is_some_and(|value| {
                         saved_runtime["python_executable"].as_str() != Some(value)
                     })
@@ -546,9 +763,25 @@ impl<B: Backend> Application<B> {
                 {
                     repeat_overrides.push("seed".into());
                 }
+                let mut explicit_sources = Map::new();
+                if prior.is_some() {
+                    for (key, supplied, flag) in [
+                        ("model", inputs.model.is_some(), "--model"),
+                        ("batch", inputs.batch.is_some(), "--batch"),
+                        ("batch_binding", inputs.batch_binding.is_some(), "--batch-binding"),
+                    ] {
+                        if supplied {
+                            explicit_sources.insert(key.into(), json!({"kind":"command_line", "reference":flag}));
+                        }
+                    }
+                }
                 Job {
                     operation: "training_probe",
                     inputs: resolved_inputs,
+                    batch_device_policy,
+                    model_initialization,
+                    model_initialization_seed,
+                    input_sources: explicit_sources,
                     run_name: name.clone(),
                     training_step: resolved_step,
                     training_loop: resolved_loop,
@@ -559,17 +792,16 @@ impl<B: Backend> Application<B> {
                     }),
                     training_params,
                     apply_supervision,
-                    batch_fingerprint: inputs
-                        .data_fingerprint
-                        .clone()
-                        .or_else(|| prior_inputs["data_fingerprint"].as_str().map(str::to_owned)),
+                    batch_fingerprint: resolved_data_fingerprint,
                     repeat_of,
                     expected_source_manifest,
                     expected_runtime,
                     repeat_overrides,
                     runtime,
                     steps: Some(resolved_steps),
-                    optimizer: (mode != TrainingMode::ExternalLoop).then(|| "adamw".into()),
+                    optimizer: (mode != TrainingMode::ExternalLoop && optimizer_factory.is_none()).then(|| "adamw".into()),
+                    optimizer_factory,
+                    optimizer_params,
                     lr: resolved_lr,
                     weight_decay: resolved_weight_decay,
                     seed,
@@ -598,6 +830,9 @@ impl<B: Backend> Application<B> {
                 allow_state_reset,
                 detach,
             } => {
+                if inputs.if_repeat_inputs_sha256.is_some() {
+                    return Err(Report::error("train", "REPEAT_INPUT_CONDITION_INVALID", "历史试跑输入摘要仅用于 try --repeat。", "续训使用检查点身份条件。"));
+                }
                 if if_checkpoint_sha256.as_ref().is_some_and(|digest| {
                     digest.len() != 64
                         || !digest
@@ -733,6 +968,20 @@ impl<B: Backend> Application<B> {
                     == Some(&TrainingMode::ExternalLoop)
                     || training_loop.is_some()
                     || prior_inputs["training_mode"].as_str() == Some("external-loop");
+                if inputs.no_model && (!external_loop_requested || prior.is_some() || cli.variant.is_some()
+                    || inputs.model_initialization.is_some()) {
+                    return Err(Report::error("train", "NO_MODEL_UNSUPPORTED",
+                        "--no-model 仅支持不使用变体的新 external-loop。",
+                        "移除 --no-model，或启动不指定模型初始化策略的新完整循环。"));
+                }
+                let batch_device_policy = resolve_batch_device_policy("train", inputs, prior_inputs,
+                    prior.is_some(), prior.is_some(), external_loop_requested)?;
+                let (model_initialization, model_initialization_seed) =
+                    resolve_model_initialization("train", inputs, prior_inputs, prior.is_some())?;
+                if external_loop_requested && (inputs.batch.is_some() || !inputs.batch_params.is_empty() || inputs.batch_binding.is_some()) {
+                    return Err(Report::error("train", "EXTERNAL_LOOP_BATCH_UNUSED",
+                        "完整循环自行管理输入，不接受独立批次、参数或绑定。", "移除批次相关选项，或改用受管／手动步骤。"));
+                }
                 if !params.is_empty() && !loop_params.is_empty() {
                     return Err(Report::error(
                         "train",
@@ -784,6 +1033,7 @@ impl<B: Backend> Application<B> {
                         Some((id, record, _)) => {
                             if inputs.model.is_some()
                                 || inputs.batch.is_some()
+                                || inputs.batch_binding.is_some()
                                 || step.is_some()
                                 || training_loop.is_some()
                                 || training_mode.is_some()
@@ -860,7 +1110,7 @@ impl<B: Backend> Application<B> {
                                     "移除 --weight-decay。",
                                 ));
                             }
-                            if cli.python.as_deref().is_some_and(|value| {
+                            if cli.python_explicit && cli.python.as_deref().is_some_and(|value| {
                                 prior_inputs["runtime"]["python_executable"].as_str() != Some(value)
                             }) {
                                 return Err(Report::error(
@@ -895,11 +1145,20 @@ impl<B: Backend> Application<B> {
                         }
                     };
                 let mut resolved_inputs: Inputs = inputs.clone().into();
+                if prior.is_some() && prior_inputs["model"].is_null() && inputs.model.is_none() {
+                    resolved_inputs.no_project_model = true;
+                }
                 if resolved_inputs.model.is_none() {
                     resolved_inputs.model = prior_inputs["model"].as_str().map(str::to_owned);
                 }
                 if resolved_inputs.batch.is_none() {
                     resolved_inputs.batch = prior_inputs["batch"].as_str().map(str::to_owned);
+                }
+                if prior.is_some() {
+                    resolved_inputs.batch_binding = match recorded_batch_binding(prior_inputs) {
+                        Ok(binding) => binding,
+                        Err(error) => return Err(Report::error("train", "RESUME_BINDING_INVALID", error, "检查历史运行输入。")),
+                    };
                 }
                 if resolved_inputs.injections.is_empty()
                     && resolved_inputs.injection_params.is_empty()
@@ -997,6 +1256,8 @@ impl<B: Backend> Application<B> {
                         }
                     })
                     .unwrap_or_default();
+                let (optimizer_factory, optimizer_params) = resolve_managed_optimizer(
+                    "train", inputs, prior_inputs, &mode, prior.is_some())?;
                 let resolved_loop = training_loop
                     .clone()
                     .or_else(|| prior_inputs["training_loop"].as_str().map(str::to_owned));
@@ -1048,7 +1309,12 @@ impl<B: Backend> Application<B> {
                         "移除 --batch；数据迭代由 --loop 指定的用户代码负责。",
                     ));
                 }
-                let (resolved_lr, resolved_weight_decay) = if mode == TrainingMode::ExternalLoop {
+                let (resolved_lr, resolved_weight_decay) = if optimizer_factory.is_some() {
+                    if lr.is_some() || weight_decay.is_some() {
+                        return Err(Report::error("train", "OPTIMIZER_PARAMETER_CONFLICT", "自定义工厂不使用 AdamW 的 --lr 或 --weight-decay。", "使用 --optimizer-param 传递工厂参数。"));
+                    }
+                    (None, None)
+                } else if mode == TrainingMode::ExternalLoop {
                     if lr.is_some() || weight_decay.is_some() {
                         return Err(Report::error(
                             "train",
@@ -1078,18 +1344,28 @@ impl<B: Backend> Application<B> {
                     (Some(resolved_lr), Some(resolved_weight_decay))
                 };
                 let previous_runtime = &prior_inputs["runtime"];
+                let selected_python = if cli.python_explicit {
+                    cli.python.as_deref().filter(|value| !value.trim().is_empty())
+                } else {
+                    previous_runtime["python_executable"].as_str().filter(|value| !value.trim().is_empty())
+                        .or(cli.python.as_deref().filter(|value| !value.trim().is_empty()))
+                }.ok_or_else(|| Report::error("train", "PYTHON_SELECTION_REQUIRED",
+                    "未记录或发现可用的 Python 选择。", "使用 --python 明确选择解释器后重试；训练尚未启动。"))?;
                 let runtime = json!({
-                    "python_executable": cli.python.as_deref()
-                        .or_else(|| previous_runtime["python_executable"].as_str())
-                        .unwrap_or("python3"),
+                    "python_executable": selected_python,
                     "timeout_seconds": cli.timeout
                         .or_else(|| if *detach { Some(3_153_600_000) } else { previous_runtime["timeout_seconds"].as_u64() })
                         .unwrap_or(86_400),
                     "device": resolved_device,
+                    "working_directory": previous_runtime["working_directory"].clone(),
+                    "project_import_roots": previous_runtime["project_import_roots"].clone(),
                 });
                 Job {
                     operation: "train",
                     inputs: resolved_inputs,
+                    batch_device_policy,
+                    model_initialization,
+                    model_initialization_seed,
                     run_name: name.clone(),
                     request_id: request_id.clone(),
                     training_step,
@@ -1128,7 +1404,9 @@ impl<B: Backend> Application<B> {
                     allow_state_reset: *allow_state_reset,
                     detach: *detach,
                     steps: resume_step,
-                    optimizer: (mode != TrainingMode::ExternalLoop).then(|| "adamw".into()),
+                    optimizer: (mode != TrainingMode::ExternalLoop && optimizer_factory.is_none()).then(|| "adamw".into()),
+                    optimizer_factory,
+                    optimizer_params,
                     lr: resolved_lr,
                     weight_decay: resolved_weight_decay,
                     ..empty_job()

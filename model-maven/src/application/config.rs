@@ -1,6 +1,6 @@
 use super::*;
 
-fn valid_assembly_output_path(relative: &Path) -> bool {
+pub(super) fn valid_assembly_output_path(relative: &Path) -> bool {
     !relative.as_os_str().is_empty()
         && !relative.is_absolute()
         && relative
@@ -45,6 +45,9 @@ impl<B: Backend> Application<B> {
     pub(super) fn project_config_command(&self, command: &ProjectConfigCommand) -> Report {
         let operation = match command {
             ProjectConfigCommand::History => "config_history",
+            ProjectConfigCommand::SetPython { .. } => "config_set_python",
+            ProjectConfigCommand::SetRuntimePaths { .. } => "config_set_runtime_paths",
+            ProjectConfigCommand::SetModel { .. } => "config_set_model",
             ProjectConfigCommand::SetBatch { .. } => "config_set_batch",
             ProjectConfigCommand::Restore { .. } => "config_restore",
         };
@@ -118,9 +121,135 @@ impl<B: Backend> Application<B> {
                 json!({
                     "current_revision":current_revision,
                     "history":validated_history,
-                    "restore_fields":["model","model_params","batch","batch_binding","batch_params","model_injections"]
+                    "restore_fields":["model","model_params","batch","batch_binding","batch_params","model_injections","runtime_paths","runtime_python"]
                 }),
             ),
+            ProjectConfigCommand::SetPython { executable, clear, apply, if_current } => {
+                if !*clear && executable.as_deref().is_none_or(|value| value.is_empty() || value.len() > 4096 || value.chars().any(char::is_control)) {
+                    return Report::error(operation, "PYTHON_SELECTION_INVALID", "解释器路径或命令无效。", "提供非空解释器路径或命令，不能包含控制字符。");
+                }
+                let python = if *clear { None } else { executable.as_deref() };
+                let mut candidate = current.clone();
+                if let Some(python) = python { candidate["runtime_python"] = json!(python); }
+                else if let Some(object) = candidate.as_object_mut() { object.remove("runtime_python"); }
+                if *apply && if_current.as_deref() != Some(current_revision.as_str()) {
+                    return Report::error(operation, "PROJECT_CONFIG_CONFLICT", "项目配置与预览修订不一致。", "重新预览；配置未修改。");
+                }
+                let mut result = json!({"committed":false,"unchanged":candidate == current,"from_revision":current_revision,
+                    "runtime_python":python,"previous_runtime_python":current["runtime_python"],
+                    "note":"只保存解释器选择，不执行 Python 或安装依赖；历史运行仍使用其记录的环境。"});
+                if *apply && candidate != current {
+                    match self.project_config.update_versioned(&root, &current_revision, &candidate) {
+                        Ok(update) => { result["committed"] = json!(true); result["config_revision"] = json!(update.revision); },
+                        Err(ProjectConfigUpdateError::Conflict { .. }) => return Report::error(operation, "PROJECT_CONFIG_CONFLICT", "项目配置在提交时发生变化。", "重新预览。"),
+                        Err(error) => return Report::error(operation, "PROJECT_CONFIG_WRITE_FAILED", error.message(), "检查项目配置和目录权限。"),
+                    }
+                }
+                redacted_config_report(operation, result)
+            }
+            ProjectConfigCommand::SetRuntimePaths { working_directory, import_roots, apply, if_current } => {
+                let directory = match working_directory {
+                    Some(value) => {
+                        let path = Path::new(value);
+                        if !path.is_absolute() {
+                            return Report::error(operation, "WORKING_DIRECTORY_INVALID", "运行目录必须是绝对路径。", "选择已有绝对目录。");
+                        }
+                        match path.canonicalize() {
+                            Ok(path) if path.is_dir() => match path.to_str() {
+                                Some(value) => Some(value.to_owned()),
+                                None => return Report::error(operation, "WORKING_DIRECTORY_INVALID", "运行目录不是有效 UTF-8。", "选择可表示的目录。"),
+                            },
+                            _ => return Report::error(operation, "WORKING_DIRECTORY_UNAVAILABLE", "运行目录不可用。", "选择已有目录。"),
+                        }
+                    }
+                    None => None,
+                };
+                if import_roots.len() > 32 {
+                    return Report::error(operation, "IMPORT_ROOTS_INVALID", "模块目录最多 32 项。", "移除多余目录。");
+                }
+                let mut seen = std::collections::HashSet::new();
+                for value in import_roots {
+                    let path = Path::new(value);
+                    let valid = !value.is_empty() && value.len() <= 1024 && !value.contains('\\')
+                        && !value.contains('\0') && value.split('/').all(|part| !part.is_empty() && part != "." && part != "..")
+                        && !path.is_absolute() && path.components().all(|part| matches!(part, std::path::Component::Normal(_)))
+                        && seen.insert(value);
+                    let full = root.join(path);
+                    if !valid || !full.canonicalize().is_ok_and(|resolved| resolved == full && resolved.is_dir()) {
+                        return Report::error(operation, "IMPORT_ROOTS_INVALID", format!("模块目录无效或不可用：{value}"), "使用不重复、无符号链接的项目内相对目录。");
+                    }
+                }
+                let paths = json!({"working_directory":directory,"project_import_roots":import_roots});
+                let mut candidate = current.clone();
+                candidate["runtime_paths"] = paths.clone();
+                if *apply && if_current.as_deref() != Some(current_revision.as_str()) {
+                    return Report::error(operation, "PROJECT_CONFIG_CONFLICT", "项目配置与预览修订不一致。", "重新预览；配置未修改。");
+                }
+                let mut result = json!({"committed":false,"unchanged":candidate == current,"from_revision":current_revision,
+                    "runtime_paths":paths,"previous_runtime_paths":current["runtime_paths"],
+                    "note":"只保存路径选择，不执行项目代码或验证导入。"});
+                if *apply && candidate != current {
+                    match self.project_config.update_versioned(&root, &current_revision, &candidate) {
+                        Ok(update) => { result["committed"] = json!(true); result["config_revision"] = json!(update.revision); },
+                        Err(ProjectConfigUpdateError::Conflict { .. }) => return Report::error(operation, "PROJECT_CONFIG_CONFLICT", "项目配置在提交时发生变化。", "重新预览。"),
+                        Err(error) => return Report::error(operation, "PROJECT_CONFIG_WRITE_FAILED", error.message(), "检查项目配置和目录权限。"),
+                    }
+                }
+                redacted_config_report(operation, result)
+            }
+            ProjectConfigCommand::SetModel {
+                model, model_params, clear_injections, apply, if_current,
+            } => {
+                let valid_entrypoint = model.split_once(':').is_some_and(|(module, callable)| {
+                    !module.trim().is_empty() && !callable.trim().is_empty()
+                        && !callable.contains(':') && !model.chars().any(char::is_whitespace)
+                });
+                if !valid_entrypoint {
+                    return Report::error(operation, "MODEL_ENTRYPOINT_INVALID",
+                        "模型入口须是无空白的 module:callable。", "例如 my_project.model:build_model。");
+                }
+                let params = match parameters(model_params) {
+                    Ok(params) => params,
+                    Err(error) => return Report::error(operation, "PARAMETER_INVALID", error,
+                        "参数使用 NAME=JSON 格式；请勿保存凭据。"),
+                };
+                let mut candidate = current.clone();
+                candidate["model"] = json!(model);
+                candidate["model_params"] = json!(params);
+                if *clear_injections {
+                    candidate["model_injections"] = json!({});
+                }
+                if *apply && if_current.as_deref() != Some(current_revision.as_str()) {
+                    return Report::error(operation, "PROJECT_CONFIG_CONFLICT",
+                        "项目配置与预览修订不一致。", "重新预览并确认；没有写入配置。");
+                }
+                let mut result = json!({
+                    "committed": false, "unchanged": candidate == current,
+                    "from_revision": current_revision, "model": model,
+                    "model_params": candidate["model_params"],
+                    "model_injections": candidate["model_injections"],
+                    "previous_model": current["model"],
+                    "previous_model_params": current["model_params"],
+                    "previous_model_injections": current["model_injections"],
+                    "clear_injections": clear_injections,
+                    "note": "仅更新项目配置；未执行模型、验证装配或固定源码和环境。"
+                });
+                if *apply && candidate != current {
+                    match self.project_config.update_versioned(&root, &current_revision, &candidate) {
+                        Ok(update) => {
+                            result["committed"] = json!(true);
+                            result["config_revision"] = json!(update.revision);
+                            result["path"] = json!(update.path);
+                        }
+                        Err(ProjectConfigUpdateError::Conflict { .. }) => return Report::error(
+                            operation, "PROJECT_CONFIG_CONFLICT", "项目配置在提交时发生变化。",
+                            "重新预览并确认；没有覆盖其他更改。"),
+                        Err(error) => return Report::error(operation, "PROJECT_CONFIG_WRITE_FAILED",
+                            error.message(), "检查项目配置和目录权限。"),
+                    }
+                }
+                redacted_config_report(operation, result)
+            }
             ProjectConfigCommand::SetBatch {
                 batch,
                 batch_binding,
@@ -165,6 +294,7 @@ impl<B: Backend> Application<B> {
                 let binding = batch_binding.as_ref().map(|value| match value {
                     BatchBinding::Envelope => "envelope",
                     BatchBinding::Single => "single",
+                    BatchBinding::SingleRaw => "single-raw",
                     BatchBinding::Args => "args",
                     BatchBinding::Kwargs => "kwargs",
                 });
@@ -211,7 +341,7 @@ impl<B: Backend> Application<B> {
                 }
                 redacted_config_report(
                     operation,
-                    json!({"committed":false,"unchanged":candidate == current,"from_revision":current_revision,"batch":batch,"batch_binding":binding,"batch_params":display_params,"redacted_fields":redacted_fields,"previous_batch":current["batch"],"previous_batch_binding":current["batch_binding"],"note":"仅预览配置；未执行批次或前向，源码和数据文件未固定。"}),
+                    json!({"committed":false,"unchanged":candidate == current,"from_revision":current_revision,"batch":batch,"batch_binding":binding,"batch_params":display_params,"redacted_fields":redacted_fields,"previous_batch":current["batch"],"previous_batch_binding":current["batch_binding"],"previous_batch_params":current["batch_params"],"note":"仅预览配置；未执行批次或前向，源码和数据文件未固定。"}),
                 )
             }
             ProjectConfigCommand::Restore {
@@ -225,7 +355,7 @@ impl<B: Backend> Application<B> {
                         operation,
                         "CONFIG_RESTORE_FIELDS_REQUIRED",
                         "至少选择一个配置字段。",
-                        "使用 --field model、model_params、batch、batch_binding、batch_params 或 model_injections。",
+                        "使用受支持的 --field，包括 runtime_paths 和 runtime_python。",
                     );
                 }
                 if fields.iter().any(|field| {
@@ -237,12 +367,14 @@ impl<B: Backend> Application<B> {
                             | "batch_binding"
                             | "batch_params"
                             | "model_injections"
+                            | "runtime_paths"
+                            | "runtime_python"
                     )
                 }) {
                     return Report::error(
                         operation,
                         "CONFIG_RESTORE_FIELD_UNSUPPORTED",
-                        "只能恢复 model、model_params、batch、batch_binding、batch_params 或 model_injections 字段。",
+                        "只能恢复受支持的模型、批次、装配或运行时字段。",
                         "从受支持字段中重新选择；schema_version 等协议字段不会被历史恢复覆盖。",
                     );
                 }
@@ -512,6 +644,7 @@ impl<B: Backend> Application<B> {
         let explicit_binding = inputs.batch_binding.as_ref().map(|value| match value {
             BatchBinding::Envelope => "envelope",
             BatchBinding::Single => "single",
+            BatchBinding::SingleRaw => "single-raw",
             BatchBinding::Args => "args",
             BatchBinding::Kwargs => "kwargs",
         });
@@ -528,7 +661,7 @@ impl<B: Backend> Application<B> {
             }),
             None,
             None,
-            config["batch_binding"].as_str().map(|value| {
+            (inputs.batch.is_none()).then(|| config["batch_binding"].as_str()).flatten().map(|value| {
                 batch_binding(
                     value,
                     crate::domain::operation::InputSourceKind::ProjectConfig,
@@ -539,6 +672,15 @@ impl<B: Backend> Application<B> {
         );
         let binding = resolved_binding.value.as_ref().and_then(Value::as_str);
         let request_operation = if batch.is_some() { "probe" } else { "inspect" };
+        if !matches!(operation, "assembly_patch" | "assembly_generate" | "assembly_show" | "assembly_encoder_output" | "assembly_route" | "assembly_add" | "assembly_set" | "assembly_remove")
+            && (std::env::var_os("MODEL_MAVEN_WORKSPACE_WORKING_DIRECTORY").is_some()
+                || std::env::var_os("MODEL_MAVEN_WORKSPACE_IMPORT_ROOTS").is_some()
+                || !config["runtime_paths"]["working_directory"].is_null()
+                || config["runtime_paths"]["project_import_roots"].as_array().is_some_and(|roots| !roots.is_empty()))
+        {
+            return Report::error(operation, "ASSEMBLY_RUNTIME_PATHS_UNSUPPORTED",
+                "此装配操作尚不支持自定义运行时路径。", "先使用默认路径，或使用支持条件验证的批量装配。");
+        }
         let (model, model_params, model_injections, seed) = if let Some(variant) = variant {
             (Value::Null, json!({}), json!({}), variant["seed"].clone())
         } else {
@@ -546,12 +688,31 @@ impl<B: Backend> Application<B> {
                 config["model"].clone(),
                 Value::Object(model_params),
                 Value::Object(injections.clone()),
-                json!(cli.seed.unwrap_or(42)),
+                json!(cli.seed),
             )
         };
-        self.backend.execute(&json!({
+        let selected_python = cli.python.as_deref().filter(|value| !value.trim().is_empty())
+            .or_else(|| config["runtime_python"].as_str().filter(|value| !value.trim().is_empty()));
+        let Some(selected_python) = selected_python else {
+            return Report::error(operation, "PYTHON_SELECTION_REQUIRED", "未发现或指定 Python 解释器。", "使用 --python 明确选择解释器后重试；装配尚未执行。");
+        };
+        let mut runtime = json!({
+            "python_executable":selected_python,
+            "timeout_seconds":cli.timeout.unwrap_or(30),
+            "project_root":root
+        });
+        super::run::apply_project_runtime_defaults(config, &mut runtime);
+        if let Err(report) = super::run::resolve_worker_directory(request_operation, root, &mut runtime, false) {
+            return report;
+        }
+        if let Err(report) = super::run::resolve_worker_import_roots(request_operation, root, &mut runtime, false) {
+            return report;
+        }
+        let runtime_paths = json!({"working_directory":runtime["working_directory"], "project_import_roots":runtime["project_import_roots"]});
+        let mut report = self.backend.execute(&json!({
             "protocol_version":PROTOCOL_VERSION,
             "operation":request_operation,
+            "required_features": if variant.is_none() && cli.seed.is_none() { vec!["model.runtime_rng_v1"] } else { Vec::<&str>::new() },
             "project_root":root,
             "model":model,
             "model_params":model_params,
@@ -568,12 +729,12 @@ impl<B: Backend> Application<B> {
             "expected_input_content":expected_input,
             "capture_input_to":if matches!(operation, "assembly_patch" | "assembly_encoder_output" | "assembly_route" | "assembly_add" | "assembly_set" | "assembly_remove") { cli.capture_input_to.as_ref().and_then(|path| path.to_str()) } else { None },
             "replay_input_from":if matches!(operation, "assembly_patch" | "assembly_encoder_output" | "assembly_route" | "assembly_add" | "assembly_set" | "assembly_remove") { cli.replay_input_from.as_ref().and_then(|path| path.to_str()) } else { None },
-            "runtime":{
-                "python_executable":cli.python.as_deref().unwrap_or("python3"),
-                "timeout_seconds":cli.timeout.unwrap_or(30),
-                "project_root":root
-            }
-        }))
+            "runtime":runtime
+        }));
+        if let Some(data) = report.data.as_object_mut() {
+            data.insert("assembly_runtime_paths".into(), runtime_paths);
+        }
+        report
     }
 
     fn assembly_generate(&self, cli: &Cli, output: &Path, inputs: &AssemblyInputs) -> Report {
@@ -755,6 +916,14 @@ impl<B: Backend> Application<B> {
                     }
                     injections.insert(name.clone(), specification);
                 }
+                if variant.get("device_policy").is_some_and(|policy| !matches!(policy.as_str(), Some("legacy_cpu" | "factory"))) {
+                    return Report::error(
+                        "assembly_generate",
+                        "VARIANT_DEVICE_POLICY_UNSUPPORTED",
+                        "变体的设备重建策略无效或未知。",
+                        "请保留原变体和源码并检查版本兼容。",
+                    );
+                }
                 let Some(seed) = variant["seed"].as_u64() else {
                     return Report::error(
                         "assembly_generate",
@@ -788,12 +957,19 @@ impl<B: Backend> Application<B> {
                     );
                 }
                 let active_edits = edits[..cursor].to_vec();
+                let mut active_variant = json!({"seed":seed,"edits":active_edits});
+                if let Some(policy) = variant.get("device_policy") {
+                    active_variant["device_policy"] = policy.clone();
+                }
+                if let Some(devices) = variant.get("base_rng_devices") {
+                    active_variant["base_rng_devices"] = devices.clone();
+                }
                 (
                     factory.to_owned(),
                     params,
                     injections,
-                    seed,
-                    Some(json!({"seed":seed,"edits":active_edits})),
+                    Some(seed),
+                    Some(active_variant),
                 )
             } else {
                 let Some(factory) = config["model"].as_str() else {
@@ -854,7 +1030,7 @@ impl<B: Backend> Application<B> {
                     factory.to_owned(),
                     params,
                     injections,
-                    cli.seed.unwrap_or(42),
+                    cli.seed,
                     None,
                 )
             };
@@ -876,15 +1052,39 @@ impl<B: Backend> Application<B> {
                 "initialization_seed":seed
             })
         };
+        let selected_python = cli.python.as_deref().filter(|value| !value.trim().is_empty())
+            .or_else(|| config["runtime_python"].as_str().filter(|value| !value.trim().is_empty()));
+        let Some(selected_python) = selected_python else {
+            return Report::error("assembly_generate", "PYTHON_SELECTION_REQUIRED", "未发现或指定 Python 解释器。", "使用 --python 明确选择解释器后重试；没有生成文件。");
+        };
+        let mut verification_runtime = json!({"python_executable":selected_python, "timeout_seconds":cli.timeout.unwrap_or(30), "project_root":root});
+        super::run::apply_project_runtime_defaults(&config, &mut verification_runtime);
+        if let Err(report) = super::run::resolve_worker_directory("probe", &root, &mut verification_runtime, false) { return report; }
+        if let Err(report) = super::run::resolve_worker_import_roots("probe", &root, &mut verification_runtime, false) { return report; }
+        let verification_paths = json!({"working_directory":verification_runtime["working_directory"], "project_import_roots":verification_runtime["project_import_roots"]});
+        if validation.data["assembly_runtime_paths"] != verification_paths {
+            return Report::error("assembly_generate", "ASSEMBLY_RUNTIME_CONTEXT_CHANGED",
+                "装配验证后的运行目录或模块搜索目录发生变化。", "重新查看装配并生成；没有创建输出文件。");
+        }
+        let mut codegen_features = vec!["edit.assembly_codegen"];
+        if selected_variant.is_none() && seed.is_some() {
+            codegen_features.push("edit.assembly_python_rng_v1");
+        }
+        if recipe["variant"]["device_policy"].as_str() == Some("factory") {
+            codegen_features.push("model.variant_factory_device_v1");
+        }
+        if recipe["variant"].get("base_rng_devices").is_some() {
+            codegen_features.push("model.variant_base_rng_v1");
+        }
         let request = json!({
             "protocol_version":PROTOCOL_VERSION,
             "operation":"assembly_codegen",
             "project_root":root,
-            "required_features":["edit.assembly_codegen"],
+            "required_features":codegen_features,
             "assembly_recipe":recipe,
             "interactive_progress":false,
             "runtime":{
-                "python_executable":cli.python.as_deref().unwrap_or("python3"),
+                "python_executable":selected_python,
                 "timeout_seconds":cli.timeout.unwrap_or(30),
                 "project_root":root
             }
@@ -909,10 +1109,11 @@ impl<B: Backend> Application<B> {
             .map(|value| match value {
                 BatchBinding::Envelope => "envelope",
                 BatchBinding::Single => "single",
+                BatchBinding::SingleRaw => "single-raw",
                 BatchBinding::Args => "args",
                 BatchBinding::Kwargs => "kwargs",
             })
-            .or_else(|| config["batch_binding"].as_str());
+            .or_else(|| if inputs.batch.is_none() { config["batch_binding"].as_str() } else { None });
         let mut batch_params = if inputs.batch.is_none() {
             config["batch_params"]
                 .as_object()
@@ -935,6 +1136,7 @@ impl<B: Backend> Application<B> {
         let verify_request = json!({
             "protocol_version":PROTOCOL_VERSION,
             "operation":"assembly_codegen_verify",
+            "required_features":["edit.assembly_codegen_runtime_paths_v1"],
             "project_root":root,
             "generated_source":source,
             "model":model_factory,
@@ -942,7 +1144,7 @@ impl<B: Backend> Application<B> {
             "batch_binding":binding,
             "batch_params":batch_params,
             "training":false,
-            "runtime":{"python_executable":cli.python.as_deref().unwrap_or("python3"), "timeout_seconds":cli.timeout.unwrap_or(30), "project_root":root}
+            "runtime":verification_runtime
         });
         let mut generated_validation = self.backend.execute(&verify_request);
         if !generated_validation.success() {
@@ -991,6 +1193,86 @@ impl<B: Backend> Application<B> {
                 _ => "unknown",
             }
         };
+        let complete_aliases = |value: &Value| -> Option<Value> {
+            let groups = value["groups"].as_array()?;
+            if value["status"] != "observed"
+                || value["scope"] != "registered_module_identity_after_construction"
+                || value["truncated"] != false
+                || value["group_count"].as_u64()? != groups.len() as u64
+                || groups.iter().any(|group| {
+                    group.as_array().is_none_or(|paths| paths.len() < 2 || paths.iter().any(|path| !path.is_string()))
+                })
+            {
+                return None;
+            }
+            Some(value["groups"].clone())
+        };
+        let alias_comparison = match (
+            complete_aliases(&validation.data["module_aliases"]),
+            complete_aliases(&generated_validation.data["module_aliases"]),
+        ) {
+            (Some(first), Some(second)) if first == second => "same",
+            (Some(_), Some(_)) => "different",
+            _ => "unknown",
+        };
+        let complete_placement = |value: &Value| -> Option<(u64, Value)> {
+            if value["status"] != "observed" { return None; }
+            Some((value["observed_tensors"].as_u64()?, Value::Array(value["groups"].as_array()?.clone())))
+        };
+        let placement_comparison = match (
+            complete_placement(&validation.data["model_state_placement"]),
+            complete_placement(&generated_validation.data["model_state_placement"]),
+        ) {
+            (Some(first), Some(second)) if first == second => "same",
+            (Some(_), Some(_)) => "different",
+            _ => "unknown",
+        };
+        let complete_shared_state = |value: &Value| -> Option<Value> {
+            if value["status"] != "observed"
+                || value["scope"] != "registered_parameter_buffer_objects_and_inspectable_storage" { return None; }
+            Some(Value::Array(value["groups"].as_array()?.clone()))
+        };
+        let shared_state_comparison = match (
+            complete_shared_state(&validation.data["shared_state"]),
+            complete_shared_state(&generated_validation.data["shared_state"]),
+        ) {
+            (Some(first), Some(second)) if first == second => "same",
+            (Some(_), Some(_)) => "different",
+            _ => "unknown",
+        };
+        if alias_comparison == "different" || shared_state_comparison == "different" {
+            let diff_groups = |original: &Value, generated: &Value| -> Value {
+                let (Some(first), Some(second)) = (original["groups"].as_array(), generated["groups"].as_array()) else {
+                    return json!({"status":"unknown"});
+                };
+                let encode = |value: &Value| serde_json::to_string(value).ok();
+                let first_set: std::collections::BTreeSet<String> = first.iter().filter_map(encode).collect();
+                let second_set: std::collections::BTreeSet<String> = second.iter().filter_map(encode).collect();
+                let original_only_count = first_set.difference(&second_set).count();
+                let generated_only_count = second_set.difference(&first_set).count();
+                let original_only: Vec<Value> = first_set.difference(&second_set).take(8)
+                    .filter_map(|raw| serde_json::from_str(raw).ok()).collect();
+                let generated_only: Vec<Value> = second_set.difference(&first_set).take(8)
+                    .filter_map(|raw| serde_json::from_str(raw).ok()).collect();
+                json!({"status":"compared", "original_only_count":original_only_count,
+                    "generated_only_count":generated_only_count,
+                    "original_only":original_only, "generated_only":generated_only})
+            };
+            let mut report = Report::error(
+                "assembly_generate", "ASSEMBLY_SHARED_STRUCTURE_MISMATCH",
+                "生成代码重建出的已注册共享关系与原候选不同。",
+                "未创建文件；检查工厂的动态行为或变体编辑，重新验证后生成。完整对照见 JSON 报告。",
+            );
+            report.data = json!({
+                "module_alias_comparison":{"status":alias_comparison, "original":validation.data["module_aliases"], "generated":generated_validation.data["module_aliases"]},
+                "shared_state_comparison":{"status":shared_state_comparison, "original":validation.data["shared_state"], "generated":generated_validation.data["shared_state"]},
+                "module_alias_difference":if alias_comparison == "different" { diff_groups(&validation.data["module_aliases"], &generated_validation.data["module_aliases"]) } else { json!({"status":alias_comparison}) },
+                "shared_state_difference":if shared_state_comparison == "different" { diff_groups(&validation.data["shared_state"], &generated_validation.data["shared_state"]) } else { json!({"status":shared_state_comparison}) },
+                "input_comparison":{"status":input_comparison},
+                "scope":"construction-time registered module and inspectable state sharing only"
+            });
+            return report;
+        }
         let valid_manifest = |value: &Value| {
             value.as_object().is_some_and(|entries| {
                 entries.len() <= 4096
@@ -1085,6 +1367,14 @@ impl<B: Backend> Application<B> {
         let selected_variant_revision = selected_variant
             .as_ref()
             .map(|(_, variant)| variant["revision"].clone());
+        let mut final_runtime = json!({"python_executable":selected_python, "timeout_seconds":cli.timeout.unwrap_or(30), "project_root":root});
+        super::run::apply_project_runtime_defaults(&current_config, &mut final_runtime);
+        if let Err(report) = super::run::resolve_worker_directory("probe", &root, &mut final_runtime, false) { return report; }
+        if let Err(report) = super::run::resolve_worker_import_roots("probe", &root, &mut final_runtime, false) { return report; }
+        if json!({"working_directory":final_runtime["working_directory"], "project_import_roots":final_runtime["project_import_roots"]}) != verification_paths {
+            return Report::error("assembly_generate", "ASSEMBLY_RUNTIME_CONTEXT_CHANGED",
+                "写入前运行目录或模块搜索目录发生变化。", "重新查看装配并生成；没有创建输出文件。");
+        }
         let written = match self
             .project_source_writer
             .write_new(&root, output, source.as_bytes())
@@ -1105,16 +1395,21 @@ impl<B: Backend> Application<B> {
                 "output":output,
                 "path":written,
                 "bytes":source.len(),
+                "generated_source_sha256":format!("{:x}", Sha256::digest(source.as_bytes())),
                 "config_revision":config_revision,
                 "model":model_factory,
                 "injection_slots":injections.keys().collect::<Vec<_>>(),
                 "initialization_seed":seed,
+                "initialization_seed_decimal":seed.map(|value| value.to_string()),
                 "variant":selected_variant_name,
                 "variant_revision":selected_variant_revision,
                 "validated":{"construction":"passed","forward":validated_forward},
                 "generated_validation":generated_validation.data,
                 "source_evidence":{"status":if first.is_empty() { "unavailable" } else { "checked" }, "scope":"project-sources-observed-in-validation", "first_count":first.len(), "generated_count":second.len()},
                 "input_comparison":{"status":input_comparison, "scope":"observed-forward-inputs", "algorithm":"sha256-forward-input-v1"},
+                "module_alias_comparison":{"status":alias_comparison, "scope":"registered_module_identity_after_construction", "original":validation.data["module_aliases"]},
+                "placement_comparison":{"status":placement_comparison, "scope":"registered_tensor_device_dtype_counts_after_construction", "original":validation.data["model_state_placement"]},
+                "shared_state_comparison":{"status":shared_state_comparison, "scope":"registered_parameter_buffer_objects_and_inspectable_storage", "original":validation.data["shared_state"]},
                 "note":"生成源码已在新 worker 重导入并验证；不包含训练权重，仍依赖项目工厂、包、数据及运行环境。检查生成源码后可手改。"
             }),
         )
@@ -1161,7 +1456,7 @@ impl<B: Backend> Application<B> {
         })).collect();
         let mut data = json!({"path":root.join(".model-maven/project.json"),
             "config_revision":crate::domain::input::content_revision(&config).ok(),
-            "model":config["model"],"model_params":config.get("model_params").cloned().unwrap_or_else(|| json!({})),"batch":config["batch"],"batch_params":config.get("batch_params").cloned().unwrap_or_else(|| json!({})),"slots":slots,
+            "model":config["model"],"model_params":config.get("model_params").cloned().unwrap_or_else(|| json!({})),"batch":config["batch"],"batch_params":config.get("batch_params").cloned().unwrap_or_else(|| json!({})),"runtime_paths":config["runtime_paths"],"runtime_python":config["runtime_python"],"slots":slots,
             "validation":{"construction":"not_run","forward":"not_run"},
             "note":"仅显示已保存的配置；没有加载模型、验证绑定或执行前向。"});
         let mut redacted_fields = Vec::new();
@@ -1352,6 +1647,7 @@ impl<B: Backend> Application<B> {
                     "params":observed.map(|item| item["params"].clone()).unwrap_or(Value::Null),
                     "component_ref":observed.and_then(|item| item.get("component_ref")).cloned(),
                     "registered_paths":observed.map(|item| item["registered_paths"].clone()).unwrap_or_else(|| json!([])),
+                    "shared_with_slots":observed.and_then(|item| item.get("shared_with_slots")).cloned(),
                     "sample_forward":observed.and_then(|item| item.get("sample_forward")).cloned()
                 })
             })
@@ -1367,7 +1663,8 @@ impl<B: Backend> Application<B> {
                 "construction":"passed",
                 "forward":if inputs.batch.is_some() || config["batch"].is_string() { "passed" } else { "not_run" }
             },
-            "note":"显示项目默认工厂显式暴露的装配接缝；Python 工厂内部图结构仍由 Python 代码控制。"
+            "runtime_paths":validation.data["assembly_runtime_paths"],
+            "note":"显示所选运行时中工厂显式暴露的装配接缝；Python 工厂内部图结构仍由 Python 代码控制。"
         });
         let mut redacted_fields = Vec::new();
         redact_run_inputs(&mut data, "$.assembly", &mut redacted_fields);
@@ -1375,6 +1672,8 @@ impl<B: Backend> Application<B> {
         if collect_source {
             data["source_manifest"] = validation.data["source_manifest"].clone();
             data["input_evidence"] = validation.data["batch_content"].clone();
+            data["module_aliases"] = validation.data["module_aliases"].clone();
+            data["assembly_runtime_paths"] = validation.data["assembly_runtime_paths"].clone();
         }
         Report::ok("assembly_show", data)
     }
@@ -1634,6 +1933,8 @@ impl<B: Backend> Application<B> {
             return validation;
         }
         let manifest = &validation.data["source_manifest"];
+        let runtime_paths = &validation.data["assembly_runtime_paths"];
+        let uses_runtime_paths = !runtime_paths["working_directory"].is_null() || !runtime_paths["project_import_roots"].is_null();
         let source_revision = manifest
             .as_object()
             .filter(|entries| {
@@ -1651,7 +1952,11 @@ impl<B: Backend> Application<B> {
                             })
                     })
             })
-            .and_then(|_| crate::domain::input::content_revision(manifest).ok());
+            .and_then(|_| if uses_runtime_paths {
+                crate::domain::input::content_revision(&json!({"sources":manifest,"runtime_paths":runtime_paths})).ok()
+            } else {
+                crate::domain::input::content_revision(manifest).ok()
+            });
         if let Some(expected) = cli.if_source_manifest.as_deref() {
             use sha2::{Digest, Sha256};
             if source_revision.as_deref() != Some(expected)
@@ -1675,6 +1980,11 @@ impl<B: Backend> Application<B> {
             !dry_run && context.require_assembly_confirmation && !context.confirm_assembly;
         let confirmed = !confirmation_required;
         let commit = !dry_run && confirmed;
+        if commit && uses_runtime_paths && cli.if_source_manifest.is_none() {
+            return Report::error(operation, "ASSEMBLY_RUNTIME_GUARD_REQUIRED",
+                "自定义运行时路径的装配提交需要预览返回的源码和路径摘要。",
+                "先使用 --dry-run，再传入 --if-source-manifest <摘要> 提交；没有写入配置。");
+        }
         let (committed_path, committed_revision) = if !commit {
             (None, None)
         } else {
@@ -1726,7 +2036,8 @@ impl<B: Backend> Application<B> {
             "config_revision":committed_revision.or_else(|| crate::domain::input::content_revision(&config).ok()),
             "model_injections":injections,
             "injection_evidence":evidence,
-            "source_evidence":{"algorithm":"canonical-json-sha256-v1", "scope":"worker-recorded-project-sources", "digest":source_revision},
+            "source_evidence":{"algorithm":"canonical-json-sha256-v1", "scope":if uses_runtime_paths { "worker-recorded-project-sources-and-runtime-paths-v2" } else { "worker-recorded-project-sources" }, "digest":source_revision},
+            "runtime_paths":runtime_paths,
             "input_evidence":validation.data["batch_content"],
             "input_snapshot":validation.data["batch_snapshot"],
             "validation":{
@@ -1995,11 +2306,20 @@ impl<B: Backend> Application<B> {
                         })
                 })
         });
+        let runtime_paths = &validation.data["assembly_runtime_paths"];
+        let uses_runtime_paths = !runtime_paths["working_directory"].is_null() || !runtime_paths["project_import_roots"].is_null();
         let source_revision = if source_available {
-            crate::domain::input::content_revision(manifest).ok()
+            if uses_runtime_paths {
+                crate::domain::input::content_revision(&json!({"sources":manifest,"runtime_paths":runtime_paths})).ok()
+            } else {
+                crate::domain::input::content_revision(manifest).ok()
+            }
         } else {
             None
         };
+        if apply && uses_runtime_paths && if_source_revision.is_none() {
+            return fail("ASSEMBLY_RUNTIME_GUARD_REQUIRED", "自定义运行时路径的装配提交需要预览返回的源码和路径摘要。".into());
+        }
         if let Some(expected) = if_source_revision {
             if source_revision.as_deref() != Some(expected) {
                 return fail(
@@ -2040,7 +2360,8 @@ impl<B: Backend> Application<B> {
         let mut data = json!({"committed":apply, "base_config_revision":revision, "config_revision":committed_revision,
             "sets":sets, "removes":removes, "model_injections":injections, "encoder_outputs":encoder_outputs, "encoder_output_modes":candidate["model_params"]["encoder_output_modes"], "route_changes":route_changes, "input_routes":candidate["model_params"]["input_routes"],
             "injection_evidence":validation.data["origin"]["injection_evidence"],
-            "source_evidence":{"algorithm":"canonical-json-sha256-v1", "scope":"worker-recorded-project-sources", "digest":source_revision},
+            "source_evidence":{"algorithm":"canonical-json-sha256-v1", "scope":if uses_runtime_paths { "worker-recorded-project-sources-and-runtime-paths-v2" } else { "worker-recorded-project-sources" }, "digest":source_revision},
+            "runtime_paths":runtime_paths,
             "input_evidence":validation.data["batch_content"],
             "input_snapshot":validation.data["batch_snapshot"],
             "validation":{"construction":"passed", "forward":"passed"},
@@ -2242,11 +2563,20 @@ impl<B: Backend> Application<B> {
                         })
                 })
         });
+        let runtime_paths = &validation.data["assembly_runtime_paths"];
+        let uses_runtime_paths = !runtime_paths["working_directory"].is_null() || !runtime_paths["project_import_roots"].is_null();
         let source_revision = if source_available {
-            crate::domain::input::content_revision(manifest).ok()
+            if uses_runtime_paths {
+                crate::domain::input::content_revision(&json!({"sources":manifest,"runtime_paths":runtime_paths})).ok()
+            } else {
+                crate::domain::input::content_revision(manifest).ok()
+            }
         } else {
             None
         };
+        if !dry_run && uses_runtime_paths && if_source_revision.is_none() {
+            return fail("ASSEMBLY_RUNTIME_GUARD_REQUIRED", "自定义运行时路径的装配提交需要预览返回的源码和路径摘要。".into());
+        }
         if let Some(expected) = if_source_revision {
             if source_revision.as_deref() != Some(expected) {
                 return fail(
@@ -2284,7 +2614,8 @@ impl<B: Backend> Application<B> {
             }
         };
         let mut data = json!({"slot":slot,"committed":!dry_run,"base_config_revision":revision,"config_revision":committed_revision,"validation":{"construction":"passed","forward":"passed"},"note":"使用代表批次执行了前向；源码、环境与批次内容未固定。"});
-        data["source_evidence"] = json!({"algorithm":"canonical-json-sha256-v1", "scope":"worker-recorded-project-sources", "digest":source_revision});
+        data["source_evidence"] = json!({"algorithm":"canonical-json-sha256-v1", "scope":if uses_runtime_paths { "worker-recorded-project-sources-and-runtime-paths-v2" } else { "worker-recorded-project-sources" }, "digest":source_revision});
+        data["runtime_paths"] = runtime_paths.clone();
         data["input_evidence"] = validation.data["batch_content"].clone();
         data["input_snapshot"] = validation.data["batch_snapshot"].clone();
         if output_mode {
@@ -2530,6 +2861,7 @@ impl<B: Backend> Application<B> {
         let batch_binding = requested_batch_binding.map(|binding| match binding {
             BatchBinding::Envelope => "envelope",
             BatchBinding::Single => "single",
+            BatchBinding::SingleRaw => "single-raw",
             BatchBinding::Args => "args",
             BatchBinding::Kwargs => "kwargs",
         });

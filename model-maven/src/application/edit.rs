@@ -1,13 +1,14 @@
 use super::*;
 
-/// Static input hints for the built-in factory allowlist. PyTorch construction
-/// and candidate forward remain the authoritative compatibility checks.
+/// Offline examples only. The selected runtime determines available classes;
+/// construction and candidate forward remain the compatibility checks.
 pub(super) fn layer_catalog() -> Report {
     Report::ok(
         "layer_catalog",
         json!({
             "catalog_version":1,
             "scope":"common-pytorch-constructor-fields",
+            "exhaustive":false,
             "runtime_validation":"not_run",
             "layers":[
                 {"name":"Linear","fields":[{"name":"in_features","type":"integer","required":true},{"name":"out_features","type":"integer","required":true},{"name":"bias","type":"boolean"}]},
@@ -18,7 +19,7 @@ pub(super) fn layer_catalog() -> Report {
                 {"name":"Conv2d","fields":[{"name":"in_channels","type":"integer","required":true},{"name":"out_channels","type":"integer","required":true},{"name":"kernel_size","type":"json","required":true,"description":"integer or pair of integers"},{"name":"stride","type":"json"},{"name":"padding","type":"json"},{"name":"dilation","type":"json"},{"name":"groups","type":"integer"},{"name":"bias","type":"boolean"},{"name":"padding_mode","type":"string","enum":["zeros","reflect","replicate","circular"]}]},
                 {"name":"Identity","fields":[]}
             ],
-            "note":"参数提示覆盖常用字段；具体 PyTorch 版本和真实输入仍须通过候选构造与前向验证。"
+            "note":"仅列出离线示例，并非支持类型清单；可输入所选环境 torch.nn 的其他公开 Module 类名，或使用自定义工厂。具体版本、构造参数和真实输入仍须通过候选构造与前向验证。"
         }),
     )
 }
@@ -59,6 +60,7 @@ impl<B: Backend> Application<B> {
             },
             VariantCommand::Show { name } => match self.variants.load(&root, name) {
                 Ok(Some(mut variant)) => {
+                    let initialization_seed_decimal = variant["seed"].as_u64().map(|seed| seed.to_string());
                     let token = match super::run_prepare::variant_base_token(Some(&variant)) {
                         Ok(token) => token,
                         Err(error) => {
@@ -77,6 +79,7 @@ impl<B: Backend> Application<B> {
                         json!({
                             "name":name,
                             "variant":variant,
+                            "initialization_seed_decimal":initialization_seed_decimal,
                             "variant_base":{"name":name,"token":token,"algorithm":"canonical-json-sha256-v1"},
                             "redacted_fields":redacted_fields,
                             "replay_validation":"not_run",
@@ -363,6 +366,26 @@ pub(super) fn build_layer_job(command: &LayerCommand) -> Result<Job, Report> {
     };
     let mut edit_value = edit_value;
     if let Some(options) = options {
+        if let Some(scope) = options.base_rng_scope.as_deref() {
+            if options.target != "variant" || (scope == "cpu" && !options.base_rng_devices.is_empty())
+                || (scope == "selected" && options.base_rng_devices.is_empty()) {
+                return Err(Report::error("edit", "VARIANT_BASE_RNG_OPTION_INVALID",
+                    "基础随机范围只适用于变体；cpu 不接受设备，selected 至少需要一个设备。",
+                    "选择 --target variant，并按范围填写 --base-rng-device。"));
+            }
+        }
+        if !options.layer_rng_devices.is_empty() {
+            if options.target != "variant" || !matches!(edit_value["action"].as_str(), Some("add" | "replace")) {
+                return Err(Report::error("edit", "LAYER_RNG_OPTION_UNSUPPORTED",
+                    "--layer-rng-device 仅支持变体单项 add/replace。",
+                    "原子计划请在各 add/replace 的 JSON 中设置 rng_devices；源码编辑暂不支持。"));
+            }
+            edit_value["rng_devices"] = json!(options.layer_rng_devices);
+        }
+        if options.target == "source" && options.variant_device_policy.is_some() {
+            return Err(Report::error("edit", "VARIANT_DEVICE_POLICY_CONFLICT",
+                "源码编辑不使用变体设备策略。", "移除 --variant-device-policy 或选择 --target variant。"));
+        }
         let source_action_supported = match edit_value["action"].as_str() {
             Some("set" | "add" | "replace" | "remove" | "migrate_starter") => true,
             Some("transaction") => source_transaction_supported(&edit_value["operations"]),
@@ -372,8 +395,8 @@ pub(super) fn build_layer_job(command: &LayerCommand) -> Result<Job, Report> {
             return Err(Report::error(
                 "edit",
                 "SOURCE_EDIT_UNSUPPORTED",
-                "源码处理器支持单项 Sequential/ModuleList CRUD、最多 64 项 set 事务，或最多 64 项结构 CRUD 事务。",
-                "一个事务须全部是 set，或全部是 add/replace/remove；结构操作支持内置 Layer 和可导入的 Python 工厂。",
+                "源码事务支持最多 64 项 set/add/replace/remove 操作。",
+                "混合计划先列出 set，再列出结构操作；重叠目标或源码冲突会被拒绝。",
             ));
         }
         if edit_value["action"] == "migrate_starter" && options.target != "source" {
@@ -449,6 +472,9 @@ pub(super) fn build_layer_job(command: &LayerCommand) -> Result<Job, Report> {
     Ok(Job {
         operation: "edit",
         inputs,
+        variant_device_policy: options.and_then(|options| options.variant_device_policy.as_deref())
+            .map(|policy| if policy == "legacy-cpu" { "legacy_cpu".to_owned() } else { policy.to_owned() }),
+        variant_base_rng_devices: options.and_then(|options| options.base_rng_scope.as_ref().map(|_| options.base_rng_devices.clone())),
         edit: Some(edit_value),
         layer_context: true,
         dry_run: history_dry_run || options.is_some_and(|options| options.dry_run),
@@ -471,7 +497,7 @@ impl<B: Backend> Application<B> {
         Ok(())
     }
 
-    fn verify_source_files(
+    pub(super) fn verify_source_files(
         &self,
         root: &Path,
         manifest: &Value,
@@ -479,6 +505,28 @@ impl<B: Backend> Application<B> {
         after: bool,
     ) -> Result<(), String> {
         use sha2::{Digest, Sha256};
+        use std::io::Read;
+        fn same_file_observation(left: &std::fs::Metadata, right: &std::fs::Metadata) -> bool {
+            if !left.is_file() || !right.is_file() || left.len() != right.len() {
+                return false;
+            }
+            let (Ok(left_modified), Ok(right_modified)) = (left.modified(), right.modified()) else {
+                return false;
+            };
+            if left_modified != right_modified {
+                return false;
+            }
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::MetadataExt;
+                if left.dev() != right.dev() || left.ino() != right.ino()
+                    || left.ctime() != right.ctime() || left.ctime_nsec() != right.ctime_nsec()
+                {
+                    return false;
+                }
+            }
+            true
+        }
         let entries = manifest
             .as_object()
             .filter(|items| !items.is_empty())
@@ -513,9 +561,33 @@ impl<B: Backend> Application<B> {
                 .copied()
                 .or_else(|| hash.as_str())
                 .ok_or("项目源码摘要不可用。")?;
-            let bytes =
-                std::fs::read(&resolved).map_err(|_| format!("记录的项目源码不可读取：{name}"))?;
-            if format!("{:x}", Sha256::digest(&bytes)) != expected {
+            let mut file = std::fs::File::open(&resolved)
+                .map_err(|_| format!("记录的项目源码不可读取：{name}"))?;
+            let before = file.metadata().map_err(|_| format!("无法核对源码元数据：{name}"))?;
+            let path_before = std::fs::symlink_metadata(&resolved)
+                .map_err(|_| format!("无法核对源码路径：{name}"))?;
+            if !same_file_observation(&before, &path_before) {
+                return Err(format!("源码路径在核对时发生变化：{name}"));
+            }
+            let mut digest = Sha256::new();
+            let mut buffer = [0u8; 64 * 1024];
+            let mut total = 0u64;
+            loop {
+                let count = file.read(&mut buffer).map_err(|_| format!("记录的项目源码不可读取：{name}"))?;
+                if count == 0 { break; }
+                total = total.saturating_add(count as u64);
+                digest.update(&buffer[..count]);
+            }
+            let after = file.metadata().map_err(|_| format!("无法复核源码元数据：{name}"))?;
+            let path_after = std::fs::symlink_metadata(&resolved)
+                .map_err(|_| format!("无法复核源码路径：{name}"))?;
+            if total != before.len() || !same_file_observation(&before, &after)
+                || !same_file_observation(&after, &path_after)
+                || resolved.canonicalize().ok().as_deref() != Some(resolved.as_path())
+            {
+                return Err(format!("源码在读取期间发生变化：{name}"));
+            }
+            if format!("{:x}", digest.finalize()) != expected {
                 return Err(format!("记录的项目源码已变化：{name}"));
             }
         }
@@ -535,7 +607,7 @@ impl<B: Backend> Application<B> {
         request: &Value,
         mut report: Report,
     ) -> Report {
-        if report.success() && job.edit.is_some() {
+        if report.success() && job.operation == "edit" {
             if source_target {
                 let patch = report.data["source_patch"].clone();
                 let patches = report.data["source_patches"]
@@ -709,6 +781,24 @@ impl<B: Backend> Application<B> {
                         }
                     }
                     report.data["source_edit"] = receipt;
+                    let candidate_placement = &report.data["model_state_placement"];
+                    let verification_placement = if verification_operation == "probe"
+                        && verification.data["forward_execution"] == "executed" {
+                        &verification.data["model_state_after_forward"]["placement"]
+                    } else if verification_operation == "inspect" {
+                        &verification.data["model_state_placement"]
+                    } else {
+                        &Value::Null
+                    };
+                    let comparable = candidate_placement["status"] == "observed"
+                        && verification_placement["status"] == "observed"
+                        && candidate_placement["groups"].is_array()
+                        && verification_placement["groups"].is_array()
+                        && ((verification_operation == "probe" && report.data["validation"]["forward"] == "passed")
+                            || (verification_operation == "inspect" && report.data["validation"]["forward"] == "not_run"));
+                    let placement_comparison = if !comparable { "unknown" }
+                        else if candidate_placement["groups"] == verification_placement["groups"] { "same" }
+                        else { "different" };
                     report.data["source_validation"] = json!({
                         "operation":verification_operation,
                         "status":"passed",
@@ -719,7 +809,10 @@ impl<B: Backend> Application<B> {
                         "source_config_revision":expected_config,
                         "source_manifest_digest":request["expected_source_files_digest"],
                         "source_manifest_status":if source_manifest.is_some() { json!("passed") } else { Value::Null },
-                        "shared_state":verification.data["shared_state_verification"]
+                        "shared_state":verification.data["shared_state_verification"],
+                        "registered_placement_before_forward":verification.data["model_state_placement"],
+                        "registered_state_after_forward":verification.data["model_state_after_forward"],
+                        "placement_group_comparison": {"status":placement_comparison, "scope":"registered_parameter_and_buffer_device_dtype_counts", "note":"Aggregate groups only; equality does not establish per-tensor identity or values."}
                     });
                 }
                 report.data["committed"] = json!(!job.dry_run);
@@ -740,8 +833,13 @@ impl<B: Backend> Application<B> {
                     }
                 }
             } else {
+                let variant = &report.data["variant"];
+                if !variant.is_object() {
+                    return Report::error("edit", "VARIANT_RESULT_INVALID",
+                        "Layer 编辑未返回有效的变体对象。", "变体未保存；检查 CLI 与 worker 的兼容性。");
+                }
                 if !job.dry_run
-                    && let Err(error) = self.variants.save(root, name, &report.data["variant"])
+                    && let Err(error) = self.variants.save(root, name, variant)
                 {
                     return Report::error(
                         job.operation,
@@ -773,6 +871,9 @@ impl<B: Backend> Application<B> {
         job: &mut Job,
         root: &std::path::Path,
     ) -> Result<EditPreparation, Report> {
+        if job.operation != "edit" {
+            return Ok(EditPreparation::Ready { source_target: false });
+        }
         let source_target = job
             .edit
             .as_ref()

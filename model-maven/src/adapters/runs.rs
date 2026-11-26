@@ -313,6 +313,17 @@ impl FileRunStore {
         Ok(())
     }
 
+    fn validate_generic_checkpoint_filename(filename: &str) -> Result<(), String> {
+        let stem = filename.strip_prefix("generic-").and_then(|value| value.strip_suffix(".json"))
+            .ok_or("纯 Python checkpoint 文件名无效。")?;
+        let (step, nonce) = stem.split_once('-').ok_or("纯 Python checkpoint 文件名无效。")?;
+        if step.len() < 9 || !step.bytes().all(|b| b.is_ascii_digit()) || nonce.len() != 32
+            || !nonce.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)) {
+            return Err("纯 Python checkpoint 文件名无效。".into());
+        }
+        Ok(())
+    }
+
     fn json_sha256(value: &Value) -> Result<String, String> {
         let encoded = serde_json::to_vec(value).map_err(|error| error.to_string())?;
         let digest = Sha256::digest(encoded);
@@ -697,6 +708,33 @@ impl FileRunStore {
 }
 
 impl RunRepository for FileRunStore {
+    fn acknowledge_unknown(&self, root: &Path, id: &str, revision: &str, accept_unverified_host: bool, accept_different_scope: bool, check: &dyn Fn(&Value) -> Result<(), String>) -> Result<Value, String> {
+        let runs = Self::roots(root, false)?;
+        let _activity = Self::activity_lock(&runs)?;
+        let directory = Self::directory(root, id)?;
+        let _lock = Self::lock(&directory)?;
+        let path = directory.join("run.json");
+        let mut record = Self::read_run_metadata(&path)?;
+        if record["id"] != id || !matches!(record["status"].as_str(), Some("running" | "stopping")) {
+            return Err("运行已变化或不再阻挡新任务；请重新查看。".into());
+        }
+        let actual = crate::domain::input::content_revision(&record)?;
+        if actual != revision { return Err("运行记录在审核后发生变化；请重新审核。".into()); }
+        check(&record)?;
+        let now = Self::now_ms();
+        let prior = record["status"].clone();
+        record["status"] = json!("unknown");
+        record["admission_acknowledgement"] = json!({
+            "at_ms": now, "previous_status": prior, "reviewed_revision": revision, "unverified_process_scope_accepted": accept_unverified_host,
+            "different_process_scope_accepted": accept_different_scope, "acknowledging_process_scope": crate::ports::current_process_scope(),
+            "note": "用户接受进程状态仍未知并解除新任务阻挡；不代表训练已停止。"
+        });
+        Self::atomic_json(&path, &record)?;
+        let event_error = Self::append_event(&directory, &json!({"event":"unknown_admission_acknowledged","at_ms":now,"reviewed_revision":revision})).err();
+        Ok(json!({"run_id":id,"status":"unknown","admission_unblocked":true,"event_error":event_error,
+            "note":"用户已接受状态未知；运行、日志和 checkpoint 保留，未证明所有相关进程已停止。"}))
+    }
+
     fn create(&self, root: &Path, inputs: &Value) -> Result<String, String> {
         let runs = Self::roots(root, true)?;
         let _activity = Self::activity_lock(&runs)?;
@@ -724,6 +762,7 @@ impl RunRepository for FileRunStore {
                 "status": "running",
                 "started_at_ms": now,
                 "pid": pid,
+                "creator_process_scope": crate::ports::current_process_scope(),
                 "supervisor": null,
                 "parent_run_id": inputs["parent_run_id"]
                     .as_str()
@@ -782,7 +821,8 @@ impl RunRepository for FileRunStore {
         });
         Self::atomic_json(&directory.join("artifacts.json"), &artifact_manifest)?;
         let now = Self::now_ms();
-        let latest_checkpoint = Self::read_json(&directory.join("checkpoints/latest.json")).ok();
+        let latest_checkpoint = Self::read_json(&directory.join("checkpoints/latest.json")).ok()
+            .or_else(|| Self::read_json(&directory.join("checkpoints/latest.generic.json")).ok());
         let inputs = Self::read_json(&directory.join("inputs.json")).unwrap_or(Value::Null);
         let summary = json!({
             "training_mode": report["data"]["training_mode"].as_str()
@@ -791,6 +831,11 @@ impl RunRepository for FileRunStore {
                 .or_else(|| inputs["steps"].as_u64()),
             "completed_steps": report["data"]["completed_steps"].as_u64()
                 .or_else(|| latest_checkpoint.as_ref().and_then(|value| value["completed_steps"].as_u64())),
+            "completed_steps_source": if report["data"]["completed_steps"].as_u64().is_some() {
+                "worker_report"
+            } else if latest_checkpoint.as_ref().and_then(|value| value["completed_steps"].as_u64()).is_some() {
+                "checkpoint_manifest_unverified"
+            } else { "unknown" },
             "mean_loss": report["data"]["mean_loss"],
             "optimizer_updates": report["data"]["optimizer_updates"],
             "checkpoint_saved": report["data"]["checkpoint_saved"] == true || latest_checkpoint.is_some(),
@@ -1167,7 +1212,9 @@ impl RunRepository for FileRunStore {
                 Ok(_) => {}
             }
             let checkpoint_dir = Self::checkpoints(&directory, false)?;
-            let latest_path = checkpoint_dir.join("latest.json");
+            let generic = metadata["operation"] == "generic_loop_train";
+            let valid_name = |filename: &str| if generic { Self::validate_generic_checkpoint_filename(filename) } else { Self::validate_checkpoint_filename(filename) };
+            let latest_path = checkpoint_dir.join(if generic { "latest.generic.json" } else { "latest.json" });
             let latest = match fs::symlink_metadata(&latest_path) {
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
                 Err(error) => return Err(error.to_string()),
@@ -1179,7 +1226,7 @@ impl RunRepository for FileRunStore {
             };
             let candidate_latest_file = latest.as_ref().and_then(|manifest| {
                 let filename = manifest["file"].as_str()?;
-                Self::validate_checkpoint_filename(filename)
+                valid_name(filename)
                     .is_ok()
                     .then(|| filename.to_owned())
             });
@@ -1216,10 +1263,9 @@ impl RunRepository for FileRunStore {
                 if !file_type.is_file() || Some(file_name.as_str()) == latest_file.as_deref() {
                     continue;
                 }
-                let temporary = file_name.starts_with(".checkpoint-");
-                let old_checkpoint =
-                    latest_file.is_some() && Self::validate_checkpoint_filename(&file_name).is_ok();
-                if Self::validate_checkpoint_filename(&file_name).is_ok() && latest_file.is_none() {
+                let temporary = if generic { file_name.starts_with(".generic-") } else { file_name.starts_with(".checkpoint-") };
+                let old_checkpoint = latest_file.is_some() && valid_name(&file_name).is_ok();
+                if valid_name(&file_name).is_ok() && latest_file.is_none() {
                     skipped.push(json!({"run_id":id,"path":file_name,"reason":"没有有效 latest.json 引用，权重保持受保护"}));
                     continue;
                 }
@@ -1472,13 +1518,13 @@ impl RunRepository for FileRunStore {
             }
             let allowed_log = filename == "worker.log" && item["kind"] == "run_log";
             let allowed_progress = filename == "progress.jsonl" && item["kind"] == "run_progress";
-            let allowed_temporary =
-                filename.starts_with(".checkpoint-") && item["kind"] == "checkpoint_temporary";
-            let allowed_old_checkpoint = Self::validate_checkpoint_filename(filename).is_ok()
+            let generic_filename = Self::validate_generic_checkpoint_filename(filename).is_ok();
+            let allowed_temporary = (filename.starts_with(".checkpoint-") || filename.starts_with(".generic-")) && item["kind"] == "checkpoint_temporary";
+            let allowed_old_checkpoint = (Self::validate_checkpoint_filename(filename).is_ok() || generic_filename)
                 && item["kind"] == "unreferenced_checkpoint";
             let allowed_release = release_checkpoint
                 && item["kind"] == "latest_checkpoint_release"
-                && Self::validate_checkpoint_filename(filename).is_ok()
+                && (Self::validate_checkpoint_filename(filename).is_ok() || generic_filename)
                 && item["expected_latest_file"].as_str() == Some(filename);
             if !(allowed_log
                 || allowed_progress
@@ -1493,6 +1539,12 @@ impl RunRepository for FileRunStore {
             let _lock = Self::lock(&directory)?;
             let metadata_path = directory.join("run.json");
             let mut metadata = Self::read_run_metadata(&metadata_path)?;
+            let generic = metadata["operation"] == "generic_loop_train";
+            if (generic_filename && !generic) || (filename.starts_with(".generic-") && !generic)
+                || (generic && (Self::validate_checkpoint_filename(filename).is_ok() || filename.starts_with(".checkpoint-"))) {
+                skipped.push(json!({"item_id":item["item_id"],"reason":"checkpoint 格式与运行类型不匹配"}));
+                continue;
+            }
             let status = metadata["status"].as_str().unwrap_or("unknown");
             if metadata["id"] != id || !matches!(status, "completed" | "failed" | "interrupted") {
                 skipped.push(json!({"item_id":item["item_id"],"reason":format!("运行状态 {status} 已变化或受保护") }));
@@ -1545,7 +1597,7 @@ impl RunRepository for FileRunStore {
             }
             let checkpoint_dir = Self::checkpoints(&directory, false)?;
             if release_checkpoint {
-                let latest = Self::read_json(&checkpoint_dir.join("latest.json"))?;
+                let latest = Self::read_json(&checkpoint_dir.join(if generic { "latest.generic.json" } else { "latest.json" }))?;
                 if latest["file"].as_str() != item["expected_latest_file"].as_str()
                     || latest["file"].as_str() != Some(filename)
                     || latest["sha256"].as_str() != item["sha256"].as_str()
@@ -1556,7 +1608,7 @@ impl RunRepository for FileRunStore {
                     continue;
                 }
             } else if allowed_old_checkpoint {
-                let latest_path = checkpoint_dir.join("latest.json");
+                let latest_path = checkpoint_dir.join(if generic { "latest.generic.json" } else { "latest.json" });
                 match fs::symlink_metadata(&latest_path) {
                     Ok(meta) if meta.file_type().is_symlink() => {
                         skipped.push(json!({"item_id":item["item_id"],"reason":"latest.json 是符号链接，无法确认文件引用"}));
@@ -1582,7 +1634,7 @@ impl RunRepository for FileRunStore {
                     );
                     continue;
                 };
-                if Self::validate_checkpoint_filename(latest_filename).is_err() {
+                if (if generic { Self::validate_generic_checkpoint_filename(latest_filename) } else { Self::validate_checkpoint_filename(latest_filename) }).is_err() {
                     skipped.push(json!({"item_id":item["item_id"],"reason":"latest.json 文件名无效，无法确认权重引用"}));
                     continue;
                 }
@@ -1689,6 +1741,9 @@ impl RunRepository for FileRunStore {
         let run_directory = Self::directory(root, id)?;
         let _lock = Self::lock(&run_directory)?;
         let metadata = Self::read_run_metadata(&run_directory.join("run.json"))?;
+        if metadata["operation"] == "generic_loop_train" || metadata["operation"] == "generic_loop_trial" {
+            return Err("用户循环自行管理模型与评估；其可选 JSON 状态不是 PyTorch 权重，不能用于此评估或导出操作。".into());
+        }
         if metadata["checkpoint_released"] == true {
             return Err("该运行的 checkpoint 已按清理计划释放；当前不能续训或导出权重。".into());
         }
@@ -1807,7 +1862,11 @@ impl RunRepository for FileRunStore {
                         return Err(format!("运行 {name} 的 checkpoint 路径不是目录。"));
                     }
                     Ok(_) => {
-                        let manifest = checkpoints_path.join("latest.json");
+                        let manifest = if metadata["operation"] == "generic_loop_train" {
+                            checkpoints_path.join("latest.generic.json")
+                        } else {
+                            checkpoints_path.join("latest.json")
+                        };
                         match fs::symlink_metadata(&manifest) {
                             Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
                             Err(error) => return Err(error.to_string()),
@@ -1907,7 +1966,11 @@ impl RunRepository for FileRunStore {
                     return Err("运行记录的 checkpoint 路径不是目录。".into());
                 }
                 Ok(_) => {
-                    let manifest = checkpoint_path.join("latest.json");
+                    let manifest = if metadata["operation"] == "generic_loop_train" {
+                        checkpoint_path.join("latest.generic.json")
+                    } else {
+                        checkpoint_path.join("latest.json")
+                    };
                     match fs::symlink_metadata(&manifest) {
                         Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
                         Err(error) => return Err(error.to_string()),

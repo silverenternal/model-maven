@@ -169,7 +169,7 @@ impl<B: Backend> Application<B> {
                     job.operation,
                     "RUN_ALREADY_ACTIVE",
                     message,
-                    "先查看当前运行；运行结束或明确恢复状态后再启动新任务。只读查看仍可继续。",
+                    "先查看运行和进程；状态未知时可用 m-model runs acknowledge-unknown <ID> 审核。只读查看仍可继续。",
                 );
             }
             if let Some(message) = error.strip_prefix("RUN_STATE_UNKNOWN:") {
@@ -250,11 +250,12 @@ impl<B: Backend> Application<B> {
         id: &str,
         request: &mut Value,
     ) -> Report {
+        let operation = request["operation"].as_str().unwrap_or("train").to_owned();
         let run_directory = match self.runs.run_directory(root, id) {
             Ok(directory) => directory,
             Err(error) => {
                 let failed = Report::error(
-                    "train",
+                    &operation,
                     "RUN_DIRECTORY_UNAVAILABLE",
                     error,
                     "检查运行记录目录权限。",
@@ -275,7 +276,7 @@ impl<B: Backend> Application<B> {
             Ok(path) => path,
             Err(error) => {
                 let failed = Report::error(
-                    "train",
+                    &operation,
                     "BACKGROUND_LAUNCH_FAILED",
                     error.to_string(),
                     "检查 m-model 可执行文件路径。",
@@ -299,7 +300,7 @@ impl<B: Backend> Application<B> {
         );
         if let Err(error) = launched {
             let failed = Report::error(
-                "train",
+                &operation,
                 "BACKGROUND_LAUNCH_FAILED",
                 error,
                 "检查目录权限、平台支持和运行日志；失败的后台启动不会继续训练。",
@@ -312,7 +313,7 @@ impl<B: Backend> Application<B> {
             return failed;
         }
         Report::ok(
-            "train",
+            &operation,
             json!({
                 "run_id":id,
                 "request_id":request["request_id"],

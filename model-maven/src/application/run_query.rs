@@ -104,6 +104,71 @@ impl<B: Backend> Application<B> {
             }
         };
         match command {
+            RunsCommand::AcknowledgeUnknown { id, if_revision, acknowledge, accept_unverified_host, accept_different_scope } => {
+                let scope_status = |record: &Value| -> &'static str {
+                    let current = crate::ports::current_process_scope();
+                    match (record.get("creator_process_scope").filter(|value| value.is_object()), current) {
+                        (Some(recorded), Some(current)) if *recorded == current => "matched",
+                        (Some(_), Some(_)) => "mismatch",
+                        _ => "unverified",
+                    }
+                };
+                let check = |record: &Value| -> Result<(), String> {
+                    if !cfg!(target_os = "linux") {
+                        return Err("此操作需要 Linux 进程身份检查；请在原运行主机处理。".into());
+                    }
+                    if crate::ports::current_process_scope().is_none() {
+                        return Err("无法读取当前进程的主机启动和 PID 命名空间身份。".into());
+                    }
+                    match scope_status(record) {
+                        "mismatch" if *acknowledge && !*accept_different_scope => return Err("当前环境与运行启动环境不同，无法核查原环境进程；须明确接受该不确定性。".into()),
+                        // Current PIDs have no meaning in the original namespace.
+                        "mismatch" => return Ok(()),
+                        "unverified" if *acknowledge && !*accept_unverified_host => return Err("旧记录缺少可核对的主机或 PID 命名空间身份；请在原环境核查并明确接受该不确定性。".into()),
+                        _ => {}
+                    }
+                    if self.live_supervisor(record).is_some() {
+                        return Err("已登记的监督进程仍在运行，不能解除阻挡。".into());
+                    }
+                    let pid = record["pid"].as_u64().and_then(|value| u32::try_from(value).ok())
+                        .filter(|value| *value > 0).ok_or("缺少有效启动器 PID，无法执行身份检查。")?;
+                    if self.supervisor.identify(pid).is_some() {
+                        return Err("启动器 PID 当前存在，无法排除仍在启动；请检查后重试。".into());
+                    }
+                    if let Some(supervisor_pid) = record["supervisor"]["pid"].as_u64().and_then(|value| u32::try_from(value).ok())
+                        && self.supervisor.identify(supervisor_pid).is_some() {
+                            return Err("监督进程 PID 当前存在，身份可能变化；请检查后重试。".into());
+                        }
+                    Ok(())
+                };
+                if *acknowledge {
+                    let Some(revision) = if_revision.as_deref() else {
+                        return Report::error("runs_acknowledge_unknown", "RUN_REVISION_REQUIRED", "缺少审核修订。", "先预览并核查运行与相关进程。");
+                    };
+                    return match self.runs.acknowledge_unknown(&root, id, revision, *accept_unverified_host, *accept_different_scope, &check) {
+                        Ok(data) => Report::ok("runs_acknowledge_unknown", data),
+                        Err(error) => Report::error("runs_acknowledge_unknown", "RUN_ACKNOWLEDGEMENT_FAILED", error, "重新查看运行、进程和 checkpoint；不能仅凭心跳判断。"),
+                    };
+                }
+                match self.runs.show(&root, id) {
+                    Ok(record) => {
+                        let raw = &record["record"];
+                        if !matches!(raw["status"].as_str(), Some("running" | "stopping")) {
+                            return Report::error("runs_acknowledge_unknown", "RUN_NOT_BLOCKING", "该运行不处于会阻挡新任务的状态。", "查看运行详情。");
+                        }
+                        let revision = match crate::domain::input::content_revision(raw) {
+                            Ok(value) => value,
+                            Err(error) => return Report::error("runs_acknowledge_unknown", "RUN_REVISION_UNAVAILABLE", error, ""),
+                        };
+                        let observation = check(raw);
+                        let scope = scope_status(raw);
+                        Report::ok("runs_acknowledge_unknown", json!({"run_id":id,"committed":false,"revision":revision,"process_scope":scope,
+                            "record":raw,"checkpoint":record["checkpoint"],"identity_check":if observation.is_err() {"blocked"} else if scope == "mismatch" {"original_scope_not_observable"} else {"no_verified_live_process"},
+                            "identity_check_reason":observation.err(),"note":"不能证明其他进程不存在。请检查运行日志、进程及 checkpoint；明确接受未知状态后才能解除新任务阻挡。"}))
+                    }
+                    Err(error) => Report::error("runs_acknowledge_unknown", "RUN_NOT_FOUND_OR_INVALID", error, "查看运行列表。"),
+                }
+            }
             RunsCommand::FindRequest { request_id } => {
                 if !(16..=64).contains(&request_id.len())
                     || !request_id
@@ -195,6 +260,15 @@ impl<B: Backend> Application<B> {
                 match self.runs.show(&root, &selected) {
                     Ok(mut record) => {
                         self.annotate_status(&mut record);
+                        if matches!(record["inputs"]["operation"].as_str(), Some("train" | "training_probe"))
+                            && let Some(seed) = record["inputs"]["seed"].as_u64() {
+                            record["seed_decimal"] = Value::String(seed.to_string());
+                        }
+                        if record["record"]["operation"] == "training_probe" && record["inputs"]["operation"] == "training_probe" {
+                            if let Some(digest) = super::train::repeat_inputs_sha256(&record) {
+                                record["repeat_inputs_sha256"] = Value::String(digest);
+                            }
+                        }
                         Report::ok("runs_show", record)
                     }
                     Err(error) => Report::error(

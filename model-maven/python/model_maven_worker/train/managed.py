@@ -9,6 +9,7 @@ from ..protocol import UserError
 from ..data.augment import apply_batch_augmentations
 from .device import is_out_of_memory, out_of_memory_error
 from .state import SampleIdentityTracker
+from .optimizers import construct_optimizer
 
 
 def run_managed_steps(runtime, model, request, restore=None, checkpoint_callback=None):
@@ -16,11 +17,12 @@ def run_managed_steps(runtime, model, request, restore=None, checkpoint_callback
     max_steps = 1_000_000 if request.get("operation") == "train" else 1000
     if type(steps) is not int or not 1 <= steps <= max_steps:
         raise UserError("TRAINING_PARAMETER_INVALID", f"managed-step 的步数必须在 1..{max_steps}。")
-    if request.get("optimizer", "adamw").lower() != "adamw":
+    factory_ref = request.get("optimizer_factory")
+    if factory_ref is None and request.get("optimizer", "adamw").lower() != "adamw":
         raise UserError("OPTIMIZER_UNSUPPORTED", "当前 managed-step 只支持 AdamW。")
     lr = request.get("lr")
     weight_decay = request.get("weight_decay")
-    if (
+    if factory_ref is None and (
         not isinstance(lr, (int, float))
         or isinstance(lr, bool)
         or not math.isfinite(lr)
@@ -40,16 +42,26 @@ def run_managed_steps(runtime, model, request, restore=None, checkpoint_callback
     batch_fn = runtime.entrypoint(request["batch"])
     parameters = list(model.parameters())
     if not parameters:
-        raise UserError("MODEL_PARAMETERS_MISSING", "模型没有可供 AdamW 更新的参数。")
-    optimizer = runtime.torch.optim.AdamW(parameters, lr=float(lr), weight_decay=float(weight_decay))
+        raise UserError("MODEL_PARAMETERS_MISSING", "模型没有可供优化器更新的参数。")
+    if factory_ref is None:
+        optimizer = runtime.torch.optim.AdamW(parameters, lr=float(lr), weight_decay=float(weight_decay))
+        optimizer_identity = None
+    else:
+        optimizer, optimizer_identity = construct_optimizer(runtime, model, factory_ref, request.get("optimizer_params", {}))
+    optimized_ids = {id(parameter) for group in optimizer.param_groups for parameter in group["params"]}
     engine_restore = (restore or {}).get("engine_state", {})
+    if engine_restore.get("optimizer_state") is not None and optimizer_identity is not None:
+        if engine_restore.get("optimizer_identity") != optimizer_identity:
+            raise UserError("RESUME_OPTIMIZER_INCOMPATIBLE", "优化器工厂、参数、类型或参数组与 checkpoint 不一致。")
+    elif engine_restore.get("optimizer_state") is not None and engine_restore.get("optimizer_identity") is not None:
+        raise UserError("RESUME_OPTIMIZER_INCOMPATIBLE", "自定义优化器 checkpoint 不能使用默认 AdamW 恢复。")
     if engine_restore.get("optimizer_state") is not None:
         try:
             optimizer.load_state_dict(engine_restore["optimizer_state"])
         except Exception as error:
             raise UserError(
                 "RESUME_OPTIMIZER_INCOMPATIBLE",
-                f"managed-step AdamW 状态无法载入：{error}",
+                f"managed-step 优化器状态无法载入：{error}",
             ) from error
     model.train(True)
     metric_state = engine_restore.get("metrics", {})
@@ -90,9 +102,15 @@ def run_managed_steps(runtime, model, request, restore=None, checkpoint_callback
                 )
                 request["_last_augmentation_observations"] = augmentation_observations
                 request["_augmentation_batch_count"] = request.get("_augmentation_batch_count", 0) + 1
-            if runtime.move_batch is not None:
-                batch = runtime.move_batch(batch, request.get("_resolved_device", "cpu"))
+            phase = "batch device transfer"
+            if runtime.move_batch is not None and request.get("batch_device_policy") != "preserve":
+                if request.get("batch_device_policy") == "recursive-strict":
+                    batch = runtime.move_batch(batch, request.get("_resolved_device", "cpu"), strict=True)
+                else:
+                    batch = runtime.move_batch(batch, request.get("_resolved_device", "cpu"))
             phase = "training step (forward/backward/update)"
+            if optimizer_identity is not None:
+                model.zero_grad(set_to_none=True)
             optimizer.zero_grad(set_to_none=True)
             if supervision is None:
                 result = step_fn(model, batch, context, **request.get("training_params", {}))
@@ -128,18 +146,19 @@ def run_managed_steps(runtime, model, request, restore=None, checkpoint_callback
                 gradient = parameter.grad.coalesce().values() if parameter.grad.is_sparse else parameter.grad
                 if not bool(runtime.torch.isfinite(gradient).all().item()):
                     raise UserError("GRADIENT_NONFINITE", f"参数 {name} 的梯度包含 NaN 或无穷大。")
-                gradient_count += 1
-                updated_names.add(name)
+                if id(parameter) in optimized_ids:
+                    gradient_count += 1
+                    updated_names.add(name)
             if gradient_count == 0:
-                raise UserError("GRADIENT_MISSING", "本步没有可训练参数获得梯度。")
+                raise UserError("GRADIENT_MISSING", "本步没有优化器管理的模型参数获得梯度。")
             optimizer.step()
             for name, parameter in model.named_parameters():
                 if not bool(runtime.torch.isfinite(parameter.detach()).all().item()):
-                    raise UserError("PARAMETER_NONFINITE", f"AdamW 更新后参数 {name} 包含 NaN 或无穷大。")
+                    raise UserError("PARAMETER_NONFINITE", f"优化器更新后参数 {name} 包含 NaN 或无穷大。")
             for state in optimizer.state.values():
                 for state_name, value in state.items():
                     if isinstance(value, runtime.torch.Tensor) and not bool(runtime.torch.isfinite(value).all().item()):
-                        raise UserError("OPTIMIZER_STATE_NONFINITE", f"AdamW 状态 {state_name} 包含 NaN 或无穷大。")
+                        raise UserError("OPTIMIZER_STATE_NONFINITE", f"优化器状态 {state_name} 包含 NaN 或无穷大。")
 
             current_loss = runtime.scalar_value(loss, "loss")
             runtime.add_finite_total(sums, counts, "loss", current_loss, "losses")
@@ -157,6 +176,7 @@ def run_managed_steps(runtime, model, request, restore=None, checkpoint_callback
                     completed,
                     {
                         "optimizer_state": optimizer.state_dict(),
+                        **({"optimizer_identity": optimizer_identity} if optimizer_identity is not None else {}),
                         "metrics": {
                             "loss_sums": sums,
                             "loss_counts": counts,
@@ -180,10 +200,16 @@ def run_managed_steps(runtime, model, request, restore=None, checkpoint_callback
             raise UserError(
                 "STEP_FAILED",
                 f"第 {index + 1}/{steps} 步失败：{error}",
-                "正式训练保留最近一个完整 checkpoint（若已到保存间隔）；步骤试跑的权重仍为临时状态。",
+                (error.hint + " 正式训练保留最近一个完整 checkpoint（若已到保存间隔）。"
+                 if error.code in {"BATCH_DEVICE_MAPPING_UNSUPPORTED", "BATCH_DEVICE_CONTAINER_UNSUPPORTED", "BATCH_DEVICE_CYCLE_UNSUPPORTED", "BATCH_DEVICE_STRUCTURE_LIMIT", "BATCH_DEVICE_SHARED_STORAGE_UNSUPPORTED"} and error.hint
+                 else "正式训练保留最近一个完整 checkpoint（若已到保存间隔）；步骤试跑的权重仍为临时状态。"),
                 {"failed_step": index + 1, "completed_steps": completed, "total_steps": steps,
                  "cause_code": error.code, "cause_message": str(error),
-                 "cause_data": error.data,
+                 "cause_data": error.data, "cause_hint": error.hint, "phase": phase,
+                 "training_step_started": phase == "training step (forward/backward/update)",
+                 **({"training_mode": "managed-step", "managed_backward_started": False,
+                     "managed_optimizer_step_started": False}
+                    if error.code == "SUPERVISION_REQUIRE_FAILED" else {}),
                  "last_completed_loss": last_loss},
             ) from error
         except Exception as error:
@@ -204,9 +230,10 @@ def run_managed_steps(runtime, model, request, restore=None, checkpoint_callback
     report = {
         "training_mode": "managed-step",
         "training_step": request["training_step"],
-        "optimizer": "AdamW",
-        "learning_rate": float(lr),
-        "weight_decay": float(weight_decay),
+        "optimizer": optimizer_identity["optimizer_type"] if optimizer_identity else "AdamW",
+        "learning_rate": float(lr) if optimizer_identity is None else None,
+        "weight_decay": float(weight_decay) if optimizer_identity is None else None,
+        **({"optimizer_identity": optimizer_identity} if optimizer_identity is not None else {}),
         "requested_steps": steps,
         "completed_steps": completed,
         "optimizer_updates": completed,
@@ -224,7 +251,7 @@ def run_managed_steps(runtime, model, request, restore=None, checkpoint_callback
         "sample_identity": sample_identity.report(),
         "elapsed_seconds": elapsed,
         "checkpoint_saved": False,
-        "coverage": "在独立 Python worker 进程中执行用户步骤、AdamW 更新和有限性检查；是否持久化由 try/train 操作决定。",
+        "coverage": "在独立 Python worker 进程中执行用户步骤、所选优化器更新和有限性检查；是否持久化由 try/train 操作决定。",
     }
     if supervision is not None:
         report["supervision"] = supervision.report()

@@ -5,18 +5,20 @@ import importlib.metadata
 import inspect
 import json
 import os
+import platform
 import sys
 import tempfile
 from pathlib import Path
 
 
-_FORMAT = 1
+_FORMAT = 2
 _IGNORED_DIRS = {
-    ".git", ".model-maven", ".venv", "venv", "env", "__pycache__",
-    "node_modules", "target", "build", "dist",
+    ".git", ".model-maven", "__pycache__", "node_modules", ".pytest_cache",
 }
 _SOURCE_SUFFIXES = {".py", ".toml", ".yaml", ".yml"}
 _MAX_SOURCE_FILES = 20000
+_MAX_SOURCE_DIRS = 20000
+_MAX_SOURCE_ENTRIES = 200000
 _MAX_SOURCE_BYTES = 512 * 1024 * 1024
 _MAX_WEIGHT_BYTES = 512 * 1024 * 1024
 _MAX_CACHE_RECORD_BYTES = 32 * 1024 * 1024
@@ -31,26 +33,78 @@ def _value_digest(value):
     return hashlib.sha256(_canonical(value).encode("utf-8")).hexdigest()
 
 
-def _source_fingerprint(project_root, model):
+def _source_fingerprint(project_root, model, import_roots=None):
     root = Path(project_root).resolve()
     digest = hashlib.sha256()
-    paths = []
+    paths = set()
     source_inventory = {}
     total_bytes = 0
     try:
-        for current, dirs, files in os.walk(root, followlinks=False):
-            dirs[:] = sorted(
-                name for name in dirs
-                if name not in _IGNORED_DIRS and not (Path(current) / name).is_symlink()
-            )
+        if import_roots is not None and (not isinstance(import_roots, list) or len(import_roots) > 32):
+            return None, None, "project import roots are invalid"
+        selected = []
+        for value in import_roots or []:
+            if (not isinstance(value, str) or not value or "\\" in value
+                    or any(part in {"", ".", ".."} for part in value.split("/"))):
+                return None, None, "project import roots are invalid"
+            relative = Path(value)
+            if relative.is_absolute() or any(part in {".git", ".model-maven", "__pycache__"} for part in relative.parts):
+                return None, None, "project import roots cannot be fingerprinted"
+            candidate = root / relative
+            if not candidate.is_dir() or candidate.resolve() != candidate:
+                return None, None, "project import root is unavailable or uses a symlink"
+            selected.append(candidate)
+
+        def selected_path(path):
+            return any(path == chosen or path in chosen.parents or chosen in path.parents for chosen in selected)
+
+        environment = Path(sys.prefix).resolve()
+        excluded_roots = ({environment} if environment != root and environment.is_relative_to(root) else set())
+        def include_directory(path):
+            if path.name in {".git", ".model-maven", "__pycache__"} or path.is_symlink():
+                return False
+            if (path.name in _IGNORED_DIRS or (path / "pyvenv.cfg").is_file()
+                    or (path.name == "target" and (path / ".rustc_info.json").is_file())):
+                excluded_roots.add(path)
+            if selected_path(path):
+                return True
+            if path in excluded_roots or any(parent in excluded_roots for parent in path.parents):
+                return False
+            return True
+
+        directory_count = 0
+        entry_count = 0
+        def raise_walk_error(error):
+            raise error
+
+        for current, dirs, files in os.walk(root, followlinks=False, onerror=raise_walk_error):
+            directory_count += 1
+            entry_count += len(dirs) + len(files)
+            if directory_count > _MAX_SOURCE_DIRS or entry_count > _MAX_SOURCE_ENTRIES:
+                return None, None, "project directory inventory exceeds the cache verification limit"
+            dirs[:] = sorted(name for name in dirs if include_directory(Path(current) / name))
             for name in files:
                 path = Path(current) / name
+                if not selected_path(path) and any(parent in excluded_roots for parent in path.parents):
+                    continue
                 if path.suffix.lower() in _SOURCE_SUFFIXES and not path.is_symlink():
                     if path.suffix.lower() in {".yaml", ".yml"} and path.stat().st_size > 1024 * 1024:
                         return None, None, "large YAML source could not be safely fingerprinted"
-                    paths.append(path)
+                    paths.add(path)
                     if len(paths) > _MAX_SOURCE_FILES:
                         return None, None, "project source inventory exceeds the cache verification limit"
+        project_paths = set(paths)
+        for loaded in list(sys.modules.values()):
+            filename = getattr(loaded, "__file__", None)
+            if not isinstance(filename, str):
+                continue
+            source = Path(filename).resolve()
+            if source.suffix != ".py" or not source.is_relative_to(root):
+                continue
+            if environment != root and environment.is_relative_to(root) and source.is_relative_to(environment) and not selected_path(source):
+                continue
+            if source not in project_paths:
+                return None, None, "an observed project module is outside the fingerprinted tree"
         for module in model.modules():
             module_name = type(module).__module__
             top_level = module_name.split(".", 1)[0]
@@ -68,7 +122,10 @@ def _source_fingerprint(project_root, model):
             except ValueError:
                 if not source_path.is_file() or source_path.is_symlink():
                     return None, None, f"external module source is unavailable for {module_name}"
-                paths.append(source_path)
+                paths.add(source_path)
+            else:
+                if source_path not in project_paths:
+                    return None, None, f"model source is outside the fingerprinted project tree: {module_name}"
         if len(paths) > _MAX_SOURCE_FILES:
             return None, None, "model dependency source inventory exceeds the cache verification limit"
         for path in sorted(paths):
@@ -77,15 +134,28 @@ def _source_fingerprint(project_root, model):
             except ValueError:
                 relative_text = "external:" + hashlib.sha256(str(path).encode("utf-8")).hexdigest()
             relative = relative_text.encode("utf-8")
-            content = path.read_bytes()
-            total_bytes += len(content)
-            if total_bytes > _MAX_SOURCE_BYTES:
-                return None, None, "project source files exceed the cache verification limit"
-            source_inventory[hashlib.sha256(relative).hexdigest()] = hashlib.sha256(content).hexdigest()
-            digest.update(len(relative).to_bytes(8, "big"))
-            digest.update(relative)
-            digest.update(len(content).to_bytes(8, "big"))
-            digest.update(content)
+            content_digest = hashlib.sha256()
+            with path.open("rb") as stream:
+                before = os.fstat(stream.fileno())
+                total_bytes += before.st_size
+                if total_bytes > _MAX_SOURCE_BYTES:
+                    return None, None, "project source files exceed the cache verification limit"
+                digest.update(len(relative).to_bytes(8, "big"))
+                digest.update(relative)
+                digest.update(before.st_size.to_bytes(8, "big"))
+                count = 0
+                while chunk := stream.read(1024 * 1024):
+                    count += len(chunk)
+                    if count > before.st_size:
+                        return None, None, "project source changed while fingerprinting"
+                    digest.update(chunk)
+                    content_digest.update(chunk)
+                after = os.fstat(stream.fileno())
+            current = path.stat()
+            identity = lambda info: (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+            if count != before.st_size or identity(before) != identity(after) or identity(after) != identity(current):
+                return None, None, "project source changed while fingerprinting"
+            source_inventory[hashlib.sha256(relative).hexdigest()] = content_digest.hexdigest()
     except (OSError, ValueError) as error:
         return None, None, f"project source inventory is incomplete: {type(error).__name__}"
     if not paths:
@@ -100,14 +170,15 @@ def _weights_fingerprint(model, torch_module):
         for name, tensor in sorted(model.state_dict().items()):
             if not isinstance(tensor, torch_module.Tensor):
                 return None, "model state contains non-Tensor values"
+            size = tensor.numel() * tensor.element_size()
+            if size > _MAX_WEIGHT_BYTES - total:
+                return None, "model weights exceed the cache verification limit"
             value = tensor.detach()
             if value.is_sparse:
                 value = value.to_dense()
             value = value.cpu().contiguous()
-            raw = value.reshape(-1).view(torch_module.uint8).numpy().tobytes()
+            raw = memoryview(value.reshape(-1).view(torch_module.uint8).numpy())
             total += len(raw)
-            if total > _MAX_WEIGHT_BYTES:
-                return None, "model weights exceed the cache verification limit"
             key = name.encode("utf-8")
             digest.update(len(key).to_bytes(8, "big"))
             digest.update(key)
@@ -119,8 +190,57 @@ def _weights_fingerprint(model, torch_module):
     return digest.hexdigest(), None
 
 
+def weight_fingerprint_report(model, torch_module):
+    """Describe the current registered state without exposing tensor values."""
+    digest, reason = _weights_fingerprint(model, torch_module)
+    return {
+        "status": "available" if digest is not None else "unknown",
+        "algorithm": "sha256-registered-state-v1" if digest is not None else None,
+        "digest": digest,
+        "scope": "model.state_dict() tensor names, dtypes, shapes and bytes",
+        "reason": reason,
+        "covers": "registered state_dict tensors only; not unregistered state, external resources or future mutations",
+    }
+
+
+def environment_fingerprint(torch_module):
+    """Return a privacy-bounded runtime identity and explicit scope limits."""
+    package_versions = []
+    try:
+        for distribution in importlib.metadata.distributions():
+            package_versions.append([
+                distribution.metadata.get("Name", "").lower(), distribution.version
+            ])
+        package_versions.sort()
+    except Exception as error:
+        package_versions = None
+        package_reason = type(error).__name__
+    identity = {
+        "python": sys.version.split()[0],
+        "python_implementation": platform.python_implementation(),
+        "torch": str(torch_module.__version__),
+        "platform_system": platform.system(),
+        "platform_machine": platform.machine(),
+        "packages": package_versions,
+    }
+    return {
+        "status": "available" if package_versions is not None else "partial",
+        "python": identity["python"],
+        "python_implementation": identity["python_implementation"],
+        "torch": identity["torch"],
+        "platform_system": identity["platform_system"],
+        "platform_machine": identity["platform_machine"],
+        "package_count": len(package_versions) if package_versions is not None else None,
+        "package_inventory_sha256": _value_digest(package_versions) if package_versions is not None else None,
+        "identity_sha256": _value_digest(identity) if package_versions is not None else None,
+        "package_inventory_reason": None if package_versions is not None else package_reason,
+        "scope": "runtime versions and installed distribution metadata; excludes executable path, environment variables, native libraries and device driver state",
+    }
+
+
 def build_evidence_identity(
-    model, request, *, torch_module, contract=None, source_inventory_out=None
+    model, request, *, torch_module, input_content=None, contract=None, source_inventory_out=None,
+    weights_report=None,
 ):
     """Return a complete reusable identity, or a reason to run a fresh probe."""
     observation = request.get("_data_observation")
@@ -136,17 +256,36 @@ def build_evidence_identity(
         return None, "batch has no stable dataset fingerprint and sample IDs"
     if request.get("training"):
         return None, "training-mode probes may depend on mutable module or RNG state"
+    if request.get("seed") is None and request.get("variant") is None:
+        return None, "ambient RNG state is not fixed for this probe"
+    if not (isinstance(input_content, dict) and input_content.get("status") == "available"
+            and isinstance(input_content.get("algorithm"), str)
+            and isinstance(input_content.get("digest"), str)):
+        return None, "forward input content cannot be completely fingerprinted"
+    # User code can change cwd and resolve relative paths against it. Retain
+    # only digests in persistent cache keys, and fail closed when unknown.
+    try:
+        current_working_directory = os.getcwd()
+    except OSError:
+        return None, "working directory is unavailable"
+    before_model = request.get("_working_directory_before_model")
+    after_model = request.get("_working_directory_after_model")
+    if not isinstance(before_model, str) or not isinstance(after_model, str):
+        return None, "working directory at model construction is unknown"
     source_hash, source_inventory, reason = _source_fingerprint(
-        request.get("project_root", "."), model
+        request.get("project_root", "."), model,
+        request.get("runtime", {}).get("project_import_roots")
     )
     if reason:
         return None, reason
     if isinstance(source_inventory_out, dict):
         source_inventory_out.clear()
         source_inventory_out.update(source_inventory)
-    weights_hash, reason = _weights_fingerprint(model, torch_module)
-    if reason:
-        return None, reason
+    if not isinstance(weights_report, dict):
+        weights_report = weight_fingerprint_report(model, torch_module)
+    weights_hash = weights_report.get("digest")
+    if not isinstance(weights_hash, str):
+        return None, weights_report.get("reason") or "model weights cannot be fingerprinted"
     identity = {
         "format": _FORMAT,
         "source_sha256": source_hash,
@@ -159,6 +298,8 @@ def build_evidence_identity(
             "sampling_seed": sampling.get("seed"),
             "sample_count": len(sampling["sample_ids"]),
             "sample_ids_sha256": _value_digest(sampling["sample_ids"]),
+            "input_content_algorithm": input_content["algorithm"],
+            "input_content_sha256": input_content["digest"],
         },
         "model_sha256": _value_digest(request.get("model")),
         "model_params_sha256": _value_digest(request.get("model_params", {})),
@@ -169,15 +310,28 @@ def build_evidence_identity(
         "requested_batch_fingerprint_sha256": _value_digest(request.get("data_fingerprint")),
         "variant_sha256": _value_digest(request.get("variant")),
         "contract_sha256": _value_digest(contract),
+        "contract_content_sha256": request.get("_contract_content_sha256"),
+        "contract_identity_required": request.get("if_contract_sha256") is not None,
         "protocol": {
             "protocol_version": request.get("protocol_version"),
             "worker_api_version": request.get("worker_api_version", 1),
+            # Version 8 captures selected subtrees independently of the
+            # bounded full-model trace; older records can omit late calls.
+            "evidence_schema": 8,
         },
         "execution": {
             "training": False,
+            "project_import_roots_sha256": _value_digest(request.get("runtime", {}).get("project_import_roots")),
+            "probe_device_sha256": _value_digest(request.get("_probe_device_report")),
+            "working_directory_before_model_sha256": _value_digest(before_model),
+            "working_directory_after_model_sha256": _value_digest(after_model),
+            "working_directory_after_input_sha256": _value_digest(current_working_directory),
             "seed": request.get("seed"),
             "python": sys.version.split()[0],
+            "python_implementation": platform.python_implementation(),
             "torch": str(torch_module.__version__),
+            "platform_system": platform.system(),
+            "platform_machine": platform.machine(),
             "packages": sorted([
                 [distribution.metadata.get("Name", "").lower(), distribution.version]
                 for distribution in importlib.metadata.distributions()
@@ -202,7 +356,10 @@ def _safe_tree(value):
                 if key in value
             }
         if kind == "dict":
-            return {"kind": "dict", "items": {key: _safe_tree(item) for key, item in value.get("items", {}).items()}}
+            return {"kind": "dict", "items": {key: _safe_tree(item) for key, item in value.get("items", {}).items()},
+                    "items_truncated": value.get("items_truncated"),
+                    "keys_all_strings": value.get("keys_all_strings"),
+                    "observed_keys_all_strings": value.get("observed_keys_all_strings")}
         if kind in {"list", "tuple"}:
             return {"kind": kind, "items": [_safe_tree(item) for item in value.get("items", [])],
                     "truncated": value.get("truncated", 0)}
@@ -243,8 +400,8 @@ def _safe_evidence(data):
         safe_shape = {key: shape[key] for key in ("status", "engine", "nodes", "diagnostics", "coverage") if key in shape}
     return {
         key: data[key]
-        for key in ("probe_id", "forward_id", "batch_id", "batch_identity_stable", "input_signature",
-                    "calls_observed", "trace_truncated", "observed_mode", "coverage")
+        for key in ("probe_id", "forward_id", "batch_id", "batch_identity_stable", "input_signature", "output_signature",
+                    "calls_observed", "trace_truncated", "observed_mode", "coverage", "run_provenance")
         if key in data
     } | {
         "inputs": _safe_tree(data.get("inputs")),
@@ -303,16 +460,19 @@ def invalidation_reasons(previous, current):
     fields = {
         "source_sha256": "project_or_component_source_changed",
         "weights_sha256": "model_weights_changed",
-        "batch": "dataset_split_or_sample_identity_changed",
+        "batch": "dataset_sample_or_input_content_changed",
         "execution": "runtime_dependency_or_seed_changed",
         "model_sha256": "model_entrypoint_changed",
         "model_params_sha256": "model_parameters_changed",
         "model_injections_sha256": "component_injections_changed",
         "batch_factory_sha256": "batch_factory_changed",
         "batch_params_sha256": "batch_parameters_changed",
+        "batch_binding": "batch_binding_changed",
         "requested_batch_fingerprint_sha256": "declared_dataset_fingerprint_changed",
         "variant_sha256": "model_variant_changed",
         "contract_sha256": "model_contract_changed",
+        "contract_content_sha256": "model_contract_changed",
+        "contract_identity_required": "model_contract_confirmation_changed",
         "selection": "probe_scope_changed",
         "protocol": "worker_protocol_changed",
     }

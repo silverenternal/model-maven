@@ -106,7 +106,13 @@ pub(super) fn build_run_manifest(
     let mut artifacts = Vec::new();
     let mut ids = std::collections::BTreeSet::new();
     let mut paths = std::collections::BTreeSet::new();
-    let latest_path = run_directory.join("checkpoints/latest.json");
+    let generic_checkpoint = report["data"]["training_mode"] == "generic-external-loop"
+        || run_directory.join("checkpoints/latest.generic.json").exists();
+    let latest_path = if generic_checkpoint {
+        run_directory.join("checkpoints/latest.generic.json")
+    } else {
+        run_directory.join("checkpoints/latest.json")
+    };
     let latest = match fs::symlink_metadata(&latest_path) {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
         Err(error) => return Err(error.to_string()),
@@ -133,7 +139,7 @@ pub(super) fn build_run_manifest(
         paths.insert(relative.clone());
         artifacts.push(json!({
             "id":"training-checkpoint",
-            "owner":"model_maven_worker.train.checkpoint",
+            "owner":if generic_checkpoint {"model_maven_worker.train.generic_checkpoint"} else {"model_maven_worker.train.checkpoint"},
             "kind":"checkpoint",
             "complete":true,
             "declared_complete":true,

@@ -20,4 +20,4 @@ pub use previews::{
 };
 pub use project_config::{ProjectConfigStore, ProjectConfigUpdate, ProjectConfigUpdateError};
 pub use project_source::ProjectSourceWriter;
-pub use runs::{RunRepository, RunSupervisor};
+pub use runs::{current_process_scope, RunRepository, RunSupervisor};

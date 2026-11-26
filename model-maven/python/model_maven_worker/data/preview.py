@@ -9,8 +9,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from ..protocol import UserError
+from ..runtime.entrypoints import configure_project_import_roots
 from .batch import make_batch
-from .renderers import RENDERER_VERSION, invoke_custom_renderer, render_auto, render_summary
+from .renderers import RENDERER_VERSION, _structure_summary, invoke_custom_renderer, render_auto, render_summary
 from .transforms import TRANSFORM_REGISTRY_VERSION, run_transform_pipeline
 
 
@@ -118,6 +119,7 @@ def run_preview_operation(request, torch_module, resolve_entrypoint, source_mani
         raise UserError("PROJECT_UNAVAILABLE", "预览项目目录不存在。")
     if str(project_root) not in __import__("sys").path:
         __import__("sys").path.insert(0, str(project_root))
+    configure_project_import_roots(request)
     preview_request = request.get("preview_request")
     if not isinstance(preview_request, dict):
         raise UserError("PREVIEW_REQUEST_INVALID", "worker 请求缺少 preview_request 对象。")
@@ -126,6 +128,10 @@ def run_preview_operation(request, torch_module, resolve_entrypoint, source_mani
         raise UserError("PREVIEW_SOURCE_INVALID", "预览来源必须是 dataset 或 batch 工厂。")
     source_entrypoint = source.get("entrypoint")
     parameters = source.get("parameters", {})
+    binding = source.get("binding")
+    if binding is not None and (source["kind"] != "batch" or binding != "single-raw"):
+        raise UserError("PREVIEW_BINDING_UNSUPPORTED", "数据预览只支持批次工厂的 single-raw 整体模式，或不指定绑定。",
+                        "选择批次工厂的整体预览，或移除预览绑定；尚未调用数据工厂。")
     if not isinstance(source_entrypoint, str) or not source_entrypoint.strip() or not isinstance(parameters, dict):
         raise UserError("PREVIEW_SOURCE_INVALID", "预览来源需要 module:callable 和 JSON 对象参数。")
 
@@ -152,9 +158,32 @@ def run_preview_operation(request, torch_module, resolve_entrypoint, source_mani
     _, _, sampled_value = make_batch(batch_request, torch_module, resolve_entrypoint)
     observation = batch_request.get("_data_observation")
     count = observation.get("sampling", {}).get("actual_samples") if isinstance(observation, dict) else None
-    if type(count) is not int or count < 1:
-        count = _infer_batch_count(sampled_value, request.get("samples", 12))
-    samples = _split_preview_batch(sampled_value, count)
+    # This built-in factory explicitly returns a named BCHW image batch and a
+    # corresponding named target. Arbitrary batch factories remain unsplit.
+    graph_image = source["kind"] == "batch" and source_entrypoint == "model_maven_worker.data.presets:graph_image_batch"
+    effective_split = request.get("split")
+    if graph_image:
+        input_name, target_name = parameters.get("input_name"), parameters.get("target_name")
+        kwargs = sampled_value.get("kwargs") if isinstance(sampled_value, dict) else None
+        loss_inputs = sampled_value.get("loss_inputs") if isinstance(sampled_value, dict) else None
+        targets = loss_inputs.get("targets") if isinstance(loss_inputs, dict) else None
+        dataset = loss_inputs.get("dataset") if isinstance(loss_inputs, dict) else None
+        image = kwargs.get(input_name) if isinstance(kwargs, dict) and isinstance(input_name, str) else None
+        target = targets.get(target_name) if isinstance(targets, dict) and isinstance(target_name, str) else None
+        if (not isinstance(image, torch_module.Tensor) or image.ndim != 4 or not isinstance(target, torch_module.Tensor)
+                or target.ndim < 1 or image.shape[0] < 1 or image.shape[0] != target.shape[0]
+                or not isinstance(dataset, dict) or dataset.get("split") not in {"train", "validation", "test"}):
+            raise UserError("GRAPH_IMAGE_PREVIEW_INVALID", "图像批次的输入和目标不符合已声明的批次契约。")
+        count = int(image.shape[0])
+        effective_split = dataset["split"]
+    if type(count) is int and count > 0:
+        samples = _split_preview_batch(sampled_value, count)
+        sample_interpretation = "graph_image_batch_samples" if graph_image else "dataset_collated_samples"
+    else:
+        # Arbitrary factories can return a single matrix, an already batched
+        # tensor, or nested inputs. Shape alone cannot distinguish them.
+        samples = [sampled_value]
+        sample_interpretation = "whole_factory_output_batch_axis_unknown"
     samples = samples[:request.get("samples", 12)]
     if not samples:
         raise UserError("PREVIEW_SAMPLES_EMPTY", "来源没有返回可预览样本。")
@@ -189,7 +218,8 @@ def run_preview_operation(request, torch_module, resolve_entrypoint, source_mani
     ).hexdigest()
     data_observation = observation or {
         "source": source_entrypoint,
-        "split": request.get("split"),
+        "split": effective_split,
+        "augment_selection": request.get("augment_selection"),
         "fingerprint": request.get("fingerprint"),
         "sample_count": len(samples),
         "stable_sample_ids": False,
@@ -198,8 +228,10 @@ def run_preview_operation(request, torch_module, resolve_entrypoint, source_mani
     sample_ids = data_observation.get("sampling", {}).get("sample_ids", [])
     stable_sample_ids = bool(data_observation.get("sampling", {}).get("stable_sample_ids"))
     if source["kind"] == "batch":
-        stable_sample_ids = bool(request.get("fingerprint"))
-        sample_ids = [f"{request.get('fingerprint')}:{index}" for index in range(len(samples))] if stable_sample_ids else []
+        # A declared data version identifies neither the factory's internal
+        # state nor a particular returned sample at an index.
+        stable_sample_ids = False
+        sample_ids = []
     renderer = preview_request.get("renderer", "builtin.auto")
     renderer_version = preview_request.get("renderer_version", RENDERER_VERSION)
     custom_renderer = None
@@ -211,12 +243,13 @@ def run_preview_operation(request, torch_module, resolve_entrypoint, source_mani
     identity = {
         "source_kind": source["kind"],
         "source_entrypoint": source_entrypoint,
+        "batch_binding": source.get("binding") if source["kind"] == "batch" else None,
         "source_parameters_sha256": hashlib.sha256(
             json.dumps(parameters, sort_keys=True, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode("utf-8")
         ).hexdigest(),
         "source_manifest_sha256": source_digest,
         "data_fingerprint": request.get("fingerprint"),
-        "split": request.get("split"),
+        "split": effective_split,
         "sampling_algorithm": data_observation.get("sampling", {}).get("algorithm", "batch-factory-v1"),
         "sample_ids": sample_ids,
         "stable_sample_ids": stable_sample_ids,
@@ -226,15 +259,23 @@ def run_preview_operation(request, torch_module, resolve_entrypoint, source_mani
             json.dumps(transforms, sort_keys=True, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode("utf-8")
         ).hexdigest(),
         "transform_registry_version": TRANSFORM_REGISTRY_VERSION,
+        "runtime_paths": {"working_directory": request.get("runtime", {}).get("working_directory"),
+                          "project_import_roots": request.get("runtime", {}).get("project_import_roots")},
     }
     signature = preview_signature(identity, renderer, renderer_version)
     scope = {
         "source_kind": source["kind"],
         "source_entrypoint": source_entrypoint,
-        "split": request.get("split"),
+        "runtime_paths": identity["runtime_paths"],
+        "batch_binding": source.get("binding") if source["kind"] == "batch" else None,
+        "split": effective_split,
+        "preview_split_request": request.get("split"),
+        "augment_selection": request.get("augment_selection"),
         "requested_samples": request.get("samples", 12),
         "actual_samples": len(samples),
+        "sample_interpretation": sample_interpretation,
         "seed": seed,
+        "seed_decimal": str(seed),
         "sampling_algorithm": identity["sampling_algorithm"],
         "stable_sample_ids": stable_sample_ids,
         "sample_ids_sha256": hashlib.sha256(
@@ -263,33 +304,20 @@ def run_preview_operation(request, torch_module, resolve_entrypoint, source_mani
         "data_observation": observation,
         "stable_sample_ids": stable_sample_ids,
         "transform_observations": transform_observations,
+        # Bounded, value-free structure for the terminal report. HTML remains
+        # the full artifact and may also include labels or sample identifiers.
+        "structure_summaries": [_structure_summary(sample) for sample in samples[:3]]
+        if renderer == "builtin.summary" else [],
     }
-
-
-def _infer_batch_count(value, maximum):
-    if hasattr(value, "shape") and hasattr(value, "device"):
-        shape = tuple(int(item) for item in value.shape)
-        if len(shape) >= 4:
-            return min(shape[0], maximum)
-        if len(shape) == 3 and shape[0] not in {1, 3, 4}:
-            return min(shape[0], maximum)
-    if isinstance(value, dict):
-        counts = [_infer_batch_count(item, maximum) for item in value.values()]
-        return max(counts, default=1)
-    if isinstance(value, (tuple, list)):
-        counts = [_infer_batch_count(item, maximum) for item in value]
-        return max(counts, default=1)
-    return 1
 
 
 def _split_preview_batch(value, count):
     if hasattr(value, "shape") and hasattr(value, "device"):
         shape = tuple(int(item) for item in value.shape)
-        is_batched_image = len(shape) >= 4 or (
-            len(shape) == 3 and shape[0] not in {1, 3, 4}
-        )
-        is_batched_feature = len(shape) in {1, 2}
-        if shape and (is_batched_image or is_batched_feature) and shape[0] >= count:
+        # This path is only used after Dataset sampling reports a count and
+        # the adapter has collated the sampled values, not for arbitrary
+        # factory outputs with unknown batch semantics.
+        if shape and shape[0] >= count:
             return [value[index] for index in range(count)]
         return [value]
 

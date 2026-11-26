@@ -4,14 +4,22 @@ use crate::{
     domain::capability::annotate_worker_request,
 };
 use sha2::{Digest, Sha256};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static PREVIEW_NONCE: AtomicU64 = AtomicU64::new(0);
 
 pub(super) fn handle<B: Backend>(app: &Application<B>, cli: &Cli, command: &DataCommand) -> Report {
     match command {
         DataCommand::Presets { query } => {
+            let python = match require_python(cli, "preset_catalog") {
+                Ok(value) => value,
+                Err(report) => return report,
+            };
             let mut request = serde_json::json!({
                 "protocol_version": crate::domain::PROTOCOL_VERSION,
                 "operation": "preset_catalog",
                 "query": query,
+                "runtime": {"python_executable": python},
             });
             annotate_worker_request(&mut request);
             app.backend.execute(&request)
@@ -23,6 +31,10 @@ pub(super) fn handle<B: Backend>(app: &Application<B>, cli: &Cli, command: &Data
             apply_exclusions,
             clear_exclusions,
         } => {
+            let python = match require_python(cli, "data_index") {
+                Ok(value) => value,
+                Err(report) => return report,
+            };
             let project_root = match std::env::current_dir().and_then(|path| path.canonicalize()) {
                 Ok(path) => path,
                 Err(error) => {
@@ -43,7 +55,7 @@ pub(super) fn handle<B: Backend>(app: &Application<B>, cli: &Cli, command: &Data
                 "exclude_files": exclude_files,
                 "apply_exclusions": apply_exclusions,
                 "clear_exclusions": clear_exclusions,
-                "runtime": {"python_executable": cli.python.as_deref().unwrap_or("python3")}
+                "runtime": {"python_executable": python}
             });
             annotate_worker_request(&mut request);
             app.backend.execute(&request)
@@ -54,8 +66,11 @@ pub(super) fn handle<B: Backend>(app: &Application<B>, cli: &Cli, command: &Data
         DataCommand::Preview {
             dataset,
             batch,
+            whole_batch,
             parameters: raw_parameters,
             split,
+            no_split,
+            augment_split,
             samples,
             scan_limit,
             fingerprint,
@@ -73,8 +88,10 @@ pub(super) fn handle<B: Backend>(app: &Application<B>, cli: &Cli, command: &Data
             cli,
             dataset.as_deref(),
             batch.as_deref(),
+            *whole_batch,
             raw_parameters,
-            split,
+            if *no_split { None } else { Some(split.as_str()) },
+            augment_split.as_deref(),
             *samples,
             *scan_limit,
             fingerprint.as_deref(),
@@ -119,7 +136,7 @@ fn csv_template<B: Backend>(app: &Application<B>, apply: bool, if_plan: Option<&
     }
     let plan = json!({
         "version":1,"project_root":root,"file":"model_csv.py","entrypoint":"model_csv:batch",
-        "source":source,"format":"typed_csv_v2","dtypes":["float32","float64","float16","int64","bool"],
+        "source":source,"format":"typed_csv_v5","dtypes":"runtime_real_numeric_and_bool","targets_optional":true,
         "max_bytes":16777216,"max_rows":100000,"max_selected_columns":256,"max_selected_values":2000000,
         "sampling":"sequential_cyclic","automatic_splits":false,"automatic_shuffle":false
     });
@@ -157,8 +174,10 @@ fn preview<B: Backend>(
     cli: &Cli,
     dataset: Option<&str>,
     batch: Option<&str>,
+    whole_batch: bool,
     raw_parameters: &[String],
-    split: &str,
+    split: Option<&str>,
+    augment_split: Option<&str>,
     samples: usize,
     scan_limit: Option<u32>,
     fingerprint: Option<&str>,
@@ -173,6 +192,10 @@ fn preview<B: Backend>(
     destination: &Path,
 ) -> Report {
     let operation = "preview";
+    let python = match require_python(cli, operation) {
+        Ok(value) => value,
+        Err(report) => return report,
+    };
     if dataset.is_some() == batch.is_some() {
         return Report::error(
             operation,
@@ -180,6 +203,15 @@ fn preview<B: Backend>(
             "请选择一个 Dataset 工厂或批次工厂。",
             "使用 --dataset module:factory 或 --batch module:factory。",
         );
+    }
+    if whole_batch && batch.is_none() {
+        return Report::error(operation, "PREVIEW_BINDING_CONFLICT", "整体预览只能用于批次工厂。", "选择 --batch 并移除 --dataset。 ");
+    }
+    if transforms_path.is_some() && augment_split.is_some() {
+        return Report::error(operation, "PREVIEW_TRANSFORMS_CONFLICT", "不能同时选择变换文件和项目增强流水线。", "只保留 --transforms 或 --augment-split。 ");
+    }
+    if augment_split.is_some_and(|value| !matches!(value, "train" | "eval" | "none")) {
+        return Report::error(operation, "PREVIEW_TRANSFORMS_INVALID", "项目增强选择无效。", "选择 train、eval 或 none。 ");
     }
     if scan_limit
         .is_some_and(|limit| dataset.is_none() || (limit as usize) < samples || limit > 100_000)
@@ -191,7 +223,7 @@ fn preview<B: Backend>(
             "调整 --scan-limit 或 --samples 后重试。",
         );
     }
-    if split.trim().is_empty() || split.len() > 128 || split.chars().any(char::is_control) {
+    if split.is_some_and(|value| value.trim().is_empty() || value.len() > 128 || value.chars().any(char::is_control)) {
         return Report::error(
             operation,
             "PREVIEW_SPLIT_INVALID",
@@ -219,7 +251,7 @@ fn preview<B: Backend>(
             );
         }
     };
-    let transforms = match configured_transforms(app, transforms_path, split) {
+    let transforms = match configured_transforms(app, transforms_path, split, augment_split) {
         Ok(result) => result,
         Err(error) => {
             let (code, message) = match error {
@@ -258,6 +290,31 @@ fn preview<B: Backend>(
     } else {
         "batch"
     };
+    let mut selected_runtime = json!({});
+    match app.project_config.load(&root) {
+        Ok(Some(config)) => {
+            if crate::project_python_selection_changed(&root, cli, config["runtime_python"].as_str()) {
+                return Report::error(operation, "PROJECT_CONFIG_CONFLICT",
+                    "启动后项目 Python 选择发生变化。", "重新请求预览以使用当前项目解释器。");
+            }
+            super::run::apply_project_runtime_defaults(&config, &mut selected_runtime);
+        },
+        Ok(None) if crate::project_python_selection_changed(&root, cli, None) => {
+            return Report::error(operation, "PROJECT_CONFIG_CONFLICT",
+                "启动后项目 Python 选择发生变化。", "重新请求预览以使用当前项目解释器。");
+        },
+        Ok(None) => {},
+        Err(error) => return Report::error(operation, "PROJECT_CONFIG_INVALID", error,
+            "检查项目配置；不会忽略运行时路径。"),
+    }
+    if let Err(report) = super::run::resolve_worker_directory(operation, &root, &mut selected_runtime, false) {
+        return report;
+    }
+    if let Err(report) = super::run::resolve_worker_import_roots(operation, &root, &mut selected_runtime, false) {
+        return report;
+    }
+    let custom_paths = !selected_runtime["working_directory"].is_null()
+        || !selected_runtime["project_import_roots"].is_null();
     let source_entrypoint = dataset.or(batch).unwrap_or_default();
     if !valid_entrypoint(source_entrypoint) {
         return Report::error(
@@ -288,12 +345,20 @@ fn preview<B: Backend>(
             "移除这两个参数，或将 --renderer 设置为 custom。",
         );
     }
-    let fingerprints = match app.previews.project_fingerprints(
-        &root,
-        source_entrypoint,
-        renderer_entrypoint,
-        &transforms.steps,
-    ) {
+    // Custom paths disable reuse below: scanning the default project tree
+    // cannot establish freshness for arbitrary selected paths and resources.
+    let fingerprint_result = if custom_paths {
+        Ok(crate::ports::PreviewFingerprints {
+            project_python_sha256: "not-captured-custom-runtime-paths".into(),
+            environment_lock_sha256: None,
+            source_entrypoint_is_local: false,
+            renderer_entrypoint_is_local: None,
+            custom_transform_entrypoints_are_local: Vec::new(),
+        })
+    } else {
+        app.previews.project_fingerprints(&root, source_entrypoint, renderer_entrypoint, &transforms.steps)
+    };
+    let fingerprints = match fingerprint_result {
         Ok(fingerprints) => fingerprints,
         Err(PreviewRepositoryError::SourceFingerprintFailed(message)) => {
             return Report::error(
@@ -320,12 +385,25 @@ fn preview<B: Backend>(
             );
         }
     };
-    let seed = cli.seed.unwrap_or(0);
+    let seed = match cli.seed {
+        Some(seed) => seed,
+        None => {
+            let mut bytes = [0_u8; 8];
+            if let Err(error) = getrandom::fill(&mut bytes) {
+                return Report::error(operation, "PREVIEW_SEED_UNAVAILABLE",
+                    format!("无法为数据预览生成采样种子：{error}"),
+                    "检查系统随机数来源，或通过 --seed 明确指定；预览尚未启动。");
+            }
+            u64::from_le_bytes(bytes)
+        }
+    };
     let mut request_identity = json!({
         "source_kind":source_kind,
         "source_entrypoint":source_entrypoint,
+        "batch_binding":if whole_batch { Some("single-raw") } else { None },
         "source_parameters":params,
         "split":split,
+        "augment_selection":augment_split,
         "samples":samples,
         "seed":seed,
         "sampling_contract":"indexed-rank-v1-or-large-counter-v2-stream-window-v1",
@@ -334,29 +412,22 @@ fn preview<B: Backend>(
         "transforms_sha256":transforms.sha256,
         "renderer":renderer,
         "renderer_entrypoint":renderer_entrypoint,
-        "renderer_version":renderer_version.unwrap_or("1"),
+        "renderer_version":renderer_version.unwrap_or("2"),
         "project_python_sha256":fingerprints.project_python_sha256,
         "environment_lock_sha256":fingerprints.environment_lock_sha256,
-        "python_executable":cli.python.as_deref().unwrap_or("python3"),
+        "python_executable":python,
+        "runtime_paths":selected_runtime,
     });
-    // Unknown data identity or an unlocked runtime must never turn a prior result into a cache hit.
-    let cacheable = fingerprint.is_some()
-        && fingerprints.environment_lock_sha256.is_some()
-        && fingerprints.source_entrypoint_is_local
-        && fingerprints.renderer_entrypoint_is_local.unwrap_or(true)
-        && fingerprints
-            .custom_transform_entrypoints_are_local
-            .iter()
-            .all(|is_local| *is_local);
-    if !cacheable {
-        request_identity["request_nonce"] = json!(
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_nanos()
-                .to_string()
-        );
-    }
+    // A user-declared dataset version and lockfile cannot establish the
+    // current output of a stateful or random factory, transform, or renderer.
+    // Start each requested observation afresh until an actual content-bound
+    // replay contract is available. Existing completed reports remain browsable.
+    request_identity["request_nonce"] = json!(format!(
+        "{}-{}-{}",
+        std::process::id(),
+        SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos(),
+        PREVIEW_NONCE.fetch_add(1, Ordering::Relaxed)
+    ));
     let base_signature = match serde_json::to_vec(&request_identity) {
         Ok(bytes) => sha256(&bytes),
         Err(error) => {
@@ -412,18 +483,21 @@ fn preview<B: Backend>(
         "operation":"preview",
         "project_root":root,
         "runtime":{
-            "python_executable":cli.python.as_deref().unwrap_or("python3"),
-            "timeout_seconds":cli.timeout.unwrap_or(120)
+            "python_executable":python,
+            "timeout_seconds":cli.timeout.unwrap_or(120),
+            "working_directory":selected_runtime["working_directory"],
+            "project_import_roots":selected_runtime["project_import_roots"]
         },
         "preview_source":{
             "kind":source_kind,
             "entrypoint":source_entrypoint,
             "parameters":params,
-            "binding":Value::Null
+            "binding":if whole_batch { Some("single-raw") } else { None }
         },
         "samples":samples,
         "scan_limit":scan_limit,
         "split":split,
+        "augment_selection":augment_split,
         "seed":seed,
         "fingerprint":fingerprint,
         "transforms":transforms.steps,
@@ -438,7 +512,7 @@ fn preview<B: Backend>(
                 _ => "builtin.auto",
             },
             "renderer_entrypoint":renderer_entrypoint,
-            "renderer_version":renderer_version.unwrap_or("1"),
+            "renderer_version":renderer_version.unwrap_or("2"),
             "title":"Model-Maven data preview"
         }
     });
@@ -508,17 +582,28 @@ fn preview<B: Backend>(
         false,
     );
     report.data["transform_observations"] = transform_observations;
+    if report.status == "success" {
+        report.data["structure_summaries"] = worker_report.data["structure_summaries"].clone();
+    }
     report
 }
 
 fn configured_transforms<B: Backend>(
     app: &Application<B>,
     path: Option<&Path>,
-    split: &str,
+    split: Option<&str>,
+    augment_override: Option<&str>,
 ) -> Result<crate::ports::PreviewTransforms, PreviewRepositoryError> {
     if path.is_some() {
         return app.previews.read_transforms(path);
     }
+    if augment_override == Some("none") {
+        return app.previews.read_transforms(None);
+    }
+    let inferred = split.map(|value| if value == "train" { "train" } else { "eval" });
+    let Some(augment_split) = augment_override.or(inferred) else {
+        return app.previews.read_transforms(None);
+    };
     let root = app.previews.project_root()?;
     let config = app
         .project_config
@@ -527,7 +612,6 @@ fn configured_transforms<B: Backend>(
     let Some(config) = config else {
         return app.previews.read_transforms(None);
     };
-    let augment_split = if split == "train" { "train" } else { "eval" };
     let Some(augment) = config.get("augment") else {
         return app.previews.read_transforms(None);
     };
@@ -695,18 +779,7 @@ fn delivery_report(
 }
 
 fn valid_entrypoint(value: &str) -> bool {
-    let Some((module, callable)) = value.split_once(':') else {
-        return false;
-    };
-    let valid_identifier = |part: &str| {
-        !part.is_empty()
-            && part.split('.').all(|name| {
-                let mut bytes = name.bytes();
-                matches!(bytes.next(), Some(b'a'..=b'z' | b'A'..=b'Z' | b'_'))
-                    && bytes.all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
-            })
-    };
-    !value.contains(char::is_whitespace) && valid_identifier(module) && valid_identifier(callable)
+    python_entrypoint(value)
 }
 
 fn sha256(bytes: &[u8]) -> String {

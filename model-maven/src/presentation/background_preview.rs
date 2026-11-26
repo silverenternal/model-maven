@@ -20,6 +20,8 @@ pub struct BackgroundPreview {
     stderr: tempfile::NamedTempFile,
     started: Instant,
     status: Option<ExitStatus>,
+    cancellation_requested: bool,
+    cancellation_escalated: bool,
 }
 
 impl BackgroundPreview {
@@ -59,6 +61,8 @@ impl BackgroundPreview {
             stderr,
             started: Instant::now(),
             status: None,
+            cancellation_requested: false,
+            cancellation_escalated: false,
         })
     }
 
@@ -108,18 +112,25 @@ impl BackgroundPreview {
         {
             let result = unsafe { libc::kill(self.child.id() as libc::pid_t, libc::SIGINT) };
             if result == -1 {
-                return Err(format!(
-                    "无法请求预览协作取消：{}",
-                    std::io::Error::last_os_error()
-                ));
+                let error = std::io::Error::last_os_error();
+                if error.raw_os_error() == Some(libc::ESRCH)
+                    && let Some(status) = self.try_wait()?
+                {
+                    return Ok(status);
+                }
+                return Err(format!("无法请求预览协作取消：{error}"));
             }
+            self.cancellation_requested = true;
             let deadline = Instant::now() + Duration::from_secs(10);
             loop {
                 if let Some(status) = self.try_wait()? {
                     return Ok(status);
                 }
                 if Instant::now() >= deadline {
-                    let _ = self.child.kill();
+                    self.child.kill().map_err(|error| {
+                        format!("预览未在协作取消期限内退出，且无法强制终止：{error}")
+                    })?;
+                    self.cancellation_escalated = true;
                     return self.wait();
                 }
                 std::thread::sleep(Duration::from_millis(25));
@@ -143,12 +154,47 @@ impl BackgroundPreview {
                     .read_to_string(&mut output)
             })
             .map_err(|error| format!("无法读取预览报告：{error}"))?;
-        serde_json::from_str(&output).map_err(|error| {
+        let report = serde_json::from_str::<Report>(&output).map_err(|error| {
+            let cancellation = self
+                .cancellation_summary(None)
+                .map(|summary| format!("；{summary}"))
+                .unwrap_or_default();
             format!(
-                "后台进程没有返回有效 JSON 报告：{error}；stderr：{}",
+                "后台进程没有返回有效 JSON 报告：{error}；stderr：{}{cancellation}",
                 self.read_stderr().unwrap_or_else(|_| "不可读取".into())
             )
-        })
+        })?;
+        if let Some(summary) = self.cancellation_summary(Some(&report)) {
+            eprintln!("{summary}");
+        }
+        Ok(report)
+    }
+
+    fn cancellation_summary(&self, report: Option<&Report>) -> Option<String> {
+        if !self.cancellation_requested {
+            return None;
+        }
+        let interrupted_report = report.is_some_and(|report| {
+            report
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "USER_INTERRUPTED")
+        });
+        let outcome = if interrupted_report {
+            "报告确认操作已响应中断并取消。"
+        } else if report.is_some_and(Report::success) {
+            "进程在取消请求后正常完成；结果已返回，因此不标记为取消。"
+        } else if report.is_some() {
+            "进程在取消请求后结束，但报告不是中断确认；按报告结果处理。"
+        } else {
+            "CLI 进程已退出，但没有可验证的有效报告；工作进程和操作结果未知。"
+        };
+        let escalation = if self.cancellation_escalated {
+            "协作取消等待超时后已强制终止 CLI 进程。"
+        } else {
+            "已发送协作取消请求并观察到进程退出。"
+        };
+        Some(format!("后台预览取消结果：{escalation}{outcome}"))
     }
 
     pub fn read_stderr(&mut self) -> Result<String, String> {
@@ -172,8 +218,11 @@ fn command_args(command: &Command, cli: &Cli) -> Result<Vec<String>, String> {
             DataCommand::Preview {
                 dataset,
                 batch,
+                whole_batch,
                 parameters,
                 split,
+                no_split,
+                augment_split,
                 samples,
                 scan_limit,
                 fingerprint,
@@ -213,6 +262,9 @@ fn command_args(command: &Command, cli: &Cli) -> Result<Vec<String>, String> {
         (None, Some(entrypoint)) => args.extend(["--batch".into(), entrypoint.clone()]),
         _ => return Err("预览必须且只能选择一个 Dataset 或批次工厂。".into()),
     }
+    if *whole_batch {
+        args.push("--whole-batch".into());
+    }
     for parameter in parameters {
         args.extend(["--param".into(), parameter.clone()]);
     }
@@ -222,6 +274,12 @@ fn command_args(command: &Command, cli: &Cli) -> Result<Vec<String>, String> {
         "--samples".into(),
         samples.to_string(),
     ]);
+    if *no_split {
+        args.push("--no-split".into());
+    }
+    if let Some(value) = augment_split {
+        args.extend(["--augment-split".into(), value.clone()]);
+    }
     if let Some(scan_limit) = scan_limit {
         args.extend(["--scan-limit".into(), scan_limit.to_string()]);
     }

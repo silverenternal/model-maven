@@ -31,6 +31,7 @@ class EvaluationRuntime:
     verify_manifest: Callable[[dict], None]
     scalar_value: Callable[[Any, str], float]
     source_manifest: Callable[[str], dict] | None = None
+    prepare_device: Callable[[Any, dict], Any] | None = None
 
 
 class EvaluationContext:
@@ -41,6 +42,7 @@ class EvaluationContext:
         self.max_samples = max_samples
         self.max_preview_samples = max_preview_samples
         self._runtime = runtime
+        self.device = None
         self._metrics = {}
         self._samples_seen = None
         self._sample_previews = []
@@ -184,12 +186,26 @@ def run_evaluation(runtime, model, request, current_source_manifest=None):
     if expected_manifest is not None:
         runtime.verify_manifest(expected_manifest)
     payload, checkpoint_sha256 = _load_checkpoint(runtime, request.get("checkpoint_input"), request.get("expected_checkpoint_sha256"))
+    recorded_snapshot = payload.get("source_snapshot_sha256")
+    snapshot = request.get("code_snapshot")
+    evaluation_snapshot = snapshot.get("sha256") if isinstance(snapshot, dict) else None
+    def valid_digest(value):
+        return isinstance(value, str) and len(value) == 64 and all(char in "0123456789abcdef" for char in value)
+    snapshot_comparison = "unknown"
+    if valid_digest(recorded_snapshot) and valid_digest(evaluation_snapshot):
+        snapshot_comparison = "same" if recorded_snapshot == evaluation_snapshot else "different"
     try:
         model.load_state_dict(payload["model_state"], strict=True)
     except Exception as error:
         raise UserError("EVALUATION_MODEL_INCOMPATIBLE", f"checkpoint 权重与当前模型不兼容：{error}") from error
     if request.get("model_state_sha256") is not None and request["model_state_sha256"] != payload["model_state_sha256"]:
         raise UserError("EVALUATION_MODEL_INCOMPATIBLE", "评估请求的模型指纹与 checkpoint 不一致。")
+
+    device_report = None
+    if request.get("evaluation_device") is not None:
+        if runtime.prepare_device is None:
+            raise UserError("EVALUATION_DEVICE_UNSUPPORTED", "当前评估运行时不支持显式选择设备。")
+        device_report = runtime.prepare_device(model, request)
 
     try:
         data_factory = runtime.resolve_entrypoint(data_ref)
@@ -209,6 +225,8 @@ def run_evaluation(runtime, model, request, current_source_manifest=None):
         augmentations=evaluation_augment,
         seed=request.get("seed"),
     )
+    if device_report is not None:
+        context.device = device_report["device"]
     was_training = model.training
     model.eval()
     try:
@@ -288,6 +306,8 @@ def run_evaluation(runtime, model, request, current_source_manifest=None):
             "sample_limit": max_samples,
             "samples_evaluated": sample_count,
             "metrics": normalized,
+            "model_device": device_report,
+            "input_device_policy": "evaluator_owned",
             "custom_artifacts": result.get("artifacts", {}),
             "sample_previews": {
                 "limit": max_preview_samples,
@@ -303,6 +323,13 @@ def run_evaluation(runtime, model, request, current_source_manifest=None):
             },
         },
         "provenance": {
+            "source_snapshot_comparison": {
+                "status": snapshot_comparison,
+                "checkpoint_sha256": recorded_snapshot if valid_digest(recorded_snapshot) else None,
+                "evaluation_sha256": evaluation_snapshot if valid_digest(evaluation_snapshot) else None,
+                "scope": "complete-project-python-snapshot-manifest",
+                "note": "A difference may include evaluator-only changes; it does not establish an effect on metrics. Dependencies and data are not covered.",
+            },
             "evaluation_source_manifest": current_source_manifest,
             "evaluation_source_sha256": source_digest,
             "data_identity": data_identity,

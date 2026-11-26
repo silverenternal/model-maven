@@ -23,6 +23,7 @@ pub struct WorkerRequest<'a> {
     pub search: Option<&'a str>,
     pub call: &'a str,
     pub contract: Option<&'a std::path::Path>,
+    pub if_contract_sha256: Option<&'a str>,
     pub data_fingerprint: Option<&'a str>,
     pub local_probe: bool,
     pub loss: Option<&'a str>,
@@ -42,6 +43,10 @@ pub struct WorkerRequest<'a> {
     pub runtime: &'a Value,
     pub steps: Option<u32>,
     pub optimizer: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub optimizer_factory: Option<&'a str>,
+    #[serde(skip_serializing_if = "Map::is_empty")]
+    pub optimizer_params: &'a Map<String, Value>,
     pub lr: Option<f64>,
     pub weight_decay: Option<f64>,
     pub checkpoint_every: Option<u32>,

@@ -45,10 +45,19 @@ def main():
                           "files": [str((target / path.name).relative_to(output)) for path in unique]})
     sysroot = Path(subprocess.check_output(["rustc", "--print", "sysroot"], text=True).strip())
     rust_docs = sysroot / "share/doc/rust"
+    copyright_file = rust_docs / "COPYRIGHT-library.html"
+    licenses_dir = rust_docs / "licenses"
+    if not copyright_file.is_file() or not licenses_dir.is_dir():
+        # Distribution-packaged Rust can split compiler documentation and
+        # copyright notices into separate system directories.
+        copyright_file = sysroot / "share/licenses/rust/COPYRIGHT-library.html.rustc"
+        licenses_dir = sysroot / "share/doc/rustc/licenses"
+    if not copyright_file.is_file() or not licenses_dir.is_dir():
+        raise FileNotFoundError("Rust standard-library copyright or license texts are unavailable in the active toolchain")
     rust_target = output / "rust-standard-library"
     rust_target.mkdir()
-    shutil.copy2(rust_docs / "COPYRIGHT-library.html", rust_target / "COPYRIGHT-library.html")
-    shutil.copytree(rust_docs / "licenses", rust_target / "licenses")
+    shutil.copy2(copyright_file, rust_target / "COPYRIGHT-library.html")
+    shutil.copytree(licenses_dir, rust_target / "licenses")
     (output / "inventory.json").write_text(json.dumps({
         "scope": f"{args.target} cargo metadata; includes dependency trees of CLI and TUI",
         "packages": inventory,

@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from ..protocol import UserError
+from ..run.provenance import check_snapshot_project_imports
 from .state import callable_checkpoint_context
 
 
@@ -189,6 +190,7 @@ def run_training_run(runtime, model, request, source_manifest):
             "completed_steps": 0,
             "run_signature": signature,
             "source_manifest": source_manifest,
+            "source_snapshot_sha256": (request.get("code_snapshot") or {}).get("sha256"),
             "runtime": runtime_description,
             "environment_inventory": request.get("_checkpoint_environment_inventory"),
             "model_state": model.state_dict(),
@@ -201,6 +203,8 @@ def run_training_run(runtime, model, request, source_manifest):
             "rng_state": runtime.checkpoint_rng_state(),
             "weight_migration": migration_report,
         }
+        check_snapshot_project_imports(request["project_root"], request.get("code_snapshot_root"),
+                                       import_roots=request.get("runtime", {}).get("project_import_roots"))
         initial_manifest = runtime.save_training_checkpoint(directory, migrated_payload)
         request["_migration_initial_checkpoint_sha256"] = initial_manifest["sha256"]
     resume_state_status = (
@@ -280,6 +284,7 @@ def run_training_run(runtime, model, request, source_manifest):
             "completed_steps": completed_steps,
             "run_signature": signature,
             "source_manifest": source_manifest,
+            "source_snapshot_sha256": (request.get("code_snapshot") or {}).get("sha256"),
             "runtime": runtime_description,
             "environment_inventory": request.get("_checkpoint_environment_inventory"),
             "model_state": model.state_dict() if model is not None else None,
@@ -292,6 +297,8 @@ def run_training_run(runtime, model, request, source_manifest):
             "loop_state": loop_state,
             "rng_state": runtime.checkpoint_rng_state(),
         }
+        check_snapshot_project_imports(request["project_root"], request.get("code_snapshot_root"),
+                                       import_roots=request.get("runtime", {}).get("project_import_roots"))
         manifest = runtime.save_training_checkpoint(directory, payload)
         request["_latest_checkpoint"] = manifest
         emit_progress(True)
@@ -337,5 +344,13 @@ def run_training_run(runtime, model, request, source_manifest):
             "_migration_initial_checkpoint_sha256"
         ]
     if request.get("_resume_checkpoint") is not None:
+        result["resume_batch_binding_evidence"] = (
+            "legacy_checkpoint_unverified" if request.get("_legacy_batch_binding_unverified")
+            else "checkpoint_signature_or_automatic"
+        )
         result["resume_checkpoint"] = request["_resume_checkpoint"]
+        result["resume_device_comparison"] = request.get("_resume_device_comparison", {
+            "status": "unknown", "compared_fields": [],
+            "note": "checkpoint 未提供可比较的设备观察。",
+        })
     return result

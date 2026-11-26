@@ -45,6 +45,11 @@ pub fn render(dimension: &Value, title: &str) -> Vec<String> {
             ));
         }
     }
+    let redacted = dimension["redacted_fields"]
+        .as_array().into_iter().flatten().filter_map(Value::as_str).collect::<Vec<_>>();
+    if !redacted.is_empty() {
+        lines.push(format!("  已脱敏，无法比较：{}", redacted.join("、")));
+    }
     lines
 }
 

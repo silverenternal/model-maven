@@ -1,22 +1,34 @@
 """Read-only preview of explicit rules bound to manually marked model ports."""
 
 import re
-import threading
+import json
 import uuid
 import hashlib
 from contextlib import ExitStack, contextmanager
 
 from ..model.probe import implementation_anchor
 from ..model.structure import module_entries
-from ..model.semantics import list_marks
+from ..model.semantics import implementation_identity, list_marks, runtime_paths_digest
 from ..protocol import UserError
 from .custom_rules import evaluate_plugin, resolve_plugin
 
 
-_PATH_TOKEN = re.compile(r"(?:\.([A-Za-z_][A-Za-z0-9_-]*)|\[([0-9]+)\])")
+_PATH_TOKEN = re.compile(r'(?:\.([^\.\[\]]+)|\[([0-9]+)\]|\[("(?:[^"\\]|\\.)*")\])')
 _MAX_INVOCATIONS_PER_RULE = 128
 _MAX_TRACKED_SAMPLE_IDS = 10_000
 _MAX_TRACKED_VIOLATING_IDS = 10_000
+_MISSING_PORT = object()
+
+
+def _port_observation_scope(port):
+    """Describe hook timing, not evidence that a particular call occurred."""
+    is_input = isinstance(port, str) and (port == "inputs" or port.startswith("inputs.") or port.startswith("inputs["))
+    return {
+        "method": "post_forward_hook",
+        "input_reference_may_be_mutated": is_input,
+        "prevents_module_call": False,
+        "rolls_back_user_side_effects": False,
+    }
 
 
 def _sample_localization_summary(localized=False, rules=None):
@@ -25,12 +37,12 @@ def _sample_localization_summary(localized=False, rules=None):
             "status": "reported",
             "stable_ids_available": True,
             "rules": rules or [],
-            "reason": "样本 ID 与人工指定的张量样本轴逐项匹配。",
+            "reason": "已列出规则存在用户声明的样本 ID 与指定轴数量匹配的观察；不验证 ID 真实性、其他调用或数据集覆盖。",
         }
     return {
         "status": "insufficient",
         "stable_ids_available": False,
-        "reason": "监督规则观测模块端口和批次 Tensor，但没有将观测关联到已验证的稳定 sample_id。",
+        "reason": "没有足够证据将完整的已记录调用关联到用户声明的 sample_id；不推断数据集覆盖。",
     }
 
 
@@ -67,11 +79,14 @@ def prepare_training_supervision(model, request, torch_module):
         )
     marks = marks_report["marks"]
     bound = []
+    implementation_cache = {}
     for mark in marks:
         rules = mark.get("rules", [])
         if not rules:
             continue
-        if mark["binding_status"] != "current":
+        external_unverified = (mark["binding_status"] == "unverified"
+                               and str(mark.get("anchor", {}).get("source_file", "")).startswith("@external:"))
+        if mark["binding_status"] != "current" and not external_unverified:
             raise UserError(
                 "SUPERVISION_MARK_STALE",
                 f"语义标记 {mark['id']} 已过期，不能用于训练。",
@@ -79,6 +94,9 @@ def prepare_training_supervision(model, request, torch_module):
                 {"mark_id": mark["id"], "reason": mark.get("stale_reason")},
             )
         context = mark.get("binding_context", {})
+        if context.get("runtime_paths_sha256") != runtime_paths_digest(request.get("runtime")):
+            raise UserError("SUPERVISION_MARK_STALE", f"标记 {mark['id']} 的运行目录或模块搜索目录已变化。",
+                            "使用当前运行时路径重新前向并手动重新绑定标记。")
         expected_model = origin.get("model")
         if context.get("model") != expected_model:
             raise UserError("SUPERVISION_MARK_STALE", f"标记 {mark['id']} 属于不同模型入口。")
@@ -104,10 +122,13 @@ def prepare_training_supervision(model, request, torch_module):
                 f"训练模型中无法唯一定位标记 {mark['id']} 的模块 {mark['module_path']}。",
             )
         module = candidates[0][0]
-        anchor = implementation_anchor(
-            module, request.get("code_snapshot_root", request["project_root"])
-        )
-        if anchor != mark.get("anchor"):
+        module_type = type(module)
+        if module_type not in implementation_cache:
+            implementation_cache[module_type] = implementation_identity(implementation_anchor(
+                module, request.get("code_snapshot_root") or request["project_root"]
+            ))
+        anchor = implementation_cache[module_type]
+        if anchor is None or anchor != implementation_identity(mark.get("anchor")):
             raise UserError(
                 "SUPERVISION_MARK_STALE",
                 f"标记 {mark['id']} 当前对应的实现源码已变化。",
@@ -147,6 +168,7 @@ class TrainingSupervision:
         self.sample_coverage = {}
         self.prior_untracked_steps = 0
         self._active = None
+        self._failure = None
         for entry in bound_marks:
             for rule in entry["mark"].get("rules", []):
                 self.observations[rule["id"]] = {
@@ -155,11 +177,14 @@ class TrainingSupervision:
                     "role": entry["mark"]["role"],
                     "module_path": entry["mark"]["module_path"],
                     "port": entry["mark"]["port"],
+                    "observation_scope": _port_observation_scope(entry["mark"]["port"]),
                     "kind": rule["kind"],
                     "mode": rule["mode"],
                     "expected": {key: rule[key] for key in ("min", "max", "weight", "target_path", "axis") if rule.get(key) is not None},
                     "plugin_entrypoint": rule.get("plugin", {}).get("entrypoint") if isinstance(rule.get("plugin"), dict) else None,
                     "steps_observed": 0,
+                    "unmeasured_calls": 0,
+                    "steps_with_unmeasured_calls": 0,
                     "element_count": 0,
                     "violation_count": 0,
                     "weighted_penalty_sum": 0.0,
@@ -242,12 +267,17 @@ class TrainingSupervision:
 
     @contextmanager
     def capture_step(self, step, batch=None):
+        # A user-owned loop may catch an exception outside its supervision
+        # context and try to begin another step. Do not erase that failure.
+        self._raise_captured_failure()
         self.step = step
+        self._failure = None
         self._active_batch = batch
         self._active = {
             rule_id: {
                 "penalties": [],
                 "observations": [],
+                "pending_calls": 0,
                 "weighted_penalty": None,
                 "violating_sample_ids": set(),
                 "violating_ids_truncated": False,
@@ -255,6 +285,7 @@ class TrainingSupervision:
             for rule_id in self.observations
         }
         self._active_sample_ids = _sample_ids_from_batch(batch)
+        self._sample_ids_changed_after_observation = False
         self._update_started = False
         self._penalty_added = False
         try:
@@ -263,15 +294,31 @@ class TrainingSupervision:
                     mark = entry["mark"]
                     module = entry["module"]
 
+                    def before(current, args, kwargs, *, selected=entry):
+                        if current is selected["module"] and self._active is not None:
+                            for rule in selected["mark"].get("rules", []):
+                                self._active[rule["id"]]["pending_calls"] += 1
+
                     def after(current, args, kwargs, output, *, selected=entry):
                         if current is not selected["module"]:
                             return
-                        selected_mark = selected["mark"]
-                        inputs = {"args": args, "kwargs": kwargs}
-                        value = _resolve_port((inputs, output), selected_mark["port"])
-                        for rule in selected_mark.get("rules", []):
-                            self._observe(selected_mark, rule, value)
+                        try:
+                            selected_mark = selected["mark"]
+                            inputs = {"args": args, "kwargs": kwargs}
+                            value = _resolve_port((inputs, output), selected_mark["port"])
+                            for rule in selected_mark.get("rules", []):
+                                self._active[rule["id"]]["pending_calls"] -= 1
+                                self._observe(selected_mark, rule, value)
+                        except Exception as error:
+                            # Project code may catch a hook exception. Retain
+                            # the first failure until this step is finished so
+                            # the managed backward/update cannot silently pass.
+                            if self._failure is None:
+                                self._failure = error
+                            raise
 
+                    pre_handle = module.register_forward_pre_hook(before, with_kwargs=True)
+                    stack.callback(pre_handle.remove)
                     stack.enter_context(_hook_context(module, after))
                 yield
         finally:
@@ -282,6 +329,8 @@ class TrainingSupervision:
         if self._active is None:
             raise UserError("SUPERVISION_SAMPLE_IDS_INVALID", "sample IDs 只能在监督训练步骤中报告。")
         if stable is not True:
+            if self._active_sample_ids is not None and any(item["observations"] for item in self._active.values()):
+                self._sample_ids_changed_after_observation = True
             self._active_sample_ids = None
             return
         validated = _validate_sample_ids(sample_ids)
@@ -290,6 +339,8 @@ class TrainingSupervision:
                 "SUPERVISION_SAMPLE_IDS_CONFLICT",
                 "batch metadata 与 context.report_sample_ids() 提供的样本 ID 不一致。",
             )
+        if self._active_sample_ids != validated and any(item["observations"] for item in self._active.values()):
+            self._sample_ids_changed_after_observation = True
         self._active_sample_ids = validated
 
     def _observe(self, mark, rule, value):
@@ -303,10 +354,10 @@ class TrainingSupervision:
                 {"mark_id": mark["id"], "rule_id": rule["id"], "step": self.step},
             )
         rule_id = rule["id"]
-        if value is None:
-            return
         penalty_tensor = None
-        if rule["kind"] in {"custom-validator", "custom-penalty"}:
+        if value is _MISSING_PORT:
+            summary = {"status": "unsupported", "reason": "标记的端口在本次调用中不存在或无法解析。"}
+        elif rule["kind"] in {"custom-validator", "custom-penalty"}:
             summary = evaluate_plugin(
                 self.plugin_targets[rule_id], rule["plugin"], rule["kind"], value,
                 self._active_batch, self.torch, training=True,
@@ -346,7 +397,7 @@ class TrainingSupervision:
         if rule["mode"] == "require" and (summary["violation_count"] or summary.get("passed") is False):
             if rule["kind"] == "batch-alignment":
                 message = (
-                    f"输出形状 {summary['shape']} 与批次目标 {rule['target_path']} 的形状 "
+                    f"端口形状 {summary['shape']} 与批次目标 {rule['target_path']} 的形状 "
                     f"{summary['target_shape']} 在 axis {rule['axis']} 不匹配。"
                 )
             else:
@@ -354,9 +405,10 @@ class TrainingSupervision:
             raise UserError(
                 "SUPERVISION_REQUIRE_FAILED",
                 message,
-                "本步在 backward 和 optimizer update 之前拒绝；检查模型输出或调整已确认的约束。",
+                "本次规则在工具管理的反向和更新前拒绝；用户代码可能已有副作用，不会自动回滚。",
                 {"mark_id": mark["id"], "rule_id": rule_id, "step": self.step,
                  "module_path": mark["module_path"], "port": mark["port"],
+                 "observation_scope": _port_observation_scope(mark["port"]),
                  "violation_count": summary["violation_count"], "element_count": summary["element_count"],
                  "target_path": rule.get("target_path"), "axis": rule.get("axis"),
                  "sample_localization": summary.get("sample_localization"),
@@ -373,7 +425,7 @@ class TrainingSupervision:
                 raise UserError(
                     "SUPERVISION_NONFINITE",
                     f"训练步骤 {self.step} 的 penalty 端口含非有限值。",
-                    "本步在 backward 和 optimizer update 前停止；先修复输出数值。",
+                    "工具管理的反向和更新前停止；用户代码可能已有副作用。先修复输出数值。",
                     {"mark_id": mark["id"], "rule_id": rule_id, "step": self.step,
                      "nonfinite_count": summary["nonfinite_count"]},
                 )
@@ -397,6 +449,8 @@ class TrainingSupervision:
         """Add named penalties only through the manual-step context.backward API."""
         if self._active is None:
             return loss, {}
+        self._raise_captured_failure()
+        self._check_incomplete_calls()
         for rule_id, record in self.observations.items():
             if record["mode"] == "require" and not self._active[rule_id]["observations"]:
                 raise UserError(
@@ -444,6 +498,8 @@ class TrainingSupervision:
     def before_manual_update(self):
         if self._active is None:
             return
+        self._raise_captured_failure()
+        self._check_incomplete_calls()
         for rule_id, record in self.observations.items():
             active = self._active[rule_id]
             if record["mode"] in {"require", "penalty"} and not active["observations"]:
@@ -466,16 +522,21 @@ class TrainingSupervision:
     def finish_manual_step(self):
         if self._active is None:
             return {}
+        self._raise_captured_failure()
+        self._check_incomplete_calls()
         named = {}
         for rule_id, record in self.observations.items():
             active = self._active[rule_id]
             measured = [item for item in active["observations"] if item["status"] == "measured"]
+            unmeasured = len(active["observations"]) - len(measured) + active["pending_calls"]
+            record["unmeasured_calls"] += unmeasured
+            record["steps_with_unmeasured_calls"] += int(unmeasured > 0)
             if measured:
                 record["steps_observed"] += 1
                 record["element_count"] += sum(item["element_count"] for item in measured)
                 record["violation_count"] += sum(item["violation_count"] for item in measured)
                 _save_target_evidence(record, measured)
-                _save_sample_localization(record, measured, active, self._active_sample_ids)
+                _save_sample_localization(record, measured, active, self._active_sample_ids, self._sample_ids_changed_after_observation)
             self._record_sample_coverage(rule_id, active)
             penalty = active["weighted_penalty"]
             if penalty is not None:
@@ -489,6 +550,8 @@ class TrainingSupervision:
     def complete_step(self, loss):
         if self._active is None:
             return loss, {}
+        self._raise_captured_failure()
+        self._check_incomplete_calls()
         named = {}
         for rule_id, record in self.observations.items():
             active = self._active[rule_id]
@@ -502,12 +565,15 @@ class TrainingSupervision:
                      "module_path": record["module_path"], "step": self.step},
                 )
             measured = [item for item in observations if item["status"] == "measured"]
+            unmeasured = len(observations) - len(measured) + active["pending_calls"]
+            record["unmeasured_calls"] += unmeasured
+            record["steps_with_unmeasured_calls"] += int(unmeasured > 0)
             if measured:
                 record["steps_observed"] += 1
                 record["element_count"] += sum(item["element_count"] for item in measured)
                 record["violation_count"] += sum(item["violation_count"] for item in measured)
                 _save_target_evidence(record, measured)
-                _save_sample_localization(record, measured, active, self._active_sample_ids)
+                _save_sample_localization(record, measured, active, self._active_sample_ids, self._sample_ids_changed_after_observation)
             self._record_sample_coverage(rule_id, active)
             penalties = active["penalties"]
             if penalties:
@@ -520,6 +586,33 @@ class TrainingSupervision:
         self._active_sample_ids = None
         return loss, named
 
+    def _check_incomplete_calls(self):
+        if self._active is None:
+            return
+        for rule_id, record in self.observations.items():
+            pending = self._active[rule_id]["pending_calls"]
+            if pending and record["mode"] in {"require", "penalty"}:
+                error = UserError("SUPERVISION_INCOMPLETE_CALL",
+                                  f"训练步骤 {self.step} 的规则 {rule_id} 有 {pending} 次模块调用未成功返回。",
+                                  "检查被用户代码捕获的前向异常；工具管理的更新不会继续。",
+                                  {"mark_id": record["mark_id"], "rule_id": rule_id,
+                                   "step": self.step, "incomplete_calls": pending})
+                if self._failure is None:
+                    self._failure = error
+                raise error
+
+    def _raise_captured_failure(self):
+        if self._failure is None:
+            return
+        if isinstance(self._failure, UserError):
+            raise self._failure
+        raise UserError(
+            "SUPERVISION_EVALUATION_FAILED",
+            f"训练步骤 {self.step} 的监督检查失败：{type(self._failure).__name__}: {self._failure}",
+            "即使用户代码捕获了异常，也不能将本步视为通过；检查规则和模型后重试。",
+            {"step": self.step},
+        ) from self._failure
+
     def _record_sample_coverage(self, rule_id, active):
         coverage = self.sample_coverage.get(rule_id)
         if coverage is None:
@@ -527,6 +620,8 @@ class TrainingSupervision:
         observations = active["observations"]
         measured = [item for item in observations if item.get("status") == "measured"]
         if not observations:
+            if active["pending_calls"]:
+                coverage["unlocalized_batches"] += 1
             return
         if not measured:
             coverage["unlocalized_batches"] += 1
@@ -536,6 +631,8 @@ class TrainingSupervision:
             and bool(observations)
             and all(item.get("sample_localization", {}).get("status") == "localized" for item in measured)
             and self._active_sample_ids is not None
+            and not self._sample_ids_changed_after_observation
+            and active["pending_calls"] == 0
         )
         if not fully_localized:
             coverage["unlocalized_batches"] += 1
@@ -588,6 +685,7 @@ class TrainingSupervision:
             status = "partial"
         else:
             status = "reported"
+        all_observed_batches_localized = state["localized_batches"] > 0 and state["unlocalized_batches"] == 0
         return {
             "status": status,
             "identity_source": "user_declared_stable_sample_ids",
@@ -596,9 +694,9 @@ class TrainingSupervision:
             "prior_steps_without_coverage_state": self.prior_untracked_steps,
             "sample_occurrences": state["sample_occurrences"],
             "unique_sample_count_lower_bound": len(state["sample_id_hashes"]),
-            "unique_sample_count_complete": history_complete and not state["sample_ids_truncated"],
+            "unique_sample_count_complete": history_complete and all_observed_batches_localized and not state["sample_ids_truncated"],
             "unique_violating_sample_count_lower_bound": len(state["violating_sample_id_hashes"]),
-            "unique_violating_sample_count_complete": history_complete and not state["violating_ids_truncated"],
+            "unique_violating_sample_count_complete": history_complete and all_observed_batches_localized and not state["violating_ids_truncated"],
             "dataset_population_size": None,
             "coverage_fraction": None,
             "limitations": "只统计规则实际观测到的批次；用户声明的 ID 未与数据集权威身份交叉验证，也没有数据集总量作为覆盖率分母。",
@@ -607,7 +705,7 @@ class TrainingSupervision:
 
 @contextmanager
 def _hook_context(module, hook):
-    handle = module.register_forward_hook(hook, with_kwargs=True, always_call=True)
+    handle = module.register_forward_hook(hook, with_kwargs=True)
     try:
         yield
     finally:
@@ -617,34 +715,36 @@ def _hook_context(module, hook):
 def _resolve_port(value, path):
     """Resolve a manually selected module input/output port path."""
     if not isinstance(path, str):
-        return None
-    root, separator, tail = path.partition(".")
-    if root == "inputs":
+        return _MISSING_PORT
+    if path == "inputs" or path.startswith(("inputs.", "inputs[")):
         current = value[0]
-    elif root == "outputs":
+        tail = path[len("inputs"):]
+    elif path == "outputs" or path.startswith(("outputs.", "outputs[")):
         current = value[1]
+        tail = path[len("outputs"):]
     else:
-        return None
-    if not separator:
+        return _MISSING_PORT
+    if not tail:
         return current
-    tail = "." + tail
     position = 0
     while position < len(tail):
         match = _PATH_TOKEN.match(tail, position)
         if match is None:
-            return None
-        name, index = match.groups()
+            return _MISSING_PORT
+        name, index, quoted = match.groups()
         try:
+            if quoted is not None:
+                name = json.loads(quoted)
             if name is not None:
                 if not isinstance(current, dict) or name not in current:
-                    return None
+                    return _MISSING_PORT
                 current = current[name]
             else:
                 if not isinstance(current, (list, tuple)):
-                    return None
+                    return _MISSING_PORT
                 current = current[int(index)]
-        except (IndexError, KeyError, TypeError):
-            return None
+        except (IndexError, KeyError, TypeError, ValueError):
+            return _MISSING_PORT
         position = match.end()
     return current
 
@@ -659,8 +759,10 @@ def _resolve_batch_target(batch, path):
         match = _PATH_TOKEN.match(tail, position)
         if match is None:
             return None
-        name, index = match.groups()
+        name, index, quoted = match.groups()
         try:
+            if quoted is not None:
+                name = json.loads(quoted)
             if name is not None:
                 if not isinstance(current, dict) or name not in current:
                     return None
@@ -669,7 +771,7 @@ def _resolve_batch_target(batch, path):
                 if not isinstance(current, (list, tuple)):
                     return None
                 current = current[int(index)]
-        except (IndexError, KeyError, TypeError):
+        except (IndexError, KeyError, TypeError, ValueError):
             return None
         position = match.end()
     return current if position == len(tail) else None
@@ -725,17 +827,38 @@ def _save_target_evidence(record, measured):
             }
 
 
-def _save_sample_localization(record, measured, active, sample_ids):
+def _save_sample_localization(record, measured, active, sample_ids, ids_changed=False):
     localized = [item.get("sample_localization") for item in measured]
     localized = [item for item in localized if isinstance(item, dict)]
     if localized:
+        complete = (
+            not ids_changed
+            and not active["pending_calls"]
+            and len(measured) == len(active["observations"])
+            and len(localized) == len(measured)
+            and all(item.get("status") == "localized" for item in localized)
+        )
         record["last_sample_localization"] = {
             **localized[-1],
             "step": measured[-1].get("step"),
             "invocations_in_step": len(localized),
             "batch_sample_count": len(sample_ids) if sample_ids is not None else None,
             "violating_samples_observed_in_step": len(active.get("violating_sample_ids", set())),
+            "violating_samples_observed_in_step_complete": complete and not active.get("violating_ids_truncated", False),
         }
+        if not complete:
+            reasons = []
+            if ids_changed:
+                reasons.append("本步观察期间样本 ID 声明发生变化，不能将所有调用归入同一个批次。")
+            if active["pending_calls"] or len(measured) != len(active["observations"]) or len(localized) != len(measured):
+                reasons.append("本步存在未完成或无法测量的调用。")
+            if any(item.get("status") != "localized" for item in localized):
+                reasons.append("至少一次调用缺少可用的样本轴或稳定样本 ID，无法完成逐样本定位。")
+            record["last_sample_localization"].update({
+                "status": "partial",
+                "stable_ids_available": False,
+                "reason": " ".join(reasons),
+            })
 
 
 def _new_sample_coverage():
@@ -812,17 +935,28 @@ def _rules_sample_localization(records, current_step=None, coverage=None, prior_
 def _numeric_summary(tensor, rule, torch_module, *, sample_ids=None):
     if not isinstance(tensor, torch_module.Tensor):
         return {"status": "unsupported", "reason": "bound port is not a Tensor"}
+    if tensor.layout != torch_module.strided:
+        return {"status": "unsupported", "reason": f"numeric rules do not inspect tensor layout {tensor.layout}"}
+    if tensor.device.type == "meta":
+        return {"status": "unsupported", "reason": "meta tensors have no values to inspect"}
+    if tensor.is_quantized:
+        return {"status": "unsupported", "reason": "numeric rules do not inspect quantized tensor values"}
     if tensor.numel() == 0:
         return {"status": "unsupported", "reason": "empty tensors have no value summary"}
-    if tensor.is_complex() or tensor.dtype == torch_module.bool:
-        return {"status": "unsupported", "reason": "only real integer and floating tensors are supported"}
+    complex_value = tensor.is_complex()
+    if tensor.dtype == torch_module.bool:
+        return {"status": "unsupported", "reason": "boolean tensors are not supported by numeric rules"}
+    if complex_value and rule["kind"] != "finite":
+        return {"status": "unsupported", "reason": "range comparisons require ordered real values; complex tensors support finite checks"}
+    if rule["mode"] == "penalty" and not tensor.is_floating_point():
+        return {"status": "unsupported", "reason": "range penalties require floating-point tensors"}
     values = tensor.detach().reshape(-1)
     finite_mask = torch_module.isfinite(values)
     finite_count = int(finite_mask.sum().item())
     count = int(values.numel())
     finite_values = values[finite_mask]
-    minimum_value = float(finite_values.min().item()) if finite_count else None
-    maximum_value = float(finite_values.max().item()) if finite_count else None
+    minimum_value = float(finite_values.min().item()) if finite_count and not complex_value else None
+    maximum_value = float(finite_values.max().item()) if finite_count and not complex_value else None
     violations = count - finite_count
     lower_violations = 0
     upper_violations = 0
@@ -878,19 +1012,26 @@ def _numeric_summary(tensor, rule, torch_module, *, sample_ids=None):
             per_sample = violation_mask.reshape(
                 tuple(tensor.shape[:sample_axis]) + (tensor.shape[sample_axis],) + tuple(tensor.shape[sample_axis + 1 :])
             ).movedim(sample_axis, 0).reshape(len(sample_ids), -1).sum(dim=1)
+            violating_mask = per_sample != 0
+            violating_count = int(violating_mask.sum().item())
+            # Keep the exact count, but transfer at most the 50 reported
+            # positions and counts to Python instead of materializing one
+            # dictionary per violating sample for large batches.
+            selected_indices = violating_mask.nonzero(as_tuple=False).flatten()[:50]
+            positions = selected_indices.tolist()
+            selected_counts = per_sample.index_select(0, selected_indices).tolist()
             violating = [
-                {"sample_id": sample_id, "violation_count": int(count)}
-                for sample_id, count in zip(sample_ids, per_sample.tolist())
-                if count
+                {"sample_id": sample_ids[index], "violation_count": int(count)}
+                for index, count in zip(positions, selected_counts)
             ]
             sample_localization = {
                 "status": "localized",
                 "stable_ids_available": True,
                 "sample_axis": sample_axis,
                 "sample_count": len(sample_ids),
-                "violating_sample_count": len(violating),
-                "violating_samples": violating[:50],
-                "violating_samples_truncated": len(violating) > 50,
+                "violating_sample_count": violating_count,
+                "violating_samples": violating,
+                "violating_samples_truncated": violating_count > len(violating),
             }
     return {
         "status": "measured",
@@ -941,6 +1082,12 @@ def preview_supervision(
 
     results = []
     eligible = []
+    modules, aliases = module_entries_fn(model)
+    modules_by_path = {}
+    for key, paths in aliases.items():
+        for module_path in paths:
+            modules_by_path.setdefault(module_path, []).append(modules[key])
+    implementation_cache = {}
     for mark, rule in rules:
         result = {
             "mark_id": mark["id"],
@@ -948,6 +1095,7 @@ def preview_supervision(
             "role": mark["role"],
             "module_path": mark["module_path"],
             "port": mark["port"],
+            "observation_scope": _port_observation_scope(mark["port"]),
             "kind": rule["kind"],
             "mode": rule["mode"],
             "expected": {key: rule.get(key) for key in ("min", "max", "weight", "target_path", "axis") if rule.get(key) is not None},
@@ -961,6 +1109,22 @@ def preview_supervision(
             changed = sorted(key for key in set(saved) | set(context) if saved.get(key) != context.get(key))
             result.update({"status": "stale", "reason": "模型源码、参数、注入或变体与标记绑定上下文不同。", "stale_fields": changed, "binding_context": saved, "current_context": context})
         else:
+            targets = modules_by_path.get(mark["module_path"], [])
+            if len(targets) != 1:
+                result.update({"status": "stale", "reason": "当前模型无法唯一定位标记的模块路径。"})
+                results.append(result)
+                continue
+            module = targets[0]
+            module_type = type(module)
+            if module_type not in implementation_cache:
+                implementation_cache[module_type] = implementation_identity(implementation_anchor(
+                    module, request.get("code_snapshot_root") or root
+                ))
+            current_anchor = implementation_cache[module_type]
+            if current_anchor is None or current_anchor != implementation_identity(mark.get("anchor")):
+                result.update({"status": "stale", "reason": "当前模块的实现来源与标记不同。"})
+                results.append(result)
+                continue
             if rule.get("kind") in {"custom-validator", "custom-penalty"}:
                 try:
                     result["_plugin_target"] = resolve_plugin(
@@ -984,30 +1148,24 @@ def preview_supervision(
             "sample_localization": _sample_localization_summary(),
         }
 
-    modules, aliases = module_entries_fn(model)
     training_states = [(module, module.training) for module in modules.values()]
     paths_by_module_id = {
         id(modules[key]): paths for key, paths in aliases.items()
     }
     handles = []
-    local = threading.local()
     invocation = 0
+    call_id_prefix = "supervision-" + uuid.uuid4().hex
+    pending_calls = {id(module): 0 for module in modules.values()}
     seen = {rule["id"]: 0 for _, rule, _ in eligible}
 
     def before(module, args, kwargs):
-        nonlocal invocation
-        invocation += 1
-        if not hasattr(local, "stack"):
-            local.stack = []
-        call_id = f"{local.call_id_prefix}:call-{invocation}"
-        local.stack.append((call_id, module, args, kwargs))
+        pending_calls[id(module)] += 1
 
     def after(module, args, kwargs, output):
-        if not getattr(local, "stack", None):
-            return
-        call_id, current, call_args, call_kwargs = local.stack.pop()
-        if current is not module:
-            return
+        nonlocal invocation
+        pending_calls[id(module)] -= 1
+        invocation += 1
+        call_id = f"{call_id_prefix}:call-{invocation}"
         module_paths = paths_by_module_id.get(id(module), [])
         for mark, rule, result in eligible:
             if mark["module_path"] not in module_paths:
@@ -1015,11 +1173,11 @@ def preview_supervision(
             if seen[rule["id"]] >= _MAX_INVOCATIONS_PER_RULE:
                 result["observations_truncated"] = True
                 continue
-            inputs = {"args": call_args, "kwargs": call_kwargs}
+            inputs = {"args": args, "kwargs": kwargs}
             value = _resolve_port((inputs, output), mark["port"])
-            if value is None:
-                continue
-            if rule["kind"] in {"custom-validator", "custom-penalty"}:
+            if value is _MISSING_PORT:
+                summary = {"status": "unsupported", "reason": "标记的端口在本次调用中不存在或无法解析。"}
+            elif rule["kind"] in {"custom-validator", "custom-penalty"}:
                 summary = evaluate_plugin(
                     result["_plugin_target"], rule["plugin"], rule["kind"], value,
                     _batch, torch_module, training=False,
@@ -1041,13 +1199,12 @@ def preview_supervision(
             result["observations"].append(summary)
             seen[rule["id"]] += 1
 
-    local.call_id_prefix = "supervision-" + uuid.uuid4().hex
-    for module in modules.values():
-        handles.append(module.register_forward_pre_hook(before, with_kwargs=True))
-        handles.append(module.register_forward_hook(after, with_kwargs=True, always_call=True))
-    args, kwargs, _batch = make_batch_fn(request, torch_module, resolve_entrypoint)
-    model.eval()
     try:
+        args, kwargs, _batch = make_batch_fn(request, torch_module, resolve_entrypoint)
+        for module in modules.values():
+            handles.append(module.register_forward_pre_hook(before, with_kwargs=True))
+            handles.append(module.register_forward_hook(after, with_kwargs=True))
+        model.eval()
         with torch_module.no_grad():
             model(*args, **kwargs)
     except UserError:
@@ -1056,7 +1213,7 @@ def preview_supervision(
         raise UserError(
             "SUPERVISION_PREVIEW_FAILED",
             f"监督预览前向失败：{type(error).__name__}: {error}",
-            "检查模型和批次；预览没有反向、优化器更新或训练目标变更。",
+            "检查模型和批次；工具没有执行反向或优化器更新，用户代码可能已有副作用。",
         ) from error
     finally:
         for handle in handles:
@@ -1064,6 +1221,13 @@ def preview_supervision(
         # Restore per-module state exactly; root.train() would overwrite mixed modes.
         for module, training in training_states:
             module.training = training
+
+    for mark, rule, result in eligible:
+        failed = sum(pending_calls.get(id(modules[key]), 0) for key, paths in aliases.items()
+                     if mark["module_path"] in paths)
+        if failed:
+            result["observations"].append({"status": "unsupported", "incomplete_calls": failed,
+                                           "reason": "模块调用未成功返回，可能有前向异常被用户代码捕获。"})
 
     for _mark, rule, result in eligible:
         observations = result["observations"]
@@ -1089,23 +1253,39 @@ def preview_supervision(
             result["status"] = "penalty_preview_only"
             result["objective_applied"] = False
             result["warning"] = "本次只展示加权 penalty 数值；它尚未参与训练 loss 或参数更新。"
+        if result.get("observations_truncated") is True or len(measured) != len(observations):
+            if result["status"] in {"passed", "observed"}:
+                result["status"] = "partial"
+                result["reason"] = "部分调用未记录或无法测量，已测部分没有发现违反；不能判断完整结果。"
+            elif result["status"] == "penalty_preview_only":
+                result["reason"] = "部分调用未记录或无法测量；惩罚数值只覆盖已测调用。"
 
-    localized_rules = [
-        rule["id"] for mark, rule, result in eligible
-        if rule.get("kind") in {"finite", "range"} and rule.get("axis") is not None
-        and (measured := [item for item in result.get("observations", []) if item.get("status") == "measured"])
-        and all(item.get("sample_localization", {}).get("status") == "localized" for item in measured)
-    ]
+    localized_rules, partially_localized_rules = [], []
+    for _mark, rule, result in eligible:
+        if rule.get("kind") not in {"finite", "range"} or rule.get("axis") is None:
+            continue
+        observations = result.get("observations", [])
+        localized = [item for item in observations if item.get("status") == "measured"
+                     and item.get("sample_localization", {}).get("status") == "localized"]
+        if not localized:
+            continue
+        if result.get("observations_truncated") is not True and len(localized) == len(observations):
+            localized_rules.append(rule["id"])
+        else:
+            partially_localized_rules.append(rule["id"])
     localization = _sample_localization_summary(bool(localized_rules), localized_rules)
+    localization["partial_rules"] = partially_localized_rules
     return {
         "status": "observed-runtime",
         "results": results,
         "coverage_status": "partial",
-        "probe_id": local.call_id_prefix,
+        "probe_id": call_id_prefix,
         "objective_applied": False,
+        "execution_mode": "eval",
+        "gradients_enabled": False,
         "coverage": (
-            "单次真实前向的已观察模块/端口；未反向或更新权重，不证明未执行分支。"
-            + ("指定规则的样本轴与稳定 ID 已逐项绑定。" if localization["stable_ids_available"] else "没有足够的稳定样本 ID 证据定位逐样本违规。")
+            "eval 和无梯度模式下单次真实前向的已观察模块/端口；工具未反向或更新权重，不证明训练模式或未执行分支。用户代码可能有副作用。"
+            + ("已列出规则的已记录调用按用户声明的样本 ID 定位；不证明 ID 真实性或未观察调用。" if localization["stable_ids_available"] else "没有足够证据定位规则的全部已记录调用；部分调用可能仍有局部样本定位。")
         ),
         "sample_localization": localization,
     }

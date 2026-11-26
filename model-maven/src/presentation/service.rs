@@ -128,9 +128,72 @@ impl<B: Backend> UiServices for ApplicationUiServices<'_, B> {
                 readiness_diagnostic(plan, true)
             };
             let message = readiness_message(plan, message);
+            let detail = capability_blocker.then(|| {
+                plan.readiness.capabilities.iter().find(|capability| {
+                    capability.required && capability.state == crate::domain::operation::FactState::Unsupported
+                }).and_then(|capability| capability.reason.as_deref())
+            }).flatten();
+            let message = detail.map_or(message.clone(), |reason| format!("{message} {reason}"));
             let mut report = Report::error(plan.operation.as_str(), code, &message, recovery);
             report.data = serde_json::json!({"readiness":readiness_value(plan)});
             return report;
+        }
+        if let Some(plan) = readiness_plan.as_ref().filter(|plan| {
+            plan.readiness.state == crate::domain::operation::ReadinessState::Unknown
+        }) {
+            let reason = plan.readiness.facts.iter()
+                .filter(|fact| fact.required && fact.state == crate::domain::operation::FactState::Unknown)
+                .find_map(|fact| fact.reason.as_deref())
+                .or_else(|| plan.readiness.capabilities.iter()
+                    .filter(|capability| capability.required && capability.state == crate::domain::operation::FactState::Unknown)
+                    .find_map(|capability| capability.reason.as_deref()));
+            let message = reason.map_or_else(
+                || "必需能力或前置条件未知；目标操作没有启动。".to_owned(),
+                |detail| format!("必需能力或前置条件未知；目标操作没有启动。详情：{detail}"),
+            );
+            let mut report = Report::error(
+                plan.operation.as_str(),
+                "OPERATION_READINESS_UNKNOWN",
+                message,
+                "检查所选 Python 和 Worker 诊断，解决未知项后重新请求操作。",
+            );
+            report.data = serde_json::json!({"readiness":readiness_value(plan)});
+            return report;
+        }
+        if let Some(plan) = readiness_plan.as_ref().filter(|plan| {
+            plan.readiness.state == crate::domain::operation::ReadinessState::Conditional
+        }) {
+            use crate::domain::operation::FactState;
+            // A verified Layer provider is a documented deferred check: its
+            // exact payload, sources and runtime are checked by the worker.
+            // Do not treat unrelated conditional capabilities as established.
+            let unresolved_fact = plan.readiness.facts.iter().find(|fact| {
+                fact.required && fact.state == FactState::Conditional
+                    && !(fact.key == "layer_provider_verification"
+                        && matches!(plan.operation.as_str(), "plan_layer_edit" | "apply_layer_edit"))
+            });
+            let unresolved_capability = plan.readiness.capabilities.iter().find(|capability| {
+                capability.required && capability.state == FactState::Conditional
+            });
+            let unresolved_input = plan.inputs.iter().any(|input| {
+                input.required && input.state == FactState::Conditional
+            });
+            if unresolved_fact.is_some() || unresolved_capability.is_some() || unresolved_input {
+                let reason = unresolved_fact.and_then(|fact| fact.reason.as_deref())
+                    .or_else(|| unresolved_capability.and_then(|capability| capability.reason.as_deref()));
+                let message = reason.map_or_else(
+                    || "必需条件尚未确认；目标操作没有启动。".to_owned(),
+                    |detail| format!("必需条件尚未确认；目标操作没有启动。详情：{detail}"),
+                );
+                let mut report = Report::error(
+                    plan.operation.as_str(),
+                    "OPERATION_CONDITION_UNVERIFIED",
+                    message,
+                    "检查并满足所列条件，重新准备操作；不要将条件能力当作已支持。",
+                );
+                report.data = serde_json::json!({"readiness":readiness_value(plan)});
+                return report;
+            }
         }
         let progress = TerminalExecutionProgress;
         let mut context = ExecutionContext {
@@ -342,6 +405,11 @@ fn collect_planned_inputs(
     let needs_step = plan_requires_input(plan, "training_step");
     let needs_loop = plan_requires_input(plan, "training_loop");
     match command {
+        Command::LoopRun { training_loop, resume, .. } => {
+            if needs_loop && training_loop.is_none() && resume.is_none() {
+                *training_loop = crate::presentation::terminal::prompt("用户训练循环入口（module:callable）");
+            }
+        }
         Command::Model { command } => {
             let inputs = match command {
                 ModelCommand::Inspect { inputs, .. }
@@ -355,10 +423,10 @@ fn collect_planned_inputs(
                     command: SuperviseCommand::Guide { inputs },
                 }
                 | ModelCommand::Supervise {
-                    command: SuperviseCommand::Preview { inputs },
+                    command: SuperviseCommand::Preview { inputs, .. },
                 } => inputs,
                 ModelCommand::Supervise {
-                    command: SuperviseCommand::Rule { .. },
+                    command: SuperviseCommand::Rule { .. } | SuperviseCommand::Export { .. } | SuperviseCommand::Import { .. },
                 } => return,
             };
             if needs_model && inputs.model.is_none() {
@@ -467,6 +535,7 @@ impl<B: PythonRuntimeControl> ApplicationUiServices<'_, B> {
     pub fn select_python(application: &mut Application<B>, executable: String) {
         application.backend.select_python(executable);
         application.runtime_capabilities.borrow_mut().take();
+        application.runtime_declarations.borrow_mut().take();
     }
 }
 

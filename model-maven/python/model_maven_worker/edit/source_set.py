@@ -9,7 +9,8 @@ from pathlib import Path
 
 from ..protocol import UserError
 from ..model.structure import shared_state_groups
-from .source_ast import source_argument_insertions
+from .source_ast import read_bounded_python_source, source_argument_insertions, static_keyword_nodes
+from ..runtime.source_paths import is_project_python_source
 
 
 def source_set_candidate(runtime, request, edit):
@@ -53,8 +54,7 @@ def source_set_candidate(runtime, request, edit):
         resolved.relative_to(root)
     except (OSError, ValueError) as error:
         raise UserError("SOURCE_PATH_UNSUPPORTED", "Layer 构造文件不在当前项目目录内。", "只允许编辑项目内、可写的 Python 源码。") from error
-    ignored = {".venv", "venv", "site-packages", "target", ".git", "__pycache__", ".model-maven"}
-    if resolved.suffix != ".py" or any(part in ignored for part in relative.parts):
+    if not is_project_python_source(root, resolved):
         raise UserError("SOURCE_PATH_UNSUPPORTED", "Layer 构造文件不属于可编辑的项目 Python 源码。")
     cursor = root
     for part in relative.parts:
@@ -62,14 +62,11 @@ def source_set_candidate(runtime, request, edit):
         if cursor.is_symlink():
             raise UserError("SOURCE_PATH_UNSUPPORTED", "源码编辑拒绝经过符号链接的路径。")
     try:
-        source_bytes = resolved.read_bytes()
+        source_bytes = read_bounded_python_source(resolved)
         source = source_bytes.decode("utf-8")
         tree = ast.parse(source, filename=str(relative))
     except (OSError, UnicodeDecodeError, SyntaxError) as error:
         raise UserError("SOURCE_PARSE_FAILED", f"无法安全解析构造文件：{error}", "源码保持不变；首批处理器要求 UTF-8 且当前文件语法有效。") from error
-    if len(source_bytes) > 16 * 1024 * 1024:
-        raise UserError("SOURCE_TOO_LARGE", "源码文件超过 16 MiB，暂不支持自动编辑。")
-
     parameters = edit.get("params", {})
     fields = runtime.source_editable_fields(old)
     if not isinstance(parameters, dict) or not parameters or set(parameters) - fields:
@@ -91,20 +88,22 @@ def source_set_candidate(runtime, request, edit):
     if len(candidates) != 1:
         raise UserError(
             "SOURCE_CALLSITE_AMBIGUOUS",
-            f"第 {site['line']} 行找到 {len(candidates)} 个 {type(old).__name__} 构造调用，无法可靠绑定目标。",
-            "把目标 Layer 构造移到单独一行，或继续使用 --target variant。",
+            f"{relative.as_posix()}:{site['line']} 找到 {len(candidates)} 个 {type(old).__name__} 构造调用，无法可靠绑定 {target_path}。",
+            ("该层可能由别名或工厂间接构造；请检查调用方并手动编辑源码，或使用 --target variant。"
+             if not candidates else "把目标 Layer 构造移到单独一行，或继续使用 --target variant。"),
+            {"source_edit_location": {"source": relative.as_posix(), "line": site["line"],
+             "digest": hashlib.sha256(source_bytes).hexdigest(), "path": target_path,
+             "identity_scope": "source-read-during-preview"}},
         )
     call = candidates[0]
-    if any(isinstance(argument, ast.Starred) for argument in call.args) or any(keyword.arg is None for keyword in call.keywords):
-        raise UserError("SOURCE_CALLSITE_UNSUPPORTED", "暂不改写 *args 或 **kwargs 构造表达式。", "改用显式参数名，或使用 --target variant。")
+    keyword_nodes = static_keyword_nodes(call)
 
     byte_lines = source_bytes.splitlines(keepends=True)
     replacements = []
     insertion_values = []
     for name, value in parameters.items():
-        keyword = next((item for item in call.keywords if item.arg == name), None)
-        if keyword is not None:
-            node = keyword.value
+        if name in keyword_nodes:
+            node = keyword_nodes[name]
         elif name in parameter_names and parameter_names.index(name) < len(call.args):
             node = call.args[parameter_names.index(name)]
         else:
@@ -159,6 +158,6 @@ def source_set_candidate(runtime, request, edit):
         "validation": validation,
         "shared_state_evidence": {"scope": "in_memory_candidate_object_storage_v2", "groups": shared_state_groups(model)},
         "edit_effects": [effects],
-        "modules": runtime.inspect_model(model)["modules"],
+        **{key: value for key, value in runtime.inspect_model(model).items() if key in {"modules", "model_state_placement"}},
         "note": "源码目标已通过内存候选与语法检查；提交时将原子替换单个 .py 文件，之后以新 worker 重建并按需真实前向，失败会按 SHA-256 回滚。",
     }

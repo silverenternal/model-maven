@@ -5,6 +5,7 @@ import os
 import shutil
 import stat
 import subprocess
+import sys
 from pathlib import Path
 
 from ..protocol import UserError
@@ -230,7 +231,9 @@ def compare_environment(python, metadata, requirements_path=None):
 def environment_operation(request):
     operation = request["operation"]
     runtime = request.get("runtime", {})
-    base_python = runtime.get("python_executable") or "python3"
+    base_python = runtime.get("python_executable") or sys.executable
+    if not base_python:
+        raise UserError("PYTHON_SELECTION_REQUIRED", "无法确定当前 Python 解释器，请明确选择。")
     explicit_python = request.get("python_explicit") is True
     stream_output = request.get("interactive_progress") is True
     inherit_system = system_site_packages_enabled()

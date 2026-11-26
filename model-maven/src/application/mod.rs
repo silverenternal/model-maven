@@ -19,10 +19,15 @@ pub(crate) mod classification;
 mod config;
 mod data;
 mod data_preview;
+mod discovery;
 mod edit;
 mod environment;
 mod evaluation;
 mod extensions;
+mod generic_loop;
+mod graph;
+mod graph_delivery_journal;
+mod graph_edit;
 mod model;
 mod readiness;
 mod run;
@@ -32,6 +37,7 @@ mod run_prepare;
 mod run_query;
 mod run_request;
 mod scaffold;
+pub(crate) use scaffold::{scaffold_encoder_layer_catalog, normalize_training_command};
 mod train;
 
 #[cfg(test)]
@@ -49,6 +55,7 @@ pub struct ExecutionContext<'a> {
 pub struct Application<B> {
     pub backend: B,
     pub runtime_capabilities: RefCell<Option<crate::domain::capability::CapabilityCatalog>>,
+    pub runtime_declarations: RefCell<Option<crate::domain::capability::CapabilityCatalog>>,
     pub variants: Box<dyn VariantRepository>,
     pub runs: Box<dyn RunRepository>,
     pub exporter: Box<dyn ArtifactExporter>,
@@ -71,7 +78,9 @@ struct Job {
     search: Option<String>,
     call: String,
     contract: Option<PathBuf>,
+    if_contract_sha256: Option<String>,
     batch_fingerprint: Option<String>,
+    probe_device: Option<String>,
     local_probe: bool,
     loss: Option<String>,
     training_step: Option<String>,
@@ -83,6 +92,11 @@ struct Job {
     repeat_of: Option<String>,
     parent_run_id: Option<String>,
     variant_snapshot: Option<Value>,
+    variant_device_policy: Option<String>,
+    variant_base_rng_devices: Option<Vec<String>>,
+    batch_device_policy: Option<String>,
+    model_initialization: Option<String>,
+    model_initialization_seed: Option<u64>,
     expected_source_manifest: Option<Value>,
     expected_runtime: Option<Value>,
     repeat_overrides: Vec<String>,
@@ -96,6 +110,8 @@ struct Job {
     allow_state_reset: bool,
     steps: Option<u32>,
     optimizer: Option<String>,
+    optimizer_factory: Option<String>,
+    optimizer_params: Map<String, Value>,
     lr: Option<f64>,
     weight_decay: Option<f64>,
     edit: Option<Value>,
@@ -128,7 +144,9 @@ fn empty_job() -> Job {
         search: None,
         call: "all".into(),
         contract: None,
+        if_contract_sha256: None,
         batch_fingerprint: None,
+        probe_device: None,
         local_probe: false,
         loss: None,
         training_step: None,
@@ -140,10 +158,15 @@ fn empty_job() -> Job {
         repeat_of: None,
         parent_run_id: None,
         variant_snapshot: None,
+        variant_device_policy: None,
+        variant_base_rng_devices: None,
+        batch_device_policy: None,
+        model_initialization: None,
+        model_initialization_seed: None,
         expected_source_manifest: None,
         expected_runtime: None,
         repeat_overrides: Vec::new(),
-        runtime: json!({"python_executable":"python3","timeout_seconds":30}),
+        runtime: json!({"python_executable":null,"timeout_seconds":30}),
         seed: None,
         checkpoint_every: None,
         checkpoint_input: None,
@@ -153,6 +176,8 @@ fn empty_job() -> Job {
         allow_state_reset: false,
         steps: None,
         optimizer: None,
+        optimizer_factory: None,
+        optimizer_params: Map::new(),
         lr: None,
         weight_decay: None,
         edit: None,
@@ -293,6 +318,13 @@ impl From<&str> for ComponentResolutionError {
     }
 }
 
+fn require_python<'a>(cli: &'a Cli, operation: &'static str) -> Result<&'a str, Report> {
+    cli.python.as_deref().filter(|value| !value.trim().is_empty()).ok_or_else(|| {
+        Report::error(operation, "PYTHON_SELECTION_REQUIRED", "未发现或指定 Python 解释器。",
+            "使用 --python 明确选择解释器后重试；操作尚未启动。")
+    })
+}
+
 fn parameters(values: &[String]) -> Result<Map<String, Value>, String> {
     let mut result = Map::new();
     for value in values {
@@ -310,9 +342,9 @@ fn parameters(values: &[String]) -> Result<Map<String, Value>, String> {
 }
 
 fn python_identifier(value: &str) -> bool {
-    let mut bytes = value.bytes();
-    matches!(bytes.next(), Some(b'a'..=b'z' | b'A'..=b'Z' | b'_'))
-        && bytes.all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+    let mut chars = value.chars();
+    chars.next().is_some_and(|ch| ch == '_' || unicode_ident::is_xid_start(ch))
+        && chars.all(|ch| unicode_ident::is_xid_continue(ch))
 }
 
 fn python_entrypoint(value: &str) -> bool {
@@ -396,12 +428,8 @@ fn model_injections(
                 "接缝 {slot} 的工厂入口无效：{factory}；格式为 package.module:factory 或 component:ID@VERSION。"
             ));
         }
-        if !params.is_empty() {
-            return Err(format!(
-                "直接 Python 注入工厂 {slot} 暂不接受 --inject-param；使用可参数化的已登记 Layer 组件，或在 Python 工厂中封装参数。"
-            ));
-        }
-        result.insert(slot.into(), json!(factory));
+        result.insert(slot.into(), if params.is_empty() { json!(factory) }
+            else { json!({"factory":factory, "params":params}) });
     }
     if let Some(slot) = supplied_params.keys().next() {
         return Err(format!("--inject-param 引用了未声明的接缝：{slot}。"));
@@ -450,7 +478,15 @@ fn source_transaction_supported(operations: &Value) -> bool {
                 .is_some_and(|action| allowed.contains(&action))
         })
     };
-    all_actions(&["set"]) || all_actions(&["add", "replace", "remove"])
+    if all_actions(&["set"]) || all_actions(&["add", "replace", "remove"]) {
+        return true;
+    }
+    let mut seen_structure = false;
+    operations.iter().all(|operation| match operation["action"].as_str() {
+        Some("set") if !seen_structure => true,
+        Some("add" | "replace" | "remove") => { seen_structure = true; true },
+        _ => false,
+    })
 }
 
 fn secret_key(name: &str) -> bool {
@@ -690,6 +726,15 @@ fn verify_saved_model_injections(
     };
     for (slot, specification) in injections {
         if specification.is_string() {
+            continue;
+        }
+        if specification.get("component_ref").is_none() {
+            if !specification["factory"].as_str().is_some_and(python_entrypoint)
+                || !specification["params"].is_object()
+                || specification.as_object().is_none_or(|object| object.keys().any(|key| key != "factory" && key != "params"))
+            {
+                return Err(format!("接缝 {slot} 的直接工厂或参数无效。"));
+            }
             continue;
         }
         let component_id = specification["component_ref"]["id"]

@@ -51,6 +51,35 @@ fn directory(project: &Path, create: bool) -> io::Result<PathBuf> {
     Ok(root)
 }
 
+// Shared with the Neovim workspace. A crash may leave this directory behind;
+// it is never silently removed, because another launcher may still be active.
+struct AdmissionGuard {
+    path: PathBuf,
+    root: PathBuf,
+}
+
+impl Drop for AdmissionGuard {
+    fn drop(&mut self) {
+        if fs::remove_dir(&self.path).is_ok() {
+            let _ = sync_directory(&self.root);
+        }
+    }
+}
+
+fn admission_guard(root: &Path) -> io::Result<AdmissionGuard> {
+    let path = root.join(".admission-lock");
+    let mut builder = fs::DirBuilder::new();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        builder.mode(0o700);
+    }
+    builder.create(&path).map_err(|error| {
+        io::Error::new(error.kind(), format!("training admission is busy or needs inspection at {}: {error}", path.display()))
+    })?;
+    Ok(AdmissionGuard { path, root: root.to_owned() })
+}
+
 pub(crate) fn create(project: &Path, id: &str) -> io::Result<()> {
     if !valid_id(id) {
         return Err(io::Error::new(
@@ -59,6 +88,10 @@ pub(crate) fn create(project: &Path, id: &str) -> io::Result<()> {
         ));
     }
     let root = directory(project, true)?;
+    let _admission = admission_guard(&root)?;
+    if !list(project)?.is_empty() {
+        return Err(io::Error::new(io::ErrorKind::WouldBlock, "an earlier training request is unconfirmed"));
+    }
     let path = root.join(id);
     let mut options = fs::OpenOptions::new();
     options.write(true).create_new(true);

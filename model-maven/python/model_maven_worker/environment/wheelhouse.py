@@ -19,7 +19,7 @@ from .common import (
     safe_project_path,
 )
 from .lock import validate_environment_lock
-from .setup import compare_environment
+from .setup import compare_environment, remove_owned_environment
 
 
 WHEELHOUSE_INDEX = "index.json"
@@ -272,7 +272,7 @@ def archive_environment_wheels(python, relative=None, stream_output=False):
             shutil.rmtree(staging, ignore_errors=True)
 
 
-def replay_wheel_archive(python, venv, relative=None, stream_output=False):
+def replay_wheel_archive(python, venv, relative=None, stream_output=False, create_environment=False, _owned=False):
     """Install the locked dependency closure without network access."""
     metadata, lock_bytes = _read_lock()
     check = inspect_wheel_archive(python, relative)
@@ -284,6 +284,35 @@ def replay_wheel_archive(python, venv, relative=None, stream_output=False):
             check,
         )
     target = safe_project_path(venv, "虚拟环境")
+    if create_environment:
+        # Never modify an existing environment. Reserve the destination before
+        # invoking venv, and only clean up the exact directory we created.
+        target.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            target.mkdir()
+        except FileExistsError as error:
+            raise UserError("ENVIRONMENT_ALREADY_EXISTS", "目标环境目录已存在；未进行离线安装。", "选择一个尚不存在的项目内目录。") from error
+        current = target.stat()
+        owned = (current.st_dev, current.st_ino)
+        try:
+            command = [python, "-m", "venv"]
+            if metadata.get("system_site_packages", {}).get("enabled") is True:
+                command.append("--system-site-packages")
+            command.append(str(target))
+            run_environment_process(command, "离线虚拟环境创建", timeout=120)
+            result = replay_wheel_archive(python, venv, relative, stream_output, False, True)
+            result["created"] = True
+            result["python"] = (target / ("Scripts/python.exe" if os.name == "nt" else "bin/python")).as_posix()
+            result["note"] = "新环境已离线创建并核对；未自动选择为项目解释器。系统、驱动和加速器兼容性需另行检查。"
+            return result
+        except BaseException:
+            try:
+                remove_owned_environment(target, owned)
+            except OSError:
+                pass
+            raise
+    if not _owned:
+        raise UserError("ENVIRONMENT_EXISTING_PROTECTED", "不会在已有虚拟环境中安装或替换依赖。", "使用 --create 和尚不存在的项目内目录创建新环境。")
     target_python = target / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
     if target.is_symlink() or not target.is_dir() or not target_python.is_file():
         raise UserError("ENVIRONMENT_TARGET_INVALID", "离线安装目标必须是项目内已存在的虚拟环境。")

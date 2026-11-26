@@ -12,7 +12,9 @@ pub(super) fn build_model_job(command: &ModelCommand) -> Job {
             inputs,
             call,
             contract,
+            if_contract_sha256,
             batch_fingerprint,
+            model_device,
             local,
         } => Job {
             operation: "probe",
@@ -20,7 +22,9 @@ pub(super) fn build_model_job(command: &ModelCommand) -> Job {
             inputs: inputs.clone(),
             call: call.clone(),
             contract: contract.clone(),
+            if_contract_sha256: if_contract_sha256.clone(),
             batch_fingerprint: batch_fingerprint.clone(),
+            probe_device: model_device.clone(),
             local_probe: *local,
             ..empty_job()
         },
@@ -31,16 +35,20 @@ pub(super) fn build_model_job(command: &ModelCommand) -> Job {
             role,
             meaning,
             id,
+            if_anchor,
+            model_device,
         } => Job {
             operation: "semantic_mark",
             inputs: inputs.clone(),
             path: Some(path.clone()),
+            probe_device: model_device.clone(),
             edit: Some(serde_json::json!({
                 "action": "add",
                 "port": port,
                 "role": role,
                 "meaning": meaning,
-                "id": id
+                "id": id,
+                "if_anchor": if_anchor
             })),
             ..empty_job()
         },
@@ -51,16 +59,22 @@ pub(super) fn build_model_job(command: &ModelCommand) -> Job {
             port,
             role,
             meaning,
+            if_state_revision,
+            if_anchor,
+            model_device,
         } => Job {
             operation: "semantic_mark",
             inputs: inputs.clone(),
             path: Some(path.clone()),
+            probe_device: model_device.clone(),
             edit: Some(serde_json::json!({
                 "action": "update",
                 "id": id,
                 "port": port,
                 "role": role,
-                "meaning": meaning
+                "meaning": meaning,
+                "if_state_revision": if_state_revision,
+                "if_anchor": if_anchor
             })),
             ..empty_job()
         },
@@ -84,11 +98,18 @@ pub(super) fn build_model_job(command: &ModelCommand) -> Job {
                 edit: Some(serde_json::json!({ "action": "preview" })),
                 ..empty_job()
             },
-            SuperviseCommand::Preview { inputs } => Job {
+            SuperviseCommand::Preview { inputs, model_device } => Job {
                 operation: "semantic_supervise",
                 inputs: inputs.clone(),
+                probe_device: model_device.clone(),
                 edit: Some(serde_json::json!({ "action": "preview" })),
                 ..empty_job()
+            },
+            SuperviseCommand::Export { if_state_revision } => Job {
+                operation: "semantic_supervise", edit: Some(serde_json::json!({"action":"bundle_export","if_state_revision":if_state_revision})), ..empty_job()
+            },
+            SuperviseCommand::Import { file, if_sha256, if_state_revision, apply } => Job {
+                operation: "semantic_supervise", edit: Some(serde_json::json!({"action":"bundle_import","file":file,"if_sha256":if_sha256,"if_state_revision":if_state_revision,"apply":apply})), ..empty_job()
             },
             SuperviseCommand::Rule { command } => match command {
                 SupervisionRuleCommand::Add {
@@ -101,7 +122,9 @@ pub(super) fn build_model_job(command: &ModelCommand) -> Job {
                     target_path,
                     axis,
                     id,
+                    if_state_revision,
                     plugin,
+                    plugin_source,
                     plugin_params,
                 } => Job {
                     operation: "semantic_supervise",
@@ -116,9 +139,15 @@ pub(super) fn build_model_job(command: &ModelCommand) -> Job {
                         "target_path":target_path,
                         "axis":axis,
                         "id":id,
-                        "plugin_entrypoint":plugin,
+                        "if_state_revision":if_state_revision,
+                        "plugin_entrypoint":plugin,"plugin_source":plugin_source,
                         "plugin_params":plugin_params
                     })),
+                    ..empty_job()
+                },
+                SupervisionRuleCommand::Copy { id, mark, if_state_revision } => Job {
+                    operation: "semantic_supervise",
+                    edit: Some(serde_json::json!({"action":"rule_copy","id":id,"mark_id":mark,"if_state_revision":if_state_revision})),
                     ..empty_job()
                 },
                 SupervisionRuleCommand::List => Job {

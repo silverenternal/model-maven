@@ -193,6 +193,11 @@ const WORKER_ASSETS: &[WorkerAsset] = &[
         export_compatibility: false,
     },
     WorkerAsset {
+        path: "model_maven_worker/data/pipeline.py",
+        contents: include_str!("../../python/model_maven_worker/data/pipeline.py"),
+        export_compatibility: false,
+    },
+    WorkerAsset {
         path: "model_maven_worker/data/conformance.py",
         contents: include_str!("../../python/model_maven_worker/data/conformance.py"),
         export_compatibility: false,
@@ -323,6 +328,11 @@ const WORKER_ASSETS: &[WorkerAsset] = &[
         export_compatibility: false,
     },
     WorkerAsset {
+        path: "model_maven_worker/train/optimizers.py",
+        contents: include_str!("../../python/model_maven_worker/train/optimizers.py"),
+        export_compatibility: false,
+    },
+    WorkerAsset {
         path: "model_maven_worker/train/manual.py",
         contents: include_str!("../../python/model_maven_worker/train/manual.py"),
         export_compatibility: false,
@@ -330,6 +340,16 @@ const WORKER_ASSETS: &[WorkerAsset] = &[
     WorkerAsset {
         path: "model_maven_worker/train/external.py",
         contents: include_str!("../../python/model_maven_worker/train/external.py"),
+        export_compatibility: false,
+    },
+    WorkerAsset {
+        path: "model_maven_worker/train/generic_loop.py",
+        contents: include_str!("../../python/model_maven_worker/train/generic_loop.py"),
+        export_compatibility: false,
+    },
+    WorkerAsset {
+        path: "model_maven_worker/train/generic_checkpoint.py",
+        contents: include_str!("../../python/model_maven_worker/train/generic_checkpoint.py"),
         export_compatibility: false,
     },
     WorkerAsset {
@@ -373,6 +393,11 @@ const WORKER_ASSETS: &[WorkerAsset] = &[
         export_compatibility: false,
     },
     WorkerAsset {
+        path: "model_maven_worker/run/file_digest.py",
+        contents: include_str!("../../python/model_maven_worker/run/file_digest.py"),
+        export_compatibility: false,
+    },
+    WorkerAsset {
         path: "model_maven_worker/run/provenance.py",
         contents: include_str!("../../python/model_maven_worker/run/provenance.py"),
         export_compatibility: false,
@@ -390,6 +415,11 @@ const WORKER_ASSETS: &[WorkerAsset] = &[
     WorkerAsset {
         path: "model_maven_worker/edit/layers.py",
         contents: include_str!("../../python/model_maven_worker/edit/layers.py"),
+        export_compatibility: false,
+    },
+    WorkerAsset {
+        path: "model_maven_worker/edit/initialization_rng.py",
+        contents: include_str!("../../python/model_maven_worker/edit/initialization_rng.py"),
         export_compatibility: false,
     },
     WorkerAsset {
@@ -425,6 +455,11 @@ const WORKER_ASSETS: &[WorkerAsset] = &[
     WorkerAsset {
         path: "model_maven_worker/edit/source_ast.py",
         contents: include_str!("../../python/model_maven_worker/edit/source_ast.py"),
+        export_compatibility: false,
+    },
+    WorkerAsset {
+        path: "model_maven_worker/runtime/source_paths.py",
+        contents: include_str!("../../python/model_maven_worker/runtime/source_paths.py"),
         export_compatibility: false,
     },
     WorkerAsset {

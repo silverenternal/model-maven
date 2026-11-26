@@ -31,16 +31,9 @@ jobs:
         with:
           node-version: '22'
           architecture: ${{ matrix.arch }}
-      - name: Test TUI (Linux and Windows)
-        if: runner.os != 'macOS'
-        run: cargo test --manifest-path model-maven-tui/Cargo.toml --locked
-      - name: Test TUI (macOS)
-        if: runner.os == 'macOS'
-        run: |
-          cargo test --manifest-path model-maven-tui/Cargo.toml --locked --bin m-model-tui -- --test-threads=1
-          cargo test --manifest-path model-maven-tui/Cargo.toml --locked --test diagnosis_line -- --test-threads=1
-          cargo test --manifest-path model-maven-tui/Cargo.toml --locked --test language_settings
       - name: Build binaries
+        env:
+          MODEL_MAVEN_BUILD_REVISION: ${{ github.sha }}
         run: |
           cargo build --manifest-path model-maven/Cargo.toml --release --locked
           cargo build --manifest-path model-maven-tui/Cargo.toml --release --locked

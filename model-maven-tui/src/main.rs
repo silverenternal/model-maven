@@ -1,5 +1,6 @@
 mod cli;
 mod graph;
+mod nvim_workspace;
 mod pending_start;
 mod penrose;
 mod scaffold_draft;
@@ -22,6 +23,19 @@ use terminal::locale::Locale;
     about = "Interactive terminal frontend for m-model"
 )]
 struct Options {
+    /// Render a compact model graph from a JSON request on stdin.
+    #[arg(long, hide = true)]
+    render_model_preview: bool,
+    /// Internal interactive model-preview pane; reads the supplied snapshot.
+    #[arg(long, hide = true, value_name = "FILE")]
+    live_model_preview: Option<PathBuf>,
+    /// Print the source revision supplied when the binary was built.
+    #[arg(long, hide = true)]
+    build_source_revision: bool,
+    /// Print the embedded workspace sources for distribution identity checks.
+    #[arg(long, hide = true)]
+    workspace_sources: bool,
+
     /// Open the bundled Drift-L 3D graph without launching m-model.
     #[arg(long, visible_alias = "drifting-demo")]
     demo_graph: bool,
@@ -41,6 +55,10 @@ struct Options {
     /// Use line-by-line controls, including with redirected input.
     #[arg(long, conflicts_with_all = ["demo_graph", "editor_demo", "drifting_source"])]
     line_mode: bool,
+
+    /// Open the Neovim workspace immediately, bypassing the welcome screen.
+    #[arg(long, conflicts_with_all = ["line_mode", "demo_graph", "editor_demo", "diagnosis_demo", "drifting_source"])]
+    skip_welcome: bool,
 
     /// Read the official Drifting generator and preset in a local source checkout.
     ///
@@ -94,6 +112,29 @@ enum DiagnosisCase {
 
 fn main() -> ExitCode {
     let options = Options::parse();
+    if let Some(path) = options.live_model_preview.as_deref() {
+        #[cfg(unix)]
+        return match graph::preview::interactive(path, options.lang.map_or_else(workbench::preferred_locale, Locale::from)) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(error) => { eprintln!("Model preview: {error}"); ExitCode::FAILURE }
+        };
+        #[cfg(not(unix))]
+        { let _ = path; eprintln!("Interactive model preview is unavailable on this platform."); return ExitCode::FAILURE; }
+    }
+    if options.render_model_preview {
+        return match graph::preview::run() {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(error) => { eprintln!("Model preview: {error}"); ExitCode::FAILURE }
+        };
+    }
+    if options.build_source_revision {
+        println!("{}", option_env!("MODEL_MAVEN_BUILD_REVISION").unwrap_or("unknown"));
+        return ExitCode::SUCCESS;
+    }
+    if options.workspace_sources {
+        println!("{}", nvim_workspace::workspace_sources());
+        return ExitCode::SUCCESS;
+    }
     let locale = options
         .lang
         .map_or_else(workbench::preferred_locale, Locale::from);
@@ -107,6 +148,25 @@ fn main() -> ExitCode {
             )
         );
         return ExitCode::from(2);
+    }
+    // Explicit legacy demos and line mode remain available for existing users;
+    // normal interactive use opens the welcome screen and shared workspace.
+    if !options.line_mode && !options.demo_graph && !options.editor_demo
+        && !options.diagnosis_demo && options.drifting_source.is_none()
+    {
+        let language = options.lang.map(|lang| match lang {
+            Language::En => "en", Language::ZhCn => "zh-cn", Language::ZhTw => "zh-tw",
+        });
+        return match nvim_workspace::launch(
+            options.project,
+            options.cli,
+            language,
+            locale,
+            options.skip_welcome,
+        ) {
+            Ok(code) => ExitCode::from(u8::try_from(code).unwrap_or(1)),
+            Err(error) => { eprintln!("Model-Maven: {error}"); ExitCode::FAILURE }
+        };
     }
     match run(options, locale) {
         Ok(()) => ExitCode::SUCCESS,

@@ -462,6 +462,11 @@ pub fn display(report: &Report, json: bool) {
         }
         return;
     }
+    if report.operation == "component_test" {
+        if let Some(seed) = report.data["seed_decimal"].as_str() {
+            println!("  本次验证种子：{seed}（仅覆盖本次执行；可用 --seed 复用）");
+        }
+    }
     if !report.success() {
         if report.operation == "evaluate" {
             for line in crate::presentation::pages::evaluation::render(report) {
@@ -1007,10 +1012,11 @@ pub fn display(report: &Report, json: bool) {
             let revision = variant["revision"].as_str().unwrap_or("未知");
             let revision = revision.get(..12).unwrap_or(revision);
             println!(
-                "{name} · {} · 编辑 {}/{} · revision {}",
+                "{name} · {} · 编辑 {}/{} · 设备策略 {} · revision {}",
                 variant["model"].as_str().unwrap_or("模型入口未知"),
                 variant["cursor"].as_u64().unwrap_or(0),
                 variant["edit_count"].as_u64().unwrap_or(0),
+                variant["device_policy"].as_str().unwrap_or("未知"),
                 revision
             );
         }
@@ -1029,6 +1035,8 @@ pub fn display(report: &Report, json: bool) {
             variant["edits"].as_array().map_or(0, Vec::len),
             variant["revision"].as_str().unwrap_or("未知")
         );
+        println!("设备重建策略：{}（查看文件本身不执行重建）",
+            variant.get("device_policy").map_or("legacy_cpu", |value| value.as_str().unwrap_or("未知")));
         if let Some(edits) = variant["edits"].as_array() {
             for (index, edit) in edits.iter().enumerate() {
                 println!(
@@ -1527,12 +1535,16 @@ pub fn display(report: &Report, json: bool) {
         );
         if let Some(progress) = report.data["progress"]
             .as_array()
-            .and_then(|items| items.last())
+            .and_then(|items| items.iter().rev().find(|item| item["step"].is_number()))
         {
             println!(
                 "进度：{}/{} 步 · 平均 Loss {}",
                 progress["step"], progress["total"], progress["mean_loss"]
             );
+        }
+        if report.data["progress"].as_array().is_some_and(|items|
+            items.iter().any(|item| item["event"] == "progress_line_omitted")) {
+            println!("过大的进度行已省略；请检查运行日志。 ");
         }
         if let Some(log) = report.data["log_tail"]
             .as_str()
@@ -1686,7 +1698,14 @@ pub fn display(report: &Report, json: bool) {
             );
         }
         if !summary.is_null() {
-            if summary["training_mode"] == "external-loop" {
+            if summary["training_mode"] == "generic-external-loop" {
+                let source = match summary["completed_steps_source"].as_str() {
+                    Some("worker_report") => "用户循环最后接受的报告",
+                    Some("checkpoint_manifest_unverified") => "恢复点清单所载步数，未核验；后续进度未知",
+                    _ => "来源未知",
+                };
+                println!("用户循环：{} / {} 步（{}）", summary["completed_steps"], summary["requested_steps"], source);
+            } else if summary["training_mode"] == "external-loop" {
                 println!(
                     "完整自有循环：{}/{} 步 · 平均 Loss {}",
                     summary["completed_steps"], summary["requested_steps"], summary["mean_loss"]
@@ -1784,11 +1803,15 @@ pub fn display(report: &Report, json: bool) {
                     "inputs" => "输入与设置",
                     "source_code" => "源码",
                     "data" => "数据与采样",
+                    "optimizer_factory" => "自定义优化器声明",
+                    "supervision" => "监督配置声明",
                     "samples" => "样本身份（训练代码报告）",
                     "budget" => "训练预算",
-                    "runtime_device" => "设备与运行时",
+                    "requested_device" => "请求的设备",
+                    "runtime_device" => "观察到的设备（名称不证明物理身份）",
                     "weights" => "权重",
                     "metrics" => "指标",
+                    "training_mean_metrics" => "训练平均指标",
                     other => other,
                 };
                 println!(
@@ -2198,6 +2221,11 @@ pub fn display(report: &Report, json: bool) {
                 }
             }
             println!("验证：{}", report.data["validation"]);
+            if report.data["variant"].is_object() {
+                println!("变体设备策略：{}；候选验证后的注册状态：{}",
+                    report.data["variant"].get("device_policy").map_or("legacy_cpu", |value| value.as_str().unwrap_or("未知")),
+                    report.data["model_state_placement"]);
+            }
             if report.data["source_validation"].is_object() {
                 println!(
                     "提交后重载复核：{} · {} · {} 个模块",

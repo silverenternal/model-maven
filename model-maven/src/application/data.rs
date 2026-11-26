@@ -43,6 +43,7 @@ pub(super) fn batch_input(inputs: &Inputs, operation: &str) -> Result<BatchInput
     let binding = inputs.batch_binding.as_ref().map(|binding| match binding {
         BatchBinding::Envelope => "envelope",
         BatchBinding::Single => "single",
+        BatchBinding::SingleRaw => "single-raw",
         BatchBinding::Args => "args",
         BatchBinding::Kwargs => "kwargs",
     });

@@ -1,16 +1,20 @@
 """Read-only inventory for optional ML/RL packages and explicit adapters.
 
-This module inspects distribution metadata in the requested interpreter. It
-never imports the listed packages, installs dependencies, changes the selected
-interpreter, or chooses an execution backend.
+Inventory reads distribution metadata in the requested interpreter. Explicit
+probe imports only user-selected modules in a subprocess; neither path installs
+dependencies, changes the selected interpreter, or chooses a backend.
 """
 
 import json
+import os
 import re
+import shutil
+import sys
 from pathlib import Path
 
 from ..protocol import UserError
-from .common import redact_environment_output, run_environment_process, safe_project_path
+from ..runtime.entrypoints import configure_project_import_roots
+from .common import ENVIRONMENT_CONFIG_PATH, redact_environment_output, run_environment_process, safe_project_path
 from .setup import selected_environment_venv, virtualenv_python
 
 
@@ -102,37 +106,185 @@ _LIBRARIES = {
 }
 
 _NAME_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,199}\Z")
-_INVENTORY_SCRIPT = r'''import importlib.metadata as metadata, json, re
+_INVENTORY_SCRIPT = r'''import importlib.metadata as metadata, json, re, sys
 normalize = lambda value: re.sub(r"[-_.]+", "-", value).lower()
+requested = set(json.loads(sys.argv[1]))
 packages = {}
 for distribution in metadata.distributions():
     name = distribution.metadata.get("Name")
-    version = distribution.version
-    if name and version:
+    if name:
         key = normalize(name)
-        packages.setdefault(key, []).append({"name": name, "version": version})
+        if requested and key not in requested:
+            continue
+        version = distribution.version
+        if not version:
+            continue
+        # top_level.txt is optional distribution metadata, not proof that an
+        # import resolves to this distribution; never import it for inventory.
+        try:
+            top_level = distribution.read_text("top_level.txt") or ""
+            candidates = sorted({line.strip() for line in top_level[:65536].splitlines()
+                                 if line.strip().isidentifier() and len(line.strip()) <= 200})[:32]
+        except (OSError, UnicodeError, ValueError):
+            candidates = []
+        packages.setdefault(key, []).append({"name": name, "version": version,
+                                             "import_name_candidates": candidates})
 print(json.dumps(packages, sort_keys=True))
 '''
-_PROBE_SCRIPT = r'''import contextlib, importlib, importlib.metadata as metadata, json, math, os, sys
+_PROBE_SCRIPT = r'''import contextlib, importlib, importlib.metadata as metadata, inspect, json, math, os, sys
 key = sys.argv[1]
 distribution, import_name = json.loads(sys.argv[2])
 check_runtime = sys.argv[3] == "1"
-try:
-    installed_version = metadata.version(distribution)
-except metadata.PackageNotFoundError:
-    result = {"status": "not_installed", "distribution": distribution}
-    if check_runtime:
-        result["runtime_check"] = {"status": "not_run", "reason": "package_not_installed"}
-    print(json.dumps(result))
-    raise SystemExit(0)
+project, roots = json.loads(sys.argv[4])
+check_devices = sys.argv[5] == "1"
+check_layers = sys.argv[6] == "1"
+check_operators = sys.argv[7] == "1"
+def parameter_details(parameter):
+    info = {"name": parameter.name, "kind": parameter.kind.name,
+            "required": parameter.default is inspect.Parameter.empty and parameter.kind not in
+            (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)}
+    # Only recognize literal built-in annotations. Never evaluate forward
+    # references or call repr() on user-provided annotation objects.
+    annotation = parameter.annotation
+    known = ((int, "number"), (float, "number"), (str, "text"), (bool, "boolean"),
+             (list, "collection"), (tuple, "collection"), (dict, "collection"))
+    for builtin, hint in known:
+        if annotation is builtin or (type(annotation) is str and annotation == builtin.__name__):
+            info["type_hint"] = hint
+            break
+    value = parameter.default
+    # Only bounded primitive defaults are displayed. Do not call repr() on
+    # arbitrary objects or copy strings that may contain credentials.
+    if value is None or type(value) is bool or (type(value) is int and abs(value) <= 9007199254740991) or (type(value) is float and math.isfinite(value)):
+        info["default"] = value
+        info["default_available"] = True
+    return info
+if project in sys.path:
+    sys.path.remove(project)
+sys.path.insert(0, project)
+for entry in reversed(roots):
+    while entry in sys.path:
+        sys.path.remove(entry)
+    sys.path.insert(0, entry)
+installed_version = None
+distribution_status = "not_requested"
+if distribution is not None:
+    try:
+        installed_version = metadata.version(distribution)
+        distribution_status = "installed"
+    except metadata.PackageNotFoundError:
+        distribution_status = "not_installed"
 try:
     with open(os.devnull, "w", encoding="utf-8") as sink:
         with contextlib.redirect_stdout(sink), contextlib.redirect_stderr(sink):
-            if check_runtime and key == "jax":
-                os.environ["JAX_PLATFORMS"] = "cpu"
             module = importlib.import_module(import_name)
             version = getattr(module, "__version__", installed_version)
             runtime_check_result = None
+            device_inventory = None
+            layer_catalog = None
+            operator_catalog = None
+            if check_operators:
+                try:
+                    candidates = sorted((name, value) for name, value in vars(module).items()
+                                        if isinstance(name, str) and name.isidentifier() and not name.startswith("_")
+                                        and (inspect.isclass(value) or inspect.isfunction(value) or inspect.isbuiltin(value)))
+                    operators = []
+                    for name, value in candidates[:2048]:
+                        try:
+                            params = list(inspect.signature(value).parameters.values())
+                            signature = {"status": "observed", "parameters": [parameter_details(p)
+                                for p in params[:32]], "truncated": len(params) > 32}
+                        except Exception as error:
+                            # Avoid exposing exception text, which may contain secrets
+                            # from arbitrary user-defined introspection code.
+                            signature = {"status": "unavailable", "reason": type(error).__name__[:120]}
+                        try:
+                            source_module = getattr(value, "__module__", None)
+                            if not isinstance(source_module, str):
+                                source_module = None
+                            elif len(source_module) > 240 or any(ord(c) < 32 for c in source_module):
+                                source_module = None
+                        except Exception:
+                            source_module = None
+                        operators.append({"name": name, "reference": import_name + ":" + name,
+                                          "kind": "class" if inspect.isclass(value) else "function",
+                                          "source_module": source_module,
+                                          "signature": signature, "compatibility": "unknown"})
+                    operator_catalog = {"status": "observed", "operators": operators,
+                                        "truncated": len(candidates) > 2048}
+                except Exception as error:
+                    operator_catalog = {"status": "failed", "operators": [],
+                                        "failure_reason": (type(error).__name__ + ": " + str(error))[:1000]}
+            if check_layers and key == "torch":
+                try:
+                    candidates = sorted((name, value) for name, value in vars(module.nn).items()
+                                        if isinstance(name, str) and name.isidentifier()
+                                        and not name.startswith("_") and isinstance(value, type)
+                                        and issubclass(value, module.nn.Module))
+                    layers = []
+                    for name, value in candidates[:2048]:
+                        try:
+                            parameters = list(inspect.signature(value).parameters.values())
+                            fields = [parameter_details(p) for p in parameters[:32]]
+                            signature = {"status": "observed", "parameters": fields,
+                                         "truncated": len(parameters) > 32}
+                        except Exception:
+                            signature = {"status": "unavailable"}
+                        layers.append({"name": name, "signature": signature})
+                    layer_catalog = {"status": "observed", "layers": layers,
+                                     "truncated": len(candidates) > 2048}
+                except Exception as error:
+                    layer_catalog = {"status": "failed", "layers": [],
+                                     "failure_reason": (type(error).__name__ + ": " + str(error))[:1000]}
+            if check_devices and key == "torch":
+                devices = [{"id": "cpu", "backend": "cpu", "name": "CPU"}]
+                failures = []
+                count = 0
+                try:
+                    cuda = getattr(module, "cuda", None)
+                    available = bool(cuda is not None and cuda.is_available())
+                    count = int(cuda.device_count()) if available else 0
+                    if count < 0:
+                        raise ValueError("negative device count")
+                    backend = "rocm" if getattr(getattr(module, "version", None), "hip", None) else "cuda"
+                    for index in range(min(count, 128)):
+                        devices.append({"id": f"cuda:{index}", "backend": backend,
+                                        "name": str(cuda.get_device_name(index))[:256]})
+                except BaseException as error:
+                    if isinstance(error, KeyboardInterrupt):
+                        raise
+                    failures.append("CUDA: " + type(error).__name__ + ": " + str(error))
+                accelerator_status = "unavailable"
+                try:
+                    accelerator = getattr(module, "accelerator", None)
+                    current = getattr(accelerator, "current_accelerator", None)
+                    get_count = getattr(accelerator, "device_count", None)
+                    if callable(current) and callable(get_count):
+                        selected = current(check_available=True)
+                        accelerator_status = "observed"
+                        if selected is not None and selected.type not in {"cpu", "cuda", "meta"}:
+                            accelerator_count = int(get_count())
+                            if accelerator_count < 0:
+                                raise ValueError("negative accelerator count")
+                            if accelerator_count == 0:
+                                failures.append("accelerator reported available without visible devices")
+                            for index in range(min(accelerator_count, 128)):
+                                label = selected.type if accelerator_count == 1 else f"{selected.type}:{index}"
+                                devices.append({"id": label, "backend": selected.type, "name": selected.type})
+                            if accelerator_count > 128:
+                                failures.append("accelerator device list truncated")
+                    else:
+                        failures.append("generic accelerator query unavailable")
+                except BaseException as error:
+                    if isinstance(error, KeyboardInterrupt):
+                        raise
+                    accelerator_status = "failed"
+                    failures.append("accelerator: " + type(error).__name__ + ": " + str(error))
+                device_inventory = {"status": "partial" if failures or count > 128 else "observed",
+                                    "devices": devices, "gpu_count": count, "truncated": count > 128,
+                                    "accelerator_query": accelerator_status}
+                if failures:
+                    device_inventory["failure_reason"] = "; ".join(failures)[:1000]
             if check_runtime:
                 try:
                     if key == "torch":
@@ -154,10 +306,14 @@ try:
                         value.block_until_ready()
                         scalar = float(value)
                         if not math.isfinite(scalar) or scalar != 5.0:
-                            raise RuntimeError("CPU JAX arithmetic returned an unexpected value")
+                            raise RuntimeError("JAX arithmetic returned an unexpected value")
+                        observed_device = getattr(value, "device", None)
+                        if callable(observed_device):
+                            observed_device = observed_device()
                         runtime_check_result = {
-                            "status": "passed", "profile": "jax-cpu-array-arithmetic",
-                            "device": "cpu", "result": scalar,
+                            "status": "passed", "profile": "jax-default-array-arithmetic",
+                            "device": str(observed_device)[:256] if observed_device is not None else None,
+                            "backend": str(jax.default_backend())[:128], "result": scalar,
                             "runtime_version": str(getattr(jax, "__version__", installed_version))[:200],
                         }
                     elif key == "torchvision":
@@ -204,11 +360,19 @@ try:
     result = {
         "status": "imported",
         "distribution": distribution,
+        "distribution_status": distribution_status,
         "distribution_version": installed_version,
-        "import_version": str(version)[:200],
+        "import_version": str(version)[:200] if version is not None else None,
+        "import_origin": (str(origin)[:2000] if (origin := getattr(getattr(module, "__spec__", None), "origin", None)) is not None else None),
     }
     if check_runtime:
         result["runtime_check"] = runtime_check_result
+    if check_devices:
+        result["device_inventory"] = device_inventory
+    if check_layers:
+        result["layer_catalog"] = layer_catalog
+    if check_operators:
+        result["operator_catalog"] = operator_catalog
     print(json.dumps(result))
 except KeyboardInterrupt:
     raise
@@ -218,6 +382,7 @@ except BaseException as error:
     print(json.dumps({
         "status": "import_failed",
         "distribution": distribution,
+        "distribution_status": distribution_status,
         "distribution_version": installed_version,
         "failure_type": type(error).__name__[:120],
         "failure_reason": str(error)[:2000],
@@ -233,7 +398,7 @@ def _selected_python(base_python, explicit_python, requested_venv=None):
     candidate = virtualenv_python(venv)
     if venv.is_dir() and candidate.is_file():
         return candidate.as_posix(), relative
-    if requested_venv is not None:
+    if requested_venv is not None or ENVIRONMENT_CONFIG_PATH.exists():
         raise UserError(
             "ENVIRONMENT_VENV_NOT_FOUND",
             f"指定的项目虚拟环境不可用：{relative}",
@@ -244,7 +409,7 @@ def _selected_python(base_python, explicit_python, requested_venv=None):
 
 def _requested_libraries(names):
     if names is None or names == []:
-        return list(_LIBRARIES)
+        return []
     if not isinstance(names, list) or len(names) > 128:
         raise UserError("ENVIRONMENT_LIBRARY_QUERY_INVALID", "library 查询必须是最多 128 项的名称数组。")
     result = []
@@ -269,15 +434,18 @@ def _requested_probe_libraries(names):
     result = []
     seen = set()
     for name in names:
-        if not isinstance(name, str) or not _NAME_PATTERN.fullmatch(name):
-            raise UserError("ENVIRONMENT_LIBRARY_QUERY_INVALID", f"无效 Python distribution 名称：{name!r}。")
-        key = re.sub(r"[-_.]+", "-", name).lower()
-        if key not in _LIBRARIES:
-            raise UserError(
-                "ENVIRONMENT_LIBRARY_PROBE_UNSUPPORTED",
-                f"库 {name!r} 不在可显式 probe 的安全候选列表中。",
-                f"可选候选：{', '.join(sorted(_LIBRARIES))}。任意包仍可用 env libraries 查询 metadata。",
-            )
+        if not isinstance(name, str) or not name or len(name) > 200:
+            raise UserError("ENVIRONMENT_LIBRARY_QUERY_INVALID", f"无效 Python 库或模块名称：{name!r}。")
+        normalized = re.sub(r"[-_.]+", "-", name).lower()
+        if all(part.isidentifier() for part in name.split(".")):
+            # Valid Python module names are case-sensitive. Map a known
+            # distribution only when its documented import name matches exactly.
+            key = next((candidate for candidate, definition in _LIBRARIES.items()
+                        if definition["import_name"] == name), name)
+        elif normalized in _LIBRARIES:
+            key = normalized
+        else:
+            raise UserError("ENVIRONMENT_LIBRARY_QUERY_INVALID", f"未知库请使用 Python 模块名：{name!r}。")
         if key not in seen:
             seen.add(key)
             result.append(key)
@@ -287,14 +455,19 @@ def _requested_probe_libraries(names):
 def inspect_environment_libraries(request):
     """Report installed package metadata without importing optional packages."""
     runtime = request.get("runtime", {})
-    base_python = runtime.get("python_executable") or "python3"
+    base_python = runtime.get("python_executable") or sys.executable
+    if not base_python:
+        raise UserError("PYTHON_SELECTION_REQUIRED", "无法确定当前 Python 解释器，请明确选择。")
     target_python, selected_by = _selected_python(
         base_python,
         request.get("python_explicit") is True,
         request.get("venv"),
     )
+    requested = request.get("libraries")
+    explicit = requested is not None and requested != []
+    requested_names = _requested_libraries(requested) if explicit else []
     result = run_environment_process(
-        [target_python, "-c", _INVENTORY_SCRIPT],
+        [target_python, "-c", _INVENTORY_SCRIPT, json.dumps(requested_names)],
         "已安装 ML/RL 库元数据读取",
         timeout=60,
     )
@@ -305,22 +478,40 @@ def inspect_environment_libraries(request):
     if not isinstance(inventory, dict) or len(inventory) > 100_000:
         raise UserError("ENVIRONMENT_LIBRARY_INVENTORY_INVALID", "Python distribution 元数据超出可接受范围。")
 
+    if not explicit:
+        # List only distributions observed in the selected interpreter. Known
+        # adapter descriptions enrich matching entries but never add packages.
+        discovered = sorted(inventory)
+        selected = discovered[:4096]
+        truncated = max(0, len(discovered) - len(selected))
+    else:
+        selected = requested_names
+        truncated = 0
     libraries = []
-    for key in _requested_libraries(request.get("libraries")):
+    for key in selected:
         definition = _LIBRARIES.get(key, {
             "distribution": key,
             "import_name": None,
             "backend": None,
             "adapter_status": "unknown",
-            "summary": "User-declared distribution; no first-party adapter claim is made.",
+            "summary": "Discovered or user-declared distribution; no first-party adapter claim is made.",
         })
         matches = inventory.get(key, [])
         if not isinstance(matches, list):
             matches = []
+        candidates = sorted({candidate for match in matches if isinstance(match, dict)
+                             for candidate in match.get("import_name_candidates", [])
+                             if isinstance(candidate, str) and candidate.isidentifier()})[:32]
+        hint = definition["import_name"]
+        hint_source = "built-in-adapter" if hint else None
+        if not hint and len(candidates) == 1:
+            hint, hint_source = candidates[0], "distribution-metadata-unverified"
         libraries.append({
             "name": key,
             "distribution": definition["distribution"],
-            "import_name_hint": definition["import_name"],
+            "import_name_hint": hint,
+            "import_name_hint_source": hint_source,
+            "import_name_candidates": candidates,
             "installed": bool(matches),
             "installed_versions": matches,
             "adapter_status": definition["adapter_status"],
@@ -335,21 +526,52 @@ def inspect_environment_libraries(request):
         "inspection": "distribution-metadata-only",
         "third_party_code_imported": False,
         "libraries": libraries,
+        "omitted_count": truncated,
+        "discovery": "selected-interpreter-distribution-metadata",
         "note": "发现只读取 package metadata，不执行库代码；已安装不代表存在 Model-Maven 专用适配器。依赖安装和后端选择都必须由用户显式完成。",
     }
 
 
 def probe_environment_libraries(request):
-    """Import only explicitly named, allowlisted candidates in the selected Python."""
+    """Import only explicitly named libraries or modules in the selected Python."""
     runtime = request.get("runtime", {})
-    base_python = runtime.get("python_executable") or "python3"
+    base_python = runtime.get("python_executable") or sys.executable
+    if not base_python:
+        raise UserError("PYTHON_SELECTION_REQUIRED", "无法确定当前 Python 解释器，请明确选择。")
     target_python, selected_by = _selected_python(
         base_python,
         request.get("python_explicit") is True,
         request.get("venv"),
     )
     check_runtime = request.get("check_runtime") is True
+    check_devices = request.get("device_inventory") is True
+    check_layers = request.get("layer_catalog") is True
+    check_operators = request.get("operator_catalog") is True
+    selected_roots = configure_project_import_roots(request)
+    project_root = Path(request.get("project_root") or Path.cwd()).resolve(strict=True)
+    requested_cwd = runtime.get("working_directory")
+    if requested_cwd is not None:
+        if not isinstance(requested_cwd, str) or not Path(requested_cwd).is_absolute():
+            raise UserError("WORKING_DIRECTORY_INVALID", "运行工作目录必须是绝对路径。")
+        try:
+            cwd = Path(requested_cwd).resolve(strict=True)
+            if cwd != Path(requested_cwd) or not cwd.is_dir():
+                raise ValueError("working directory changed or is not a directory")
+        except (OSError, ValueError, RuntimeError) as error:
+            raise UserError("WORKING_DIRECTORY_UNAVAILABLE", "运行工作目录不可用或已变化。") from error
+    else:
+        cwd = Path.cwd()
+    # Resolve relative executable choices in the original project context before
+    # changing the subprocess cwd. Do not resolve symlinks: venvs use them.
+    if requested_cwd is not None:
+        located_python = shutil.which(target_python)
+        if located_python:
+            target_python = os.path.abspath(located_python)
+        elif os.path.dirname(target_python):
+            target_python = os.path.abspath(target_python)
     requested = _requested_probe_libraries(request.get("libraries"))
+    if check_layers and requested != ["torch"]:
+        raise UserError("ENVIRONMENT_LAYER_CATALOG_INVALID", "Layer 清单要求单独显式指定 --library torch。")
     if check_runtime and len(requested) > 4:
         raise UserError(
             "ENVIRONMENT_RUNTIME_CHECK_LIMIT",
@@ -358,7 +580,10 @@ def probe_environment_libraries(request):
         )
     probes = []
     for key in requested:
-        definition = _LIBRARIES[key]
+        definition = _LIBRARIES.get(key, {
+            "distribution": None, "import_name": key, "backend": None,
+            "adapter_status": "unknown",
+        })
         result = run_environment_process(
             [
                 target_python,
@@ -371,9 +596,14 @@ def probe_environment_libraries(request):
                     separators=(",", ":"),
                 ),
                 "1" if check_runtime else "0",
+                json.dumps([str(project_root), selected_roots], ensure_ascii=True),
+                "1" if check_devices else "0",
+                "1" if check_layers else "0",
+                "1" if check_operators else "0",
             ],
             f"显式 Python 库导入探测：{key}",
             timeout=120,
+            working_directory=cwd,
         )
         try:
             value = json.loads(result.stdout)
@@ -398,8 +628,12 @@ def probe_environment_libraries(request):
         }
         if isinstance(value.get("distribution_version"), str):
             probe["distribution_version"] = value["distribution_version"][:200]
+        if value.get("distribution_status") in {"not_requested", "installed", "not_installed"}:
+            probe["distribution_status"] = value["distribution_status"]
         if isinstance(value.get("import_version"), str):
             probe["import_version"] = value["import_version"][:200]
+        if isinstance(value.get("import_origin"), str):
+            probe["import_origin"] = value["import_origin"][:2000]
         if isinstance(value.get("failure_type"), str):
             probe["failure_type"] = value["failure_type"][:120]
         if isinstance(value.get("failure_reason"), str):
@@ -417,14 +651,51 @@ def probe_environment_libraries(request):
                 "status": "not_run",
                 "reason": "import_failed" if value["status"] == "import_failed" else "runtime_result_unavailable",
             }
+        inventory = value.get("device_inventory")
+        if check_devices:
+            if isinstance(inventory, dict):
+                inventory = dict(inventory)
+                if isinstance(inventory.get("failure_reason"), str):
+                    inventory["failure_reason"] = redact_environment_output(inventory["failure_reason"], limit=1000)
+                probe["device_inventory"] = inventory
+            else:
+                probe["device_inventory"] = {"status": "unknown", "devices": [], "reason": "import_unavailable"}
+        if check_layers:
+            catalog = value.get("layer_catalog")
+            if isinstance(catalog, dict):
+                catalog = dict(catalog)
+                if isinstance(catalog.get("failure_reason"), str):
+                    catalog["failure_reason"] = redact_environment_output(catalog["failure_reason"], limit=1000)
+                probe["layer_catalog"] = catalog
+            else:
+                probe["layer_catalog"] = {"status": "unknown", "layers": [], "reason": "import_unavailable"}
+        if check_operators:
+            catalog = value.get("operator_catalog")
+            if isinstance(catalog, dict):
+                catalog = dict(catalog)
+                if isinstance(catalog.get("failure_reason"), str):
+                    catalog["failure_reason"] = redact_environment_output(catalog["failure_reason"], limit=1000)
+                probe["operator_catalog"] = catalog
+            else:
+                probe["operator_catalog"] = {"status": "unknown", "operators": [], "reason": "import_unavailable"}
         probes.append(probe)
     return {
         "python_executable": target_python,
         "selected_by": selected_by,
-        "inspection": "explicit-allowlisted-import-and-runtime-smoke" if check_runtime else "explicit-allowlisted-import",
-        "third_party_code_imported": any(item["status"] == "imported" for item in probes),
+        "working_directory": str(cwd),
+        "project_import_roots": runtime.get("project_import_roots"),
+        "inspection": "explicit-device-query" if check_devices else ("explicit-import-and-runtime-smoke" if check_runtime else "explicit-import"),
+        # A successful import may resolve to project code, and a failed import
+        # may have already executed module initializers. Neither result proves
+        # whether third-party code ran.
+        "third_party_code_imported": None,
+        "third_party_import_status": "unknown",
+        "import_attempted": bool(probes),
+        "import_may_have_executed_code": bool(probes),
         "auto_installed": False,
         "auto_bound": False,
         "probes": probes,
-        "note": "仅导入用户通过 --library 点名且属于候选清单的包。--check-runtime 只对有固定 CPU smoke 的库运行有限运算；其它库返回 unsupported，不代表失败。通过 smoke 不代表 Model-Maven 提供该库的模型或训练后端。未安装依赖、未切换解释器、未绑定 Trainer。",
+        "note": ("已显式导入 PyTorch 并查询当前设备可见性；可能初始化驱动，设备之后可能变化。未安装依赖、未选择设备。"
+                 if check_devices else
+                 "仅导入用户通过 --library 点名的库或 Python 模块；发行包元数据和实际导入来源分别报告，前者不证明后者归属。--check-runtime 只对支持的库运行有限计算，JAX 使用环境默认后端；其它模块返回 unsupported。导入成功不代表提供专用模型或训练后端。未安装依赖、未切换解释器、未绑定 Trainer。"),
     }

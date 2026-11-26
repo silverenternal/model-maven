@@ -66,11 +66,11 @@ pub(crate) enum ProjectState {
 struct WelcomeContent {
     copy: WelcomeCopy,
     name: String,
-    status: &'static str,
+    status: Option<&'static str>,
 }
 
 impl WelcomeContent {
-    fn new(copy: WelcomeCopy, root: &Path, state: ProjectState) -> Self {
+    fn new(copy: WelcomeCopy, root: &Path, state: Option<ProjectState>) -> Self {
         let name = root.file_name().map_or_else(
             || copy.directory.to_owned(),
             |name| {
@@ -80,22 +80,25 @@ impl WelcomeContent {
                     .join(" ")
             },
         );
-        let status = match state {
+        let status = state.map(|state| match state {
             ProjectState::Configured => copy.resume,
             ProjectState::Unconfigured => copy.connect,
             ProjectState::NeedsReview => copy.review,
             ProjectState::Unavailable => copy.unavailable,
-        };
+        });
         Self { copy, name, status }
     }
 
     fn project_line(&self, width: usize) -> String {
-        let reserved = text::display_width(self.status) + 3;
+        let Some(status) = self.status else {
+            return text::truncate(&self.name, width);
+        };
+        let reserved = text::display_width(status) + 3;
         let name = text::truncate(&self.name, width.saturating_sub(reserved));
         if name.is_empty() {
-            text::truncate(self.status, width)
+            text::truncate(status, width)
         } else {
-            format!("{name} · {}", self.status)
+            format!("{name} · {status}")
         }
     }
 }
@@ -146,7 +149,7 @@ impl Handoff {
         locale: Locale,
     ) -> io::Result<Option<Self>> {
         let copy = copy_for_locale(locale);
-        run(&WelcomeContent::new(copy, root, state), self)
+        run(&WelcomeContent::new(copy, root, Some(state)), self)
             .map_err(|error| io::Error::new(error.kind(), format!("{}: {error}", copy.failed)))
     }
 }
@@ -159,13 +162,23 @@ pub(crate) fn show(
     Handoff::default().welcome(root, state, locale)
 }
 
+pub(crate) fn enter_workspace(root: &Path, locale: Locale) -> io::Result<bool> {
+    #[cfg(unix)]
+    let _interrupt = crate::terminal::interrupt::Guard::install();
+    let copy = copy_for_locale(locale);
+    // Dropping the handoff restores the terminal before Neovim starts.
+    run(&WelcomeContent::new(copy, root, None), Handoff::default())
+        .map(|handoff| handoff.is_some())
+        .map_err(|error| io::Error::new(error.kind(), format!("{}: {error}", copy.failed)))
+}
+
 pub(crate) fn show_line(
     root: &Path,
     state: ProjectState,
     locale: Locale,
 ) -> io::Result<Option<Handoff>> {
     let copy = copy_for_locale(locale);
-    run_plain(&WelcomeContent::new(copy, root, state), None)
+    run_plain(&WelcomeContent::new(copy, root, Some(state)), None)
         .map_err(|error| io::Error::new(error.kind(), format!("{}: {error}", copy.failed)))
 }
 
@@ -610,7 +623,7 @@ mod tests {
     fn keeps_project_status_visible_and_sanitizes_the_directory_label() {
         let copy = copy_for_locale(Locale::Simplified);
         let root = Path::new("/tmp/demo-model-with-a-long-name\n\x1b[31m");
-        let welcome = WelcomeContent::new(copy, root, ProjectState::Configured);
+        let welcome = WelcomeContent::new(copy, root, Some(ProjectState::Configured));
         let label = welcome.project_line(24);
         assert!(label.ends_with(" · 继续项目"));
         assert!(!label.contains('\x1b') && !label.contains('\n'));

@@ -12,6 +12,7 @@ class SourceEditDispatchRuntime:
     source_sequential_candidate: Callable[[dict, dict], dict]
     source_set_transaction_candidate: Callable[[dict, dict], dict]
     source_sequential_transaction_candidate: Callable[[dict, dict], dict]
+    source_mixed_transaction_candidate: Callable[[dict, dict], dict]
     starter_migration_candidate: Callable[[dict, dict], dict]
 
 
@@ -39,10 +40,14 @@ def source_edit_candidate(runtime, request):
                 isinstance(item, dict) for item in operations
             ):
                 return runtime.source_sequential_transaction_candidate(request, edit)
+            if "set" in actions and actions & {"add", "replace", "remove"} and actions <= {"set", "add", "replace", "remove"} and all(
+                isinstance(item, dict) for item in operations
+            ):
+                return runtime.source_mixed_transaction_candidate(request, edit)
             raise UserError(
                 "SOURCE_EDIT_UNSUPPORTED",
-                "一个源码原子计划必须全部使用 set，或全部使用 Sequential add/replace/remove。",
-                "不要把 set 与结构操作混在同一计划中；结构操作可使用内置 Layer 或可导入的 Python 工厂。",
+                "源码原子计划只支持 set、add、replace 和 remove。",
+                "混合计划须先列出 set，再列出结构操作。",
             )
         return runtime.source_set_transaction_candidate(request, edit)
     if edit.get("action") != "set":

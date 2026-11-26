@@ -56,9 +56,12 @@ impl VariantFile {
             Err(e) => return Err(e.to_string()),
         }
         let text = fs::read_to_string(&self.path).map_err(|e| e.to_string())?;
-        serde_json::from_str(&text)
-            .map(Some)
-            .map_err(|e| format!("变体文件损坏：{e}"))
+        let value: Value = serde_json::from_str(&text)
+            .map_err(|e| format!("变体文件损坏：{e}"))?;
+        if !value.is_object() {
+            return Err("变体文件内容不是有效对象。请检查或从备份恢复该变体。".into());
+        }
+        Ok(Some(value))
     }
 
     fn lock(&self) -> Result<File, String> {
@@ -175,6 +178,7 @@ impl VariantRepository for FileVariantStore {
                     "model":value.pointer("/origin/model"),
                     "edit_count":value.get("edits").and_then(Value::as_array).map(Vec::len),
                     "cursor":value.get("cursor"),
+                    "device_policy":value.get("device_policy").cloned().unwrap_or_else(|| json!("legacy_cpu")),
                     "revision":value.get("revision")
                 })),
                 Err(error) => rows.push(json!({"name":name,"readable":false,"error":format!("变体 JSON 无效：{error}")})),

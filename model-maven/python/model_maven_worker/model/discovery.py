@@ -4,15 +4,7 @@ import os
 import sys
 from pathlib import Path
 
-
-_IGNORED_PROJECT_PARTS = {
-    ".venv",
-    "venv",
-    "site-packages",
-    "target",
-    ".git",
-    "__pycache__",
-}
+from ..runtime.source_paths import is_project_python_source
 _MAX_CAPTURED_MODULES = 16384
 
 
@@ -28,14 +20,12 @@ def project_construction_site(project_root, module):
                 filename = frame.f_code.co_filename
                 try:
                     path = Path(filename).resolve()
-                    path.relative_to(project_root)
                 except (OSError, ValueError, TypeError):
                     pass
                 else:
-                    relative = path.relative_to(project_root)
-                    if path.suffix == ".py" and not any(
-                        part in _IGNORED_PROJECT_PARTS for part in relative.parts
-                    ):
+                    # The helper performs the project-boundary check itself.
+                    # Repeating relative_to here adds work for every module.
+                    if is_project_python_source(project_root, path, resolved=True):
                         return {
                             "file": str(path),
                             "source_path": os.path.abspath(filename),

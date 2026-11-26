@@ -1,6 +1,7 @@
 """User-owned optimization steps with observable optimizer updates."""
 
 import math
+import json
 import re
 import sys
 import time
@@ -19,13 +20,31 @@ class TrackedOptimizer:
         self._context = training_context
         self.name = name
         self._optimizer = optimizer
+        self._parameter_groups = self._group_identity()
+
+    def _group_identity(self):
+        try:
+            return tuple(tuple(id(parameter) for parameter in group["params"]) for group in self._optimizer.param_groups)
+        except (KeyError, TypeError) as error:
+            raise UserError("OPTIMIZER_REGISTRATION_CHANGED", f"优化器 {self.name} 的参数组格式已改变。") from error
+
+    def _check_parameter_groups(self):
+        if self._group_identity() != self._parameter_groups:
+            raise UserError("OPTIMIZER_REGISTRATION_CHANGED", f"优化器 {self.name} 的参数组在登记后发生变化。",
+                            "受管组需要固定参数及分组；动态改变参数组的算法请使用完整训练循环。")
 
     def zero_grad(self, set_to_none=True):
+        self._check_parameter_groups()
         self._optimizer.zero_grad(set_to_none=set_to_none)
 
     def step(self, closure=None):
+        if closure is not None:
+            raise UserError("OPTIMIZER_CLOSURE_UNSUPPORTED", "受管手动优化器暂不支持 step closure；闭包内的更新无法由当前协议完整检查。",
+                            "需要闭包的算法请使用完整训练循环。")
+        self._check_parameter_groups()
         self._context.check_optimizer_gradients(self.name, self._optimizer)
-        result = self._optimizer.step(closure)
+        result = self._optimizer.step()
+        self._check_parameter_groups()
         self._context.updates[self.name] = self._context.updates.get(self.name, 0) + 1
         self._context.check_optimizer_values(self.name, self._optimizer)
         return result
@@ -68,11 +87,15 @@ class ManualTrainingContext:
         context.backward = self.backward
         return context
 
-    def register_optimizer(self, name, parameters, optimizer="adamw", lr=None, weight_decay=None):
+    def register_optimizer(self, name, parameters, optimizer="adamw", lr=None, weight_decay=None, *, factory=None, factory_params=None):
         if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_.-]{0,63}", name):
             raise UserError("OPTIMIZER_REGISTRATION_INVALID", "优化器名称须为最多 64 位标识符。")
-        if not isinstance(optimizer, str) or optimizer.lower() != "adamw":
+        if factory is None and (not isinstance(optimizer, str) or optimizer.lower() != "adamw"):
             raise UserError("OPTIMIZER_UNSUPPORTED", "当前 manual-step 只支持注册 AdamW 优化器组。")
+        if factory is not None and (not callable(factory) or optimizer != "adamw" or lr is not None or weight_decay is not None):
+            raise UserError("OPTIMIZER_REGISTRATION_INVALID", "自定义 factory 须为 callable，且不能同时指定 optimizer、lr 或 weight_decay；请通过 factory_params 传参。")
+        if factory is None and factory_params is not None:
+            raise UserError("OPTIMIZER_REGISTRATION_INVALID", "factory_params 需要与 factory 一起使用。")
         try:
             parameters = list(parameters)
         except TypeError as error:
@@ -82,16 +105,34 @@ class ManualTrainingContext:
         identities = tuple(id(parameter) for parameter in parameters)
         if len(set(identities)) != len(identities):
             raise UserError("OPTIMIZER_PARAMETER_DUPLICATE", f"优化器 {name} 重复登记了同一参数。")
-        lr = self.default_lr if lr is None else lr
-        weight_decay = self.default_weight_decay if weight_decay is None else weight_decay
-        if (
+        if factory is None:
+            lr = self.default_lr if lr is None else lr
+            weight_decay = self.default_weight_decay if weight_decay is None else weight_decay
+        if factory is None and (
             isinstance(lr, bool) or not isinstance(lr, (int, float))
             or not math.isfinite(lr) or lr <= 0
             or isinstance(weight_decay, bool) or not isinstance(weight_decay, (int, float))
             or not math.isfinite(weight_decay) or weight_decay < 0
         ):
             raise UserError("OPTIMIZER_REGISTRATION_INVALID", f"优化器 {name} 的学习率或 weight decay 无效。")
-        signature = (identities, "adamw", float(lr), float(weight_decay))
+        if factory is None:
+            signature = (identities, "adamw", float(lr), float(weight_decay))
+        else:
+            factory_params = {} if factory_params is None else factory_params
+            if not isinstance(factory_params, dict) or len(factory_params) > 64 or any(not isinstance(key, str) or not key.isidentifier() for key in factory_params):
+                raise UserError("OPTIMIZER_REGISTRATION_INVALID", "factory_params 必须是最多 64 项且键为 Python 标识符的 JSON 对象。")
+            try:
+                encoded = json.dumps(factory_params, ensure_ascii=False, allow_nan=False, sort_keys=True, separators=(",", ":"))
+            except (TypeError, ValueError, RecursionError) as error:
+                raise UserError("OPTIMIZER_REGISTRATION_INVALID", "factory_params 必须是有限、可序列化的 JSON。") from error
+            if len(encoded.encode("utf-8")) > 65536:
+                raise UserError("OPTIMIZER_REGISTRATION_INVALID", "factory_params 不能超过 64 KiB。")
+            module = getattr(factory, "__module__", None)
+            qualified = getattr(factory, "__qualname__", None)
+            if not isinstance(module, str) or not isinstance(qualified, str) or "<locals>" in qualified:
+                raise UserError("OPTIMIZER_REGISTRATION_INVALID", "factory 须是具有稳定模块和限定名称的顶层 callable。")
+            factory_name = f"{module}:{qualified}"
+            signature = (identities, "factory", factory_name, id(factory), encoded)
         if name in self.optimizers:
             if self.optimizer_signatures[name] != signature:
                 raise UserError("OPTIMIZER_REGISTRATION_CHANGED", f"优化器 {name} 在运行中改变了参数组或配置。")
@@ -105,21 +146,32 @@ class ManualTrainingContext:
                     f"参数同时属于优化器 {owner} 和 {name}。",
                     "共享参数默认只登记到一个优化器；如需特殊共享更新策略，应在同一用户步骤中显式处理。",
                 )
-        optimizer_instance = self.runtime.torch.optim.AdamW(
-            parameters, lr=float(lr), weight_decay=float(weight_decay)
-        )
         parameter_names = [self.parameter_names.get(identity) for identity in identities]
         if any(name is None for name in parameter_names):
             raise UserError(
                 "OPTIMIZER_PARAMETER_INVALID",
                 f"优化器 {name} 包含不属于当前模型的 Parameter。",
             )
-        metadata = {
-            "parameter_names": parameter_names,
-            "optimizer": "adamw",
-            "lr": float(lr),
-            "weight_decay": float(weight_decay),
-        }
+        if factory is None:
+            optimizer_instance = self.runtime.torch.optim.AdamW(parameters, lr=float(lr), weight_decay=float(weight_decay))
+            metadata = {"parameter_names": parameter_names, "optimizer": "adamw", "lr": float(lr), "weight_decay": float(weight_decay)}
+        else:
+            try:
+                optimizer_instance = factory(parameters, **factory_params)
+            except Exception as error:
+                raise UserError("OPTIMIZER_FACTORY_FAILED", f"优化器 {name} 工厂执行失败：{type(error).__name__}: {error}") from error
+            if not isinstance(optimizer_instance, self.runtime.torch.optim.Optimizer):
+                raise UserError("OPTIMIZER_REGISTRATION_INVALID", f"优化器 {name} 的工厂必须返回 torch.optim.Optimizer。")
+            try:
+                groups = [[id(parameter) for parameter in group["params"]] for group in optimizer_instance.param_groups]
+            except (KeyError, TypeError) as error:
+                raise UserError("OPTIMIZER_REGISTRATION_INVALID", f"优化器 {name} 的参数组无效。") from error
+            if tuple(identity for group in groups for identity in group) != identities:
+                raise UserError("OPTIMIZER_REGISTRATION_INVALID", f"优化器 {name} 的参数组必须按登记顺序覆盖且仅覆盖所登记参数。")
+            cls = type(optimizer_instance)
+            metadata = {"parameter_names": parameter_names, "optimizer": "factory", "factory": factory_name,
+                        "factory_params": json.loads(encoded), "optimizer_type": f"{cls.__module__}.{cls.__qualname__}",
+                        "parameter_group_sizes": [len(group) for group in groups]}
         saved = self.restore_optimizers.pop(name, None)
         if saved is not None:
             if saved.get("metadata") != metadata:
@@ -148,6 +200,7 @@ class ManualTrainingContext:
     def checkpoint_state(self):
         optimizers = dict(self.restore_optimizers)
         for name, optimizer in self.optimizers.items():
+            optimizer._check_parameter_groups()
             optimizers[name] = {
                 "metadata": self.optimizer_metadata[name],
                 "state": optimizer._optimizer.state_dict(),
@@ -256,8 +309,12 @@ def run_manual_steps(runtime, model, request, restore=None, checkpoint_callback=
                 )
                 request["_last_augmentation_observations"] = augmentation_observations
                 request["_augmentation_batch_count"] = request.get("_augmentation_batch_count", 0) + 1
-            if runtime.move_batch is not None:
-                batch = runtime.move_batch(batch, request.get("_resolved_device", "cpu"))
+            phase = "batch device transfer"
+            if runtime.move_batch is not None and request.get("batch_device_policy") != "preserve":
+                if request.get("batch_device_policy") == "recursive-strict":
+                    batch = runtime.move_batch(batch, request.get("_resolved_device", "cpu"), strict=True)
+                else:
+                    batch = runtime.move_batch(batch, request.get("_resolved_device", "cpu"))
             phase = "training step (forward/backward/update)"
             updates_before = sum(context.updates.values())
             if context.supervision is None:
@@ -324,9 +381,13 @@ def run_manual_steps(runtime, model, request, restore=None, checkpoint_callback=
             raise UserError(
                 "STEP_FAILED",
                 f"第 {index + 1}/{steps} 步失败：{error}",
-                "manual-step 由用户代码管理反向和更新；正式训练保留最近一个完整 checkpoint（若已到保存间隔）。",
+                (error.hint + " 正式训练保留最近一个完整 checkpoint（若已到保存间隔）。"
+                 if error.code in {"BATCH_DEVICE_MAPPING_UNSUPPORTED", "BATCH_DEVICE_CONTAINER_UNSUPPORTED", "BATCH_DEVICE_CYCLE_UNSUPPORTED", "BATCH_DEVICE_STRUCTURE_LIMIT", "BATCH_DEVICE_SHARED_STORAGE_UNSUPPORTED"} and error.hint
+                 else "manual-step 由用户代码管理反向和更新；正式训练保留最近一个完整 checkpoint（若已到保存间隔）。"),
                 {"failed_step": index + 1, "completed_steps": completed, "total_steps": steps,
                  "cause_code": error.code, "cause_message": str(error), "cause_data": error.data,
+                 "cause_hint": error.hint, "phase": phase,
+                 "training_step_started": phase == "training step (forward/backward/update)",
                  "last_completed_loss": last_loss},
             ) from error
         except Exception as error:
@@ -346,7 +407,7 @@ def run_manual_steps(runtime, model, request, restore=None, checkpoint_callback=
     report = {
         "training_mode": "manual-step",
         "training_step": step_ref,
-        "optimizer": "user-registered AdamW groups",
+        "optimizer": "user-registered optimizer groups",
         "optimizer_groups": list(context.optimizers),
         "optimizer_updates_by_group": context.updates,
         "optimizer_updates": sum(context.updates.values()),

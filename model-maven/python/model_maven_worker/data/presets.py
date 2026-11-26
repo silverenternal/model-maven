@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+from collections import OrderedDict
 from pathlib import Path
 
 from ..protocol import UserError
@@ -25,6 +26,9 @@ RESNET18_WEIGHT_FILENAME = "resnet18-f37072fd.pth"
 RESNET18_WEIGHT_SHA256_PREFIX = "f37072fd"
 RESNET18_WEIGHT_SHA256 = "f37072fd47e89c5e827621c5baffa7500819f7896bbacec160b1a16c560e07ec"
 _CLASSIFICATION_BATCH_CURSORS = {}
+_GRAPH_IMAGE_EVIDENCE = {}
+_GRAPH_IMAGE_CURSORS = {}
+_GRAPH_IMAGE_INDEX_CACHES = OrderedDict()
 
 
 def describe_presets():
@@ -203,6 +207,8 @@ def classification_batch(
     seed=0,
     transforms=None,
     sample_offset=None,
+    _digest_cache=None,
+    _split_cache=None,
 ):
     """Load one deterministic real-image batch from a class-folder project.
 
@@ -216,15 +222,26 @@ def classification_batch(
     if sample_offset is not None and (type(sample_offset) is not int or sample_offset < 0):
         raise UserError("PRESET_SAMPLE_OFFSET_INVALID", "sample_offset 必须是非负整数。")
     root = Path(root).expanduser().resolve()
-    index = scan_class_folder(root)
+    index = scan_class_folder(root, digest_cache=_digest_cache)
     index = load_project_exclusions(Path.cwd(), root, index)
     if split not in {"train", "validation", "test"}:
         raise UserError("DATA_SPLIT_INVALID", "split 必须是 train、validation 或 test。")
-    split_plan = split_classification_index(
-        index,
-        split_ratios or {"train": 1.0},
-        seed=seed,
-    )
+    ratios = split_ratios or {"train": 1.0}
+    cache_key = None
+    if isinstance(_split_cache, dict) and index["sample_count"] <= 100_000:
+        try:
+            cache_key = json.dumps([index["dataset_fingerprint"], ratios, seed], sort_keys=True,
+                                   separators=(",", ":"), allow_nan=False)
+        except (TypeError, ValueError):
+            pass  # Let the normal split validator report unsupported values.
+    if cache_key is not None and _split_cache.get("key") == cache_key:
+        split_plan = _split_cache["plan"]
+    else:
+        split_plan = split_classification_index(index, ratios, seed=seed)
+        if isinstance(_split_cache, dict):
+            _split_cache.clear()
+            if cache_key is not None:
+                _split_cache.update({"key": cache_key, "plan": split_plan, "epochs": OrderedDict()})
     split_samples = split_plan["splits"].get(split)
     if not split_samples:
         raise UserError("DATA_SPLIT_EMPTY", f"{split} 切分没有图像样本；不会借用其他切分补足。")
@@ -232,7 +249,8 @@ def classification_batch(
     start = _CLASSIFICATION_BATCH_CURSORS.get(cursor_key, 0) if sample_offset is None else sample_offset
     epoch_offset = start % len(split_samples)
     actual_batch_size = min(batch_size, len(split_samples) - epoch_offset)
-    selected = _classification_window(split_samples, actual_batch_size, seed, start)
+    selected = _classification_window(split_samples, actual_batch_size, seed, start,
+                                      _split_cache.get("epochs") if cache_key is not None else None, split)
     try:
         from PIL import Image
     except ImportError as error:
@@ -406,7 +424,7 @@ def _sha256(path):
     return digest.hexdigest()
 
 
-def _classification_window(samples, batch_size, seed, start):
+def _classification_window(samples, batch_size, seed, start, epoch_cache=None, split=None):
     """Take the next deterministic shuffled minibatch, wrapping by epoch."""
     if not samples:
         return []
@@ -415,16 +433,25 @@ def _classification_window(samples, batch_size, seed, start):
     for position in range(start, start + batch_size):
         epoch, offset = divmod(position, len(samples))
         if epoch not in shuffled_epochs:
-            epoch_seed = seed + epoch
-            shuffled_epochs[epoch] = sorted(
-                samples,
-                key=lambda sample: (
-                    hashlib.sha256(
-                        f"model-maven:classification-shuffle:v1:{epoch_seed}:{sample['sample_id']}".encode("utf-8")
-                    ).digest(),
-                    sample["sample_id"],
-                ),
-            )
+            cached = epoch_cache.get((split, epoch)) if isinstance(epoch_cache, OrderedDict) else None
+            if cached is None:
+                epoch_seed = seed + epoch
+                cached = sorted(
+                    samples,
+                    key=lambda sample: (
+                        hashlib.sha256(
+                            f"model-maven:classification-shuffle:v1:{epoch_seed}:{sample['sample_id']}".encode("utf-8")
+                        ).digest(),
+                        sample["sample_id"],
+                    ),
+                )
+                if isinstance(epoch_cache, OrderedDict):
+                    epoch_cache[(split, epoch)] = cached
+                    while len(epoch_cache) > 2:
+                        epoch_cache.popitem(last=False)
+            elif isinstance(epoch_cache, OrderedDict):
+                epoch_cache.move_to_end((split, epoch))
+            shuffled_epochs[epoch] = cached
         result.append(shuffled_epochs[epoch][offset])
     return result
 
@@ -445,6 +472,94 @@ def _load_batch_state_dict(state):
 
 classification_batch.state_dict = _batch_state_dict
 classification_batch.load_state_dict = _load_batch_state_dict
+
+
+def graph_image_batch(root, input_name, target_name, batch_size=8, split="train",
+                      split_ratios=None, seed=0, transforms=None, split_transforms=None, sample_offset=None):
+    """Bind a class-folder image batch to one explicitly named graph input.
+
+    The returned named target is consumed by the graph's managed loss step.
+    Data and transforms are selected by the caller; no packages are installed.
+    """
+    for value, label in ((input_name, "input_name"), (target_name, "target_name")):
+        if not isinstance(value, str) or not value or len(value) > 128 or any(ord(c) < 32 for c in value):
+            raise UserError("GRAPH_IMAGE_BINDING_INVALID", f"{label} 必须为不超过 128 字符的非空名称。")
+    if split_transforms is not None:
+        if (transforms is not None or not isinstance(split_transforms, dict)
+                or set(split_transforms) - {"train", "validation", "test"}
+                or split not in split_transforms or not isinstance(split_transforms[split], list)):
+            raise UserError("GRAPH_IMAGE_TRANSFORMS_INVALID", "按切分变换需要为当前切分提供列表，不能同时设置 transforms。")
+        transforms = split_transforms[split]
+    try:
+        resolved_root = str(Path(root).expanduser().resolve())
+        identity_bytes = json.dumps({"root": resolved_root, "input_name": input_name, "target_name": target_name,
+                                     "batch_size": batch_size, "split": split, "split_ratios": split_ratios,
+                                     "seed": seed, "transforms": transforms}, sort_keys=True,
+                                    separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode("utf-8")
+    except (TypeError, ValueError, OSError) as error:
+        raise UserError("GRAPH_IMAGE_CONFIG_INVALID", f"图像批次配置无法记录：{error}") from error
+    cursor_key = f"{resolved_root}|{split}|{seed}"
+    prior_cursor = _CLASSIFICATION_BATCH_CURSORS.get(cursor_key)
+    cache = _GRAPH_IMAGE_INDEX_CACHES.setdefault(resolved_root, {"digests": {}, "split": {}})
+    _GRAPH_IMAGE_INDEX_CACHES.move_to_end(resolved_root)
+    while len(_GRAPH_IMAGE_INDEX_CACHES) > 2:
+        _GRAPH_IMAGE_INDEX_CACHES.popitem(last=False)
+    if sample_offset is None:
+        _CLASSIFICATION_BATCH_CURSORS[cursor_key] = _GRAPH_IMAGE_CURSORS.get(cursor_key, 0)
+    try:
+        result = classification_batch(root=root, batch_size=batch_size, split=split,
+                                      split_ratios=split_ratios, seed=seed,
+                                      transforms=transforms, sample_offset=sample_offset,
+                                      _digest_cache=cache["digests"], _split_cache=cache["split"])
+        next_cursor = _CLASSIFICATION_BATCH_CURSORS.get(cursor_key)
+    finally:
+        if sample_offset is None:
+            if prior_cursor is None:
+                _CLASSIFICATION_BATCH_CURSORS.pop(cursor_key, None)
+            else:
+                _CLASSIFICATION_BATCH_CURSORS[cursor_key] = prior_cursor
+    if sample_offset is None:
+        evidence = {"config": hashlib.sha256(identity_bytes).hexdigest(),
+                    "dataset": result["dataset"]["dataset_fingerprint"],
+                    "split": result["dataset"]["split_fingerprint"]}
+        previous = _GRAPH_IMAGE_EVIDENCE.get(cursor_key)
+        if previous is not None and previous != evidence:
+            raise UserError("GRAPH_IMAGE_STATE_CHANGED", "图像数据、切分或批次配置与已保存游标不一致。",
+                            "检查数据与配置；如需使用新数据，显式开始新运行而不是继续旧游标。")
+        _GRAPH_IMAGE_EVIDENCE[cursor_key] = evidence
+        _GRAPH_IMAGE_CURSORS[cursor_key] = next_cursor
+    dataset = {**result["dataset"], "split": split}
+    return {"args": [], "kwargs": {input_name: result["inputs"]},
+            "loss_inputs": {"targets": {target_name: result["targets"]}, "dataset": dataset}}
+
+
+def _graph_image_state_dict():
+    return {"version": 1, "cursors": dict(sorted(_GRAPH_IMAGE_CURSORS.items())),
+            "evidence": {key: dict(value) for key, value in sorted(_GRAPH_IMAGE_EVIDENCE.items())}}
+
+
+def _graph_image_load_state_dict(state):
+    if (not isinstance(state, dict) or state.get("version") != 1 or not isinstance(state.get("cursors"), dict)
+            or not isinstance(state.get("evidence"), dict) or set(state["cursors"]) != set(state["evidence"])):
+        raise UserError("GRAPH_IMAGE_STATE_INVALID", "图像批次恢复状态缺少游标或数据身份。")
+    for key, cursor in state["cursors"].items():
+        record = state["evidence"].get(key)
+        if (not isinstance(key, str) or type(cursor) is not int or cursor < 0 or not isinstance(record, dict)
+                or set(record) != {"config", "dataset", "split"}
+                or any(not isinstance(value, str) or len(value) != 64 or any(ch not in "0123456789abcdef" for ch in value)
+                       for value in record.values())):
+            raise UserError("GRAPH_IMAGE_STATE_INVALID", "图像批次恢复状态包含无效身份或游标。")
+    _GRAPH_IMAGE_CURSORS.clear()
+    _GRAPH_IMAGE_CURSORS.update(state["cursors"])
+    _GRAPH_IMAGE_EVIDENCE.clear()
+    _GRAPH_IMAGE_EVIDENCE.update({key: dict(value) for key, value in state["evidence"].items()})
+    # Recovery always re-hashes on its first batch; a prior process's metadata
+    # cache is neither durable nor proof of current dataset contents.
+    _GRAPH_IMAGE_INDEX_CACHES.clear()
+
+
+graph_image_batch.state_dict = _graph_image_state_dict
+graph_image_batch.load_state_dict = _graph_image_load_state_dict
 
 
 def _validate_model_dimensions(num_classes, in_channels, width):

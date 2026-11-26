@@ -35,6 +35,7 @@ def training_run_signature(request):
         "model_params": request.get("model_params", {}),
         "batch": request.get("batch"),
         "batch_params": request.get("batch_params", {}),
+        "batch_binding": request.get("batch_binding"),
         "training_step": request.get("training_step"),
         "training_mode": request.get("training_mode"),
         "training_params": request.get("training_params", {}),
@@ -49,8 +50,16 @@ def training_run_signature(request):
     }
     if request.get("training_loop") is not None:
         signature["training_loop"] = request["training_loop"]
+    if request.get("batch_device_policy") is not None:
+        signature["batch_device_policy"] = request["batch_device_policy"]
+    if request.get("model_initialization_policy") is not None:
+        signature["model_initialization_policy"] = request["model_initialization_policy"]
+        signature["model_initialization_seed"] = request.get("model_initialization_seed")
     if request.get("model_injections"):
         signature["model_injections"] = request["model_injections"]
+    if request.get("optimizer_factory") is not None:
+        signature["optimizer_factory"] = request["optimizer_factory"]
+        signature["optimizer_params"] = request.get("optimizer_params", {})
     return signature
 
 
@@ -310,7 +319,19 @@ def load_training_checkpoint(torch_module, path, model, request, source_manifest
     payload, manifest = load_verified_checkpoint_payload(torch_module, path, request.get("expected_checkpoint_sha256"))
     if payload.get("training_mode") != request.get("training_mode"):
         raise UserError("RESUME_MODE_INCOMPATIBLE", "训练模式与 checkpoint 不一致。")
-    if payload.get("run_signature") != training_run_signature(request):
+    saved_snapshot = payload.get("source_snapshot_sha256")
+    if saved_snapshot is not None:
+        snapshot = request.get("code_snapshot")
+        current_snapshot = snapshot.get("sha256") if isinstance(snapshot, dict) else None
+        if not isinstance(saved_snapshot, str) or saved_snapshot != current_snapshot:
+            raise UserError("RESUME_SOURCE_SNAPSHOT_CHANGED", "checkpoint 对应的完整项目源码快照与当前快照不一致。",
+                            "恢复原项目源码，或使用当前源码建立新的训练运行；旧检查点没有修改。")
+    saved_signature = payload.get("run_signature")
+    expected_signature = training_run_signature(request)
+    if isinstance(saved_signature, dict) and "batch_binding" not in saved_signature:
+        request["_legacy_batch_binding_unverified"] = True
+        expected_signature.pop("batch_binding", None)
+    if saved_signature != expected_signature:
         raise UserError(
             "RESUME_INPUTS_INCOMPATIBLE",
             "模型、批次、步骤或优化器设置与 checkpoint 不一致。",
@@ -320,10 +341,46 @@ def load_training_checkpoint(torch_module, path, model, request, source_manifest
     runtime = payload.get("runtime", {})
     if runtime.get("python_version") != sys.version.split()[0] or runtime.get("pytorch_version") != torch_module.__version__:
         raise UserError("RESUME_RUNTIME_CHANGED", "Python/PyTorch 版本与 checkpoint 不一致。")
+    # The requested label can be `auto`, and even `cuda:0` is only an index
+    # in the current process's visible-device set. Compare what was actually
+    # resolved, before restoring state or starting another training step.
+    current_device = request.get("_device_report")
+    current_device = current_device if isinstance(current_device, dict) else {}
+    compared = []
+    for field in ("device", "device_backend", "device_name"):
+        saved = runtime.get(field)
+        current = current_device.get(field)
+        if isinstance(saved, str) and saved and isinstance(current, str) and current:
+            if saved != current:
+                raise UserError(
+                    "RESUME_DEVICE_CHANGED",
+                    f"实际设备的 {field} 与 checkpoint 不一致：记录为 {saved!r}，当前为 {current!r}。",
+                    "检查设备可见性与运行环境；如需使用其他设备，请从新运行开始。",
+                    {"field": field, "recorded": saved, "current": current},
+                )
+            compared.append(field)
+    request["_resume_device_comparison"] = {
+        "status": "matched_available_fields" if compared else "unknown",
+        "compared_fields": compared,
+        "note": "设备名称和可见索引不能证明物理设备、驱动或完整环境相同。",
+    }
     expected_environment = runtime.get("environment_fingerprint_sha256")
     current_environment = request.get("_environment_fingerprint_sha256")
     environment_changed = bool(expected_environment and expected_environment != current_environment)
     if source_changed or environment_changed:
+        engine = payload.get("engine_state")
+        manual = engine.get("manual_context") if isinstance(engine, dict) else None
+        groups = manual.get("optimizers") if isinstance(manual, dict) else None
+        custom_manual = isinstance(groups, dict) and any(
+            isinstance(group, dict) and isinstance(group.get("metadata"), dict)
+            and group["metadata"].get("optimizer") == "factory" for group in groups.values()
+        )
+        if request.get("optimizer_factory") is not None or custom_manual:
+            raise UserError(
+                "RESUME_OPTIMIZER_SOURCE_CHANGED",
+                "自定义优化器的训练源码或环境发生变化，不能通过其他 callable 的状态迁移恢复。",
+                "恢复原源码和环境，或创建新的训练运行。",
+            )
         migration = authorize_checkpoint_state_migration(payload, request, source_manifest)
         if migration is None:
             if source_changed:

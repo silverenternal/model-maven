@@ -82,6 +82,7 @@ fn input_projection(inputs: &Value) -> Map<String, Value> {
         "batch",
         "batch_params",
         "batch_binding",
+        "batch_device_policy",
         "training_step",
         "training_params",
         "training_mode",
@@ -89,9 +90,11 @@ fn input_projection(inputs: &Value) -> Map<String, Value> {
         "lr",
         "weight_decay",
         "seed",
+        "model_initialization_policy",
+        "model_initialization_seed",
         "redacted_fields",
     ];
-    FIELDS
+    let mut projected: Map<String, Value> = FIELDS
         .iter()
         .filter_map(|field| {
             inputs
@@ -99,7 +102,17 @@ fn input_projection(inputs: &Value) -> Map<String, Value> {
                 .filter(|value| !value.is_null())
                 .map(|value| ((*field).to_owned(), value.clone()))
         })
-        .collect()
+        .collect();
+    // Only the device request is needed for continuation. Runtime paths can
+    // contain host-specific data and are represented separately in the bundle.
+    if let Some(runtime) = inputs.get("runtime").and_then(Value::as_object) {
+        let mut exported_runtime = Map::new();
+        if let Some(device) = runtime.get("device") {
+            exported_runtime.insert("device".into(), device.clone());
+        }
+        projected.insert("runtime".into(), Value::Object(exported_runtime));
+    }
+    projected
 }
 
 fn result_projection(report: &Value) -> Value {
@@ -194,6 +207,39 @@ fn relative_source_path(root: &Path, source: &Path) -> Result<PathBuf, String> {
         return Err(format!("源码清单含未支持的文件：{}", source.display()));
     }
     Ok(relative.to_owned())
+}
+
+// The original project file may have changed or been removed since the run.
+// Validate the recorded path lexically before looking it up in the snapshot.
+fn recorded_source_relative(root: &Path, source: &Path) -> Result<PathBuf, String> {
+    let relative = source.strip_prefix(root).map_err(|_| "记录的源码位于项目目录之外。")?;
+    if relative.components().any(|part| !matches!(part, Component::Normal(_)))
+        || relative.as_os_str().is_empty() {
+        return Err("记录的源码路径无效。".into());
+    }
+    let python = relative.extension().and_then(|v| v.to_str()) == Some("py");
+    let component = relative.starts_with(".model-maven/components")
+        && relative.extension().and_then(|v| v.to_str()) == Some("json");
+    if !python && !component { return Err("记录的源码类型不受支持。".into()); }
+    Ok(relative.to_owned())
+}
+
+fn run_snapshot_root(root: &Path, run: &Value) -> Result<Option<PathBuf>, String> {
+    let Some(snapshot) = run["report"]["data"].get("code_snapshot") else { return Ok(None); };
+    if snapshot.is_null() { return Ok(None); }
+    if snapshot["status"] != "frozen" || !snapshot["manifest"].is_object() {
+        return Err("运行源码快照记录无效，拒绝回退到实时源码。".into());
+    }
+    let id = run["record"]["id"].as_str().ok_or("运行记录缺少 ID。")?;
+    if !id.starts_with("run-") || id.len() > 96 || !id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') {
+        return Err("运行 ID 无效。".into());
+    }
+    let expected = root.join(".model-maven").join("runs").join(id).join("snapshot").join("code");
+    let canonical = expected.canonicalize().map_err(|_| "运行源码快照不可用；不会回退到实时源码。")?;
+    if canonical != expected || !canonical.is_dir() || snapshot["root"].as_str() != expected.to_str() {
+        return Err("运行源码快照路径不匹配或经过符号链接。".into());
+    }
+    Ok(Some(canonical))
 }
 
 fn collect_component_source(
@@ -341,6 +387,36 @@ fn relative_bundle_path(value: &str) -> Result<PathBuf, String> {
         return Err(format!("扩展包含不安全的相对路径：{value}"));
     }
     Ok(PathBuf::from(value))
+}
+
+fn exported_runtime_paths(inputs: &Value) -> Result<(Vec<String>, &'static str, &'static str), String> {
+    let runtime = inputs.get("runtime");
+    let roots = runtime.and_then(|value| value.get("project_import_roots"));
+    let (values, roots_status) = match roots {
+        None => (Vec::new(), "unrecorded"),
+        Some(Value::Null) => (Vec::new(), "recorded"),
+        Some(Value::Array(items)) if items.len() <= 32 => {
+            let mut values = Vec::new();
+            for item in items {
+                let path = item.as_str().ok_or("运行记录的模块搜索目录无效。")?;
+                if path == "[REDACTED]" || path.len() > 1024 || path.split('/').any(|part| part.is_empty() || part == "." || part == "..") {
+                    return Err("运行记录的模块搜索目录无效。".into());
+                }
+                relative_bundle_path(path)?;
+                if values.iter().any(|value| value == path) { return Err("运行记录的模块搜索目录重复。".into()); }
+                values.push(path.to_owned());
+            }
+            (values, "recorded")
+        }
+        _ => return Err("运行记录的模块搜索目录无效或已脱敏。".into()),
+    };
+    let directory = match runtime.and_then(|value| value.get("working_directory")) {
+        None => "unrecorded",
+        Some(Value::Null) => "project_default",
+        Some(Value::String(path)) if !path.is_empty() && path != "[REDACTED]" => "custom",
+        _ => return Err("运行记录的工作目录无效或已脱敏。".into()),
+    };
+    Ok((values, roots_status, directory))
 }
 
 fn verify_extension_package_plans(
@@ -584,6 +660,7 @@ fn python_restore_script() -> &'static str {
 import hashlib
 import importlib.metadata
 import json
+import os
 import sys
 from pathlib import Path, PurePosixPath
 
@@ -646,6 +723,29 @@ for package in reversed(manifest.get("extension_packages", [])):
     sys.path.insert(0, str(bundle_root))
 
 SOURCE = HERE / "source"
+runtime_paths = manifest.get("runtime_paths", {})
+roots = runtime_paths.get("project_import_roots", [])
+if not isinstance(roots, list) or len(roots) > 32:
+    raise SystemExit("导出的模块搜索目录无效")
+for relative in roots:
+    if not isinstance(relative, str) or not relative or any(part in {"", ".", ".."} for part in relative.split("/")):
+        raise SystemExit("导出的模块搜索目录无效")
+    checked_relative(SOURCE, relative, directory=True)
+if runtime_paths.get("import_roots_status") == "unrecorded":
+    print("注意：原运行没有记录模块搜索目录；恢复时使用默认搜索路径。")
+selected_cwd = os.environ.get("MODEL_MAVEN_EXPORT_WORKING_DIRECTORY")
+if selected_cwd:
+    chosen = Path(selected_cwd).expanduser()
+    if not chosen.is_absolute() or not chosen.is_dir():
+        raise SystemExit("MODEL_MAVEN_EXPORT_WORKING_DIRECTORY 必须是已有的绝对目录")
+    os.chdir(chosen.resolve())
+elif runtime_paths.get("working_directory") == "custom":
+    raise SystemExit("原运行使用自定义工作目录；请设置 MODEL_MAVEN_EXPORT_WORKING_DIRECTORY 为本机已有绝对目录")
+elif runtime_paths.get("working_directory") == "project_default":
+    os.chdir(SOURCE)
+else:
+    print("注意：原运行没有记录工作目录；继续使用当前工作目录。")
+export_working_directory = Path.cwd().resolve()
 sys.path.insert(0, str(SOURCE))
 sys.path.insert(0, str(HERE))
 import model_maven_worker as worker
@@ -701,8 +801,20 @@ request = {
     "model_injections": inputs.get("model_injections", {}),
     "variant": variant,
     "seed": inputs.get("seed"),
+    "model_initialization_policy": inputs.get("model_initialization_policy"),
+    "model_initialization_seed": inputs.get("model_initialization_seed"),
+    "runtime": {"project_import_roots": roots},
 }
-model, _, _, _ = worker.load_model(request)
+try:
+    model, _, _, _ = worker.load_model(request)
+except Exception as error:
+    if isinstance(variant, dict) and variant.get("device_policy") == "factory":
+        raise SystemExit(
+            "变体要求按模型和组件工厂的设备选择重建，当前环境无法完成构造："
+            f"{type(error).__name__}: {error}。请检查所选 Python、设备和用户工厂；"
+            "不会自动改成 CPU。"
+        ) from error
+    raise
 payload = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
 if not isinstance(payload, dict) or payload.get("schema_version") != 1:
     raise SystemExit("不支持此 checkpoint 格式")
@@ -723,8 +835,8 @@ def load_training_state():
 
 _managed_resume_used = False
 
-def resume_managed_steps(additional_steps, *, checkpoint_directory=None, from_checkpoint=None):
-    """Continue a supported CPU managed-step run once, optionally saving a new checkpoint.
+def resume_managed_steps(additional_steps, *, checkpoint_directory=None, from_checkpoint=None, allow_unverified_aliases=False):
+    """Continue a supported CPU, CUDA or ROCm managed-step run once, optionally saving a checkpoint.
 
     The exported checkpoint remains unchanged. A failed call may have partially
     updated in-memory state; reload this module before attempting it again.
@@ -734,7 +846,10 @@ def resume_managed_steps(additional_steps, *, checkpoint_directory=None, from_ch
         raise RuntimeError("恢复接口只能调用一次；重新加载导出包以从原 checkpoint 再试。")
     if type(additional_steps) is not int or not 1 <= additional_steps <= 1000:
         raise ValueError("additional_steps 必须是 1 到 1000 的整数。")
+    if type(allow_unverified_aliases) is not bool:
+        raise ValueError("allow_unverified_aliases 必须是布尔值。")
     source_state = training_state
+    parent_alias_validation = "matched"
     bundle_digest = sha256_path(HERE / "manifest.json")
     if from_checkpoint is not None:
         directory = Path(from_checkpoint)
@@ -751,6 +866,11 @@ def resume_managed_steps(additional_steps, *, checkpoint_directory=None, from_ch
         continuation = source_state.get("export_continuation")
         if not isinstance(continuation, dict) or continuation.get("base_manifest_sha256") != bundle_digest or continuation.get("base_checkpoint_sha256") != checkpoint_info["sha256"]:
             raise ValueError("续跑 checkpoint 不属于此导出包。")
+        parent_alias_validation = continuation.get("alias_validation", "unknown")
+        if parent_alias_validation not in ("matched", "unverified_allowed", "unknown"):
+            raise ValueError("续跑 checkpoint 的共享关系验证状态无效。")
+        if parent_alias_validation != "matched" and not allow_unverified_aliases:
+            raise ValueError("上次续跑的共享关系未验证；检查历史后可显式设置 allow_unverified_aliases=True。")
         if source_state.get("run_signature") != training_state.get("run_signature") or source_state.get("source_manifest") != training_state.get("source_manifest") or source_state.get("runtime") != training_state.get("runtime"):
             raise ValueError("续跑 checkpoint 的训练签名、源码或运行时不匹配。")
         if type(source_state.get("completed_steps")) is not int or source_state["completed_steps"] < training_state["completed_steps"]:
@@ -767,37 +887,122 @@ def resume_managed_steps(additional_steps, *, checkpoint_directory=None, from_ch
         raise ValueError("只支持带完整签名的 managed-step checkpoint。")
     if signature.get("training_mode") != "managed-step" or signature.get("apply_supervision") is not False or signature.get("train_augment") != []:
         raise ValueError("此接口不支持监督规则、数据增强或缺少完整签名的运行。")
-    if not isinstance(source_state.get("runtime"), dict) or source_state["runtime"].get("device") != "cpu":
-        raise ValueError("此接口仅支持原运行设备为 CPU 的 checkpoint。")
+    runtime = source_state.get("runtime")
+    if not isinstance(runtime, dict):
+        raise ValueError("checkpoint 缺少已观察设备信息。")
+    recorded_device, recorded_backend = runtime.get("device"), runtime.get("device_backend")
+    if recorded_device == "cpu" and recorded_backend is None:
+        recorded_backend = "cpu"  # Legacy CPU checkpoints did not record a backend label.
+    if not isinstance(recorded_device, str) or recorded_backend not in ("cpu", "cuda", "rocm"):
+        raise ValueError("此恢复接口仅支持记录了 CPU、CUDA 或 ROCm 设备的 checkpoint；其他设备请使用用户自己的恢复流程。")
+    if recorded_backend == "cpu" and recorded_device != "cpu":
+        raise ValueError("checkpoint 的 CPU 设备记录不一致。")
+    if recorded_backend in ("cuda", "rocm") and not recorded_device.startswith("cuda:"):
+        raise ValueError("checkpoint 缺少明确的 CUDA/ROCm 设备编号。")
+    declared_runtime = inputs.get("runtime")
+    if not isinstance(declared_runtime, dict) or signature.get("device") != (declared_runtime.get("device") or "cpu"):
+        raise ValueError("历史设备请求与 checkpoint 签名不一致。")
     expected_python = str(source_state["runtime"].get("python_version", "")).split(".")[:2]
     if expected_python != [str(sys.version_info.major), str(sys.version_info.minor)]:
         raise ValueError("Python 主次版本与 checkpoint 不一致。")
+    if not isinstance(runtime.get("pytorch_version"), str) or runtime["pytorch_version"] != str(torch.__version__):
+        raise ValueError("PyTorch 版本缺失或与 checkpoint 不一致。")
     if not isinstance(source_state.get("engine_state"), dict) or not isinstance(source_state["engine_state"].get("optimizer_state"), dict):
-        raise ValueError("checkpoint 缺少可恢复的 AdamW 状态。")
+        raise ValueError("checkpoint 缺少可恢复的优化器状态。")
+    optimizer_factory = signature.get("optimizer_factory")
+    optimizer_identity = source_state["engine_state"].get("optimizer_identity")
+    if optimizer_factory is not None:
+        optimizer_params = signature.get("optimizer_params")
+        if (not isinstance(optimizer_factory, str) or not optimizer_factory
+                or not isinstance(optimizer_params, dict) or contains_redacted(optimizer_params)
+                or inputs.get("optimizer_factory") != optimizer_factory
+                or inputs.get("optimizer_params", {}) != optimizer_params
+                or not isinstance(optimizer_identity, dict)
+                or optimizer_identity.get("factory") != optimizer_factory):
+            raise ValueError("自定义优化器工厂、参数或 checkpoint 身份缺失、不匹配或已脱敏。")
+    elif inputs.get("optimizer_factory") is not None or optimizer_identity is not None:
+        raise ValueError("checkpoint 的优化器声明与运行记录不一致。")
+    # New checkpoints pin the calling convention; older ones only allow an
+    # explicitly recorded automatic binding and cannot prove it was used.
+    if "batch_binding" not in inputs:
+        raise ValueError("导出运行缺少输入绑定记录；请使用用户自己的恢复流程。")
+    if "batch_binding" in signature:
+        if signature["batch_binding"] != inputs["batch_binding"] or signature["batch_binding"] not in (None, "single", "single-raw", "args", "kwargs", "envelope"):
+            raise ValueError("输入绑定与 checkpoint 签名不匹配或不受支持。")
+    elif inputs["batch_binding"] is not None:
+        raise ValueError("旧 checkpoint 未固定显式输入绑定；请使用用户自己的恢复流程。")
+    if signature.get("batch_device_policy") != inputs.get("batch_device_policy"):
+        raise ValueError("批次设备策略与 checkpoint 签名不一致。")
+    if signature.get("batch_device_policy") not in (None, "preserve", "recursive-strict"):
+        raise ValueError("导出的批次设备策略不受支持。")
     for key in ("batch", "batch_params", "training_step", "training_params", "training_mode", "lr", "weight_decay"):
         if key not in inputs or contains_redacted(inputs[key]) or inputs[key] != signature.get(key):
             raise ValueError(f"导出输入 {key} 缺失、脱敏或与 checkpoint 不一致。")
     if not isinstance(signature.get("batch"), str) or not isinstance(signature.get("training_step"), str):
         raise ValueError("checkpoint 缺少批次或训练步骤入口。")
+    if Path.cwd().resolve() != export_working_directory:
+        raise ValueError("当前工作目录与导出恢复时不同；请检查相对数据路径后重新加载导出包。")
+    for requirement in manifest.get("runtime_requirements", []):
+        try:
+            version = importlib.metadata.version(requirement["distribution"])
+        except importlib.metadata.PackageNotFoundError as error:
+            raise ValueError("续训所需运行时依赖已不可用。") from error
+        if version != requirement["version"]:
+            raise ValueError(f"续训所需运行时依赖版本已变化：{requirement['distribution']}")
+    # Import-time checks do not cover edits made before this function is called.
+    for relative, expected in manifest.get("source_files", {}).items():
+        if sha256_path(checked_relative(SOURCE, relative)) != expected:
+            raise ValueError(f"导出源码在恢复后发生变化：{relative}")
+    for relative, expected in manifest.get("bundle_files", {}).items():
+        if sha256_path(checked_relative(HERE, relative)) != expected:
+            raise ValueError(f"导出支持文件在恢复后发生变化：{relative}")
+    for package in manifest.get("extension_packages", []):
+        bundle_root = checked_relative(HERE, package.get("bundle_path"), directory=True)
+        for relative, expected in package.get("files", {}).items():
+            if sha256_path(checked_relative(bundle_root, relative)) != expected:
+                raise ValueError(f"导出扩展文件在恢复后发生变化：{relative}")
     _managed_resume_used = True
     if source_state is not training_state:
         model.load_state_dict(source_state["model_state"], strict=True)
         if worker.model_state_digest(model) != source_state.get("model_state_sha256"):
             raise ValueError("续跑 checkpoint 的模型状态指纹不匹配。")
+    request = {
+        "operation": "train", "training_mode": "managed-step", "optimizer": "adamw" if optimizer_factory is None else None,
+        "batch": signature["batch"], "batch_params": signature["batch_params"], "batch_binding": inputs["batch_binding"],
+        "training_step": signature["training_step"], "training_params": signature["training_params"],
+        "steps": source_state["completed_steps"] + additional_steps,
+        "lr": signature["lr"], "weight_decay": signature["weight_decay"],
+        "seed": signature.get("seed"), "train_augment": [], "apply_supervision": False,
+        "runtime": {"device": recorded_device},
+        "expected_runtime": runtime,
+    }
+    if signature.get("batch_device_policy") is not None:
+        request["batch_device_policy"] = signature["batch_device_policy"]
+    if signature.get("model_initialization_policy") is not None:
+        request["model_initialization_policy"] = signature["model_initialization_policy"]
+        request["model_initialization_seed"] = signature.get("model_initialization_seed")
+    # Place the model using the selected runtime, then check its recorded
+    # device labels before restoring RNG and constructing the optimizer.
+    selection = worker._prepare_training_device(model, request)
+    worker._verify_expected_device(selection, request)
+    saved_aliases = source_state.get("model_state_alias_groups")
+    current_aliases = worker.model_state_alias_groups(model)
+    if not isinstance(saved_aliases, list) or not isinstance(current_aliases, list):
+        if not allow_unverified_aliases:
+            raise ValueError("无法核对共享参数或缓冲区；检查模型后可显式设置 allow_unverified_aliases=True。")
+        alias_validation = "unverified_allowed"
+    elif saved_aliases != current_aliases:
+        raise ValueError("恢复模型的共享参数或缓冲区与 checkpoint 不一致。")
+    else:
+        alias_validation = "matched" if parent_alias_validation == "matched" else "unverified_allowed"
     batch_fn = worker.entrypoint(signature["batch"])
     step_fn = worker.entrypoint(signature["training_step"])
     worker.restore_callable_checkpoint(batch_fn, source_state.get("batch_state"), "batch 工厂", False)
     worker.restore_callable_checkpoint(step_fn, source_state.get("step_state"), "training_step", False)
     worker.restore_rng_state(source_state.get("rng_state"))
-    request = {
-        "operation": "train", "training_mode": "managed-step", "optimizer": "adamw",
-        "batch": signature["batch"], "batch_params": signature["batch_params"],
-        "training_step": signature["training_step"], "training_params": signature["training_params"],
-        "steps": source_state["completed_steps"] + additional_steps,
-        "lr": signature["lr"], "weight_decay": signature["weight_decay"],
-        "seed": signature.get("seed"), "train_augment": [], "apply_supervision": False,
-        "_resolved_device": "cpu",
-    }
+    if optimizer_factory is not None:
+        request["optimizer_factory"] = optimizer_factory
+        request["optimizer_params"] = optimizer_params
     final_engine = {}
     def capture(completed, engine):
         if completed == request["steps"]:
@@ -805,6 +1010,7 @@ def resume_managed_steps(additional_steps, *, checkpoint_directory=None, from_ch
         return False
     result = worker.run_managed_steps(model, request, restore=source_state,
                                       checkpoint_callback=capture if destination is not None else None)
+    result["alias_validation"] = alias_validation
     if destination is not None:
         if "value" not in final_engine:
             raise RuntimeError("训练未报告最终状态；没有写入续跑 checkpoint。")
@@ -817,7 +1023,8 @@ def resume_managed_steps(additional_steps, *, checkpoint_directory=None, from_ch
             "batch_state": worker.callable_checkpoint_hooks(batch_fn, "batch 工厂"),
             "step_state": worker.callable_checkpoint_hooks(step_fn, "training_step"),
             "loop_state": None, "rng_state": worker.checkpoint_rng_state(),
-            "export_continuation": {"base_manifest_sha256": bundle_digest, "base_checkpoint_sha256": checkpoint_info["sha256"]},
+            "export_continuation": {"base_manifest_sha256": bundle_digest, "base_checkpoint_sha256": checkpoint_info["sha256"],
+                                    "alias_validation": alias_validation},
         }
         destination.mkdir(mode=0o700)
         saved = worker.save_training_checkpoint(destination, next_state)
@@ -847,18 +1054,23 @@ fn export_readme(manifest: &Value) -> String {
         .as_str()
         .unwrap_or("unknown");
     format!(
-        "# Model-Maven training export\n\nRun: `{run_id}`  \nCheckpoint: step `{completed}`  \nRuntime recorded: Python `{python}`, PyTorch `{torch}`  \nEnvironment inventory: `{environment_status}`\n\n## Restore the trained model\n\nUse a compatible Python/PyTorch environment and review `manifest.json` → `runtime_requirements`; the restore script checks those exact external runtime versions before loading the model. Registered extensions and their installed Python distribution dependencies are included under `vendor/` and loaded from the export. Then run:\n\n```sh\npython restore_model.py\n```\n\nThe script verifies copied project sources, bundled package files, external runtime versions, and the checkpoint before reconstructing the model. It exposes the restored model as `model` and the verified `weights_only` checkpoint payload through `load_training_state()`, including completed steps and any saved optimizer, RNG, batch, step, or loop state. For CPU managed-step AdamW runs without supervision or augmentation, `resume_managed_steps(n)` restores the recorded callable/optimizer/RNG state and executes up to 1000 further steps once per process. Pass checkpoint_directory to save a new verified checkpoint into a new directory; in a fresh process, pass from_checkpoint to continue from that directory. Existing destinations are never overwritten. A failed save can leave an incomplete new directory. A failed call may partially modify memory; reload the module before retrying. Other modes require a caller-owned recovery routine. External data and environment must be made available separately; exact continuation is not guaranteed for arbitrary user code.\n\nTo use the values from another Python script in this export directory:\n\n```python\nimport restore_model\nmodel = restore_model.model\ntraining_state = restore_model.load_training_state()\n# For a supported managed CPU run, save a continuation in a new directory:\nresult = restore_model.resume_managed_steps(1, checkpoint_directory='continued-1')\n# In a fresh process, continue that checkpoint into another new directory:\n# result = restore_model.resume_managed_steps(1, from_checkpoint='continued-1', checkpoint_directory='continued-2')\n```\n\n## Included files\n\n- `source/`: Python files observed by the selected run and registered local component manifests, copied with SHA-256 verification.\n- `vendor/packages/`: exact installed files for registered extension distributions and their Python dependency closure, copied with SHA-256 verification. Each package records its role and dependency sources in `manifest.json`.\n- `artifacts/model-maven-checkpoint.pt`: latest atomic training checkpoint.\n- `environment.json`: selected interpreter details and installed distribution inventory, with package source categories and known omissions.\n- `requirements.snapshot.txt`: sorted name/version snapshot for installed distributions; review before using it to create another environment.\n- `variant.json`: redacted, replayable structural variant when the run used one.\n- `manifest.json`: run provenance, redacted inputs, runtime, external runtime requirements, environment snapshot hashes, and file hashes.\n- `model_maven_worker.py`: versioned Model-Maven model/variant reconstruction helpers.\n\nDatasets, external model weights, private index configuration, operating-system shared libraries, accelerator drivers, and non-Python project files are not copied. Review the bundle before sharing: run inputs are redacted, but the checkpoint can contain unredacted training parameters, callable state, or sample-derived information, and source code may contain credentials. Native Python extensions may still rely on ABI-compatible system libraries.\n"
+        "# Model-Maven training export\n\nRun: `{run_id}`  \nCheckpoint: step `{completed}`  \nRuntime recorded: Python `{python}`, PyTorch `{torch}`  \nEnvironment inventory: `{environment_status}`\n\n## Restore the trained model\n\nUse a compatible Python/PyTorch environment and review `manifest.json` → `runtime_requirements`; the restore script checks those exact external runtime versions before loading the model. Registered extensions and their installed Python distribution dependencies are included under `vendor/` and loaded from the export. Then run:\n\n```sh\npython restore_model.py\n```\n\nThe script verifies copied project sources, bundled package files, external runtime versions, and the checkpoint before reconstructing the model. It exposes the restored model as `model` and the verified `weights_only` checkpoint payload through `load_training_state()`, including completed steps and any saved optimizer, RNG, batch, step, or loop state. For supported single-device CPU, CUDA or ROCm managed-step runs without supervision or augmentation, with built-in AdamW or a recorded custom optimizer factory, and with batch binding pinned in the checkpoint (or recorded automatic binding for legacy checkpoints), `resume_managed_steps(n)` restores the recorded callable/optimizer/RNG state. Custom factories, parameters, optimizer types and parameter groups must match the checkpoint, and bundled sources are checked again before continuation. CUDA/ROCm continuation requires the recorded device label, backend, name and compatible accelerator RNG states; matching labels do not prove physical device identity. Shared parameter and buffer aliases must match the checkpoint after device placement. If alias identity is unavailable, continuation requires the explicit allow_unverified_aliases=True option and records that identity remains unverified; later continuations require the same acknowledgement and preserve the uncertainty. Other accelerator backends require a caller-owned recovery routine. External dependencies and dynamic imports remain outside complete verification. It executes up to 1000 further steps once per process. Pass checkpoint_directory to save a new verified checkpoint into a new directory; in a fresh process, pass from_checkpoint to continue from that directory. Existing destinations are never overwritten. A failed save can leave an incomplete new directory. A failed call may partially modify memory; reload the module before retrying. Other modes require a caller-owned recovery routine. External data and environment must be made available separately; exact continuation is not guaranteed for arbitrary user code.\n\nTo use the values from another Python script in this export directory:\n\n```python\nimport restore_model\nmodel = restore_model.model\ntraining_state = restore_model.load_training_state()\n# For a supported managed CPU, CUDA or ROCm run, save a continuation in a new directory:\nresult = restore_model.resume_managed_steps(1, checkpoint_directory='continued-1')\n# In a fresh process, continue that checkpoint into another new directory:\n# result = restore_model.resume_managed_steps(1, from_checkpoint='continued-1', checkpoint_directory='continued-2')\n```\n\n## Included files\n\n- `source/`: Python files observed by the selected run and registered local component manifests, copied with SHA-256 verification.\n- `vendor/packages/`: exact installed files for registered extension distributions and their Python dependency closure, copied with SHA-256 verification. Each package records its role and dependency sources in `manifest.json`.\n- `artifacts/model-maven-checkpoint.pt`: latest atomic training checkpoint.\n- `environment.json`: selected interpreter details and installed distribution inventory, with package source categories and known omissions.\n- `requirements.snapshot.txt`: sorted name/version snapshot for installed distributions; review before using it to create another environment.\n- `variant.json`: redacted, replayable structural variant when the run used one.\n- `manifest.json`: run provenance, redacted inputs, runtime, external runtime requirements, environment snapshot hashes, and file hashes.\n- `model_maven_worker.py`: versioned Model-Maven model/variant reconstruction helpers.\n\nDatasets, external model weights, private index configuration, operating-system shared libraries, accelerator drivers, and non-Python project files are not copied. Review the bundle before sharing: run inputs are redacted, but the checkpoint can contain unredacted training parameters, callable state, or sample-derived information, and source code may contain credentials. Native Python extensions may still rely on ABI-compatible system libraries.\n"
     )
     .replace(
         "## Restore the trained model",
         &format!(
-            "{} Python and PyTorch versions are compared with the run record; check `environment.json` for capture time and comparison details.\n\n## Restore the trained model",
+            "{} Python and PyTorch versions are compared with the run record; check `environment.json` for capture time and comparison details.\n\nSource coverage: `{}`. An empty source directory means no project source was observed; model factories and other external code must be supplied in the destination environment. The inventory and snapshot do not prove that every dynamically imported dependency is captured.\n\nRecorded project import roots are restored relative to `source/`. When the original run used a custom working directory, set `MODEL_MAVEN_EXPORT_WORKING_DIRECTORY` to an existing absolute directory before running the restore script. For a recorded project-default directory the script uses `source/`; an older record without this information keeps the caller's current directory. Data and other non-Python files are not copied, so supply them separately.\n\n## Restore the trained model",
             match capture_timing {
                 "training_start" => "The environment inventory was captured at the start of training.",
                 "export_time" => "The environment inventory was captured at export time, after the recorded run; other installed packages may have changed since training.",
                 _ => "The environment inventory capture time is unavailable or comes from an older run record.",
-            }
+            },
+            manifest["source_coverage"].as_str().unwrap_or("unknown")
         ),
+    )
+    .replace(
+        "To use the values from another Python script in this export directory:",
+        "Independent continuation requires the batch factory and training step to declare themselves stateless or provide restorable state. A run that allowed state reset during CLI training does not automatically authorize a reset in the exported continuation.\n\nImporting restore_model changes the process working directory to the selected restore directory. Relative checkpoint_directory and from_checkpoint paths are resolved there; use absolute paths when their location matters.\n\nTo use the values from another Python script in this export directory:",
     )
 }
 
@@ -973,10 +1185,20 @@ impl ArtifactExporter for FileArtifactExporter {
         let report_source_manifest = run["report"]["data"]["source_manifest"]
             .as_object()
             .ok_or("运行记录没有可导出的源码指纹。")?;
-        if report_source_manifest.is_empty() {
-            return Err("运行记录的源码清单为空，无法生成可恢复工程。".into());
+        if run["report"]["data"]["source_changed_during_run"] == true {
+            return Err("运行期间源码来源发生变化或无法核对；不能可靠地导出模型。".into());
         }
         let mut source_manifest = report_source_manifest.clone();
+        // Include code first loaded by a dynamic branch after training started.
+        // Conflicting observations cannot be represented as one source file.
+        if let Some(after) = run["report"]["data"]["source_manifest_after"].as_object() {
+            for (path, digest) in after {
+                if source_manifest.get(path).is_some_and(|before| before != digest) {
+                    return Err(format!("运行期间源码指纹不一致：{path}"));
+                }
+                source_manifest.insert(path.clone(), digest.clone());
+            }
+        }
         if let Some(variant_manifest) = run["inputs"]["variant"]["source_manifest"].as_object() {
             for (path, digest) in variant_manifest {
                 let path = Path::new(path);
@@ -988,6 +1210,13 @@ impl ArtifactExporter for FileArtifactExporter {
             }
         }
         add_component_sources(&root, run, &mut source_manifest)?;
+        let (import_roots, import_roots_status, working_directory) = exported_runtime_paths(&run["inputs"])?;
+        let snapshot_root = run_snapshot_root(&root, run)?;
+        if report_source_manifest.is_empty() && (snapshot_root.is_none()
+            || run["report"]["data"]["source_changed_during_run"] != false) {
+            return Err("空源码清单需要可核对的运行快照及完整的源码变化检查；不能推断依赖已包含。".into());
+        }
+        let snapshot_manifest = run["report"]["data"]["code_snapshot"]["manifest"].as_object();
         let checkpoint_manifest = run["checkpoint"]
             .as_object()
             .ok_or("该运行没有可用 checkpoint。")?;
@@ -1006,18 +1235,39 @@ impl ArtifactExporter for FileArtifactExporter {
         let mut verified_sources = Vec::with_capacity(source_manifest.len());
         for (source_name, expected) in &source_manifest {
             let source = Path::new(source_name);
-            let relative = relative_source_path(&root, source)?;
+            let relative = recorded_source_relative(&root, source)?;
             let expected_hash = expected
                 .as_str()
                 .ok_or("源码清单中包含无效 SHA-256。")?
                 .to_owned();
-            if sha256(source)? != expected_hash {
+            let actual_source = if let Some(snapshot) = &snapshot_root {
+                let key = relative.to_str().ok_or("源码路径不是有效文本。")?.replace('\\', "/");
+                match snapshot_manifest.and_then(|manifest| manifest.get(&key)).and_then(Value::as_str) {
+                    Some(hash) if hash == expected_hash => {
+                        let frozen = snapshot.join(&relative);
+                        let canonical = frozen.canonicalize().map_err(|_| format!("快照源码缺失：{key}"))?;
+                        if canonical != frozen || !canonical.is_file() {
+                            return Err(format!("快照源码路径无效或经过符号链接：{key}"));
+                        }
+                        canonical
+                    }
+                    None if relative.starts_with(".model-maven/components") && relative.extension().and_then(|v| v.to_str()) == Some("json") => {
+                        relative_source_path(&root, source)?;
+                        source.to_owned()
+                    }
+                    _ => return Err(format!("运行源码与快照清单不一致：{key}")),
+                }
+            } else {
+                relative_source_path(&root, source)?;
+                source.to_owned()
+            };
+            if sha256(&actual_source)? != expected_hash {
                 return Err(format!(
-                    "运行源码已变化：{}；为保持可复现性，拒绝导出。",
-                    source.display()
+                    "运行源码或快照已变化：{}；拒绝导出。",
+                    actual_source.display()
                 ));
             }
-            verified_sources.push((source.to_owned(), relative, expected_hash));
+            verified_sources.push((actual_source, relative, expected_hash));
         }
         let verified_extensions = verify_extension_package_plans(extension_package_plans)?;
         verify_runtime_requirements(runtime_requirements)?;
@@ -1051,6 +1301,9 @@ impl ArtifactExporter for FileArtifactExporter {
         let artifact_dir = stage.join("artifacts");
         fs::create_dir(&source_dir).map_err(|error| error.to_string())?;
         fs::create_dir(&artifact_dir).map_err(|error| error.to_string())?;
+        for relative in &import_roots {
+            fs::create_dir_all(source_dir.join(relative_bundle_path(relative)?)).map_err(|error| error.to_string())?;
+        }
 
         let mut files = Map::new();
         let mut copied_bytes = 0u64;
@@ -1215,6 +1468,7 @@ impl ArtifactExporter for FileArtifactExporter {
             "run":run_summary,
             "inputs":projected_inputs,
             "variant_file":variant.is_some(),
+            "variant_device_policy":variant.map(|value| value.get("device_policy").cloned().unwrap_or_else(|| json!("legacy_cpu"))),
             "runtime":{
                 "python_version":runtime.and_then(|value| value.get("python_version")),
                 "pytorch_version":runtime.and_then(|value| value.get("pytorch_version"))
@@ -1230,9 +1484,12 @@ impl ArtifactExporter for FileArtifactExporter {
                 "distribution_count":environment_document["distribution_count"]
             },
             "source_files":files,
+            "source_coverage":if source_file_count == 0 { "no_project_sources_observed_external_code_not_bundled" } else { "observed_project_sources_only" },
             "bundle_files":bundle_files,
             "extension_packages":extension_package_records,
             "runtime_requirements":runtime_requirements,
+            "runtime_paths":{"project_import_roots":import_roots,"import_roots_status":import_roots_status,"working_directory":working_directory},
+            "source_origin":if snapshot_root.is_some() { "run_snapshot_with_component_manifest_fallback" } else { "current_project_verified_against_run" },
             "checkpoint":exported_checkpoint,
             "omitted_inputs":["datasets and non-Python files", "external model weights", "unregistered packages", "private index configuration", "OS-level shared libraries and accelerator drivers", "resolver-generated lockfile"]
         });

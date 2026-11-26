@@ -1,5 +1,35 @@
 # Model-Maven TUI
 
+> 正在开发的统一 Neovim 工作区：以下说明对应当前工作树，并非已发布的 0.1.0 功能。完整模型编辑、监督和训练工作流仍在开发。
+
+从接入项目到前向、修改、监督和训练的主线请先看 [统一工作区使用指南](docs/unified-workspace-guide.md)。下面关于旧版工作台、图形演示和联调脚本的细节保留供维护参考，不代表默认 Neovim 工作区已具备相同界面或经过验收。
+
+常规 `m-model-tui` 启动使用 Neovim 0.10 或更新版本；可用 `MODEL_MAVEN_NVIM` 指定可执行文件、`MODEL_MAVEN_CLI` 指定后端。工作区使用 Neovim 原生源码 buffer 和模型面板。已有 Neovim 会话可将本目录加入 `runtimepath`，然后运行 `:ModelMaven`，或调用 `require("model_maven").setup({ cli = "m-model" })` 后运行该命令。LazyVim 用户可将此目录作为 lazy.nvim 插件的 `dir`；工作区不会自动修改个人配置或安装 Python 包。
+
+LazyVim / lazy.nvim 可将下述配置放在用户自行选择的 `lua/plugins/` 文件中（路径替换为本仓库的实际位置）：
+
+```lua
+return {
+  {
+    dir = "/absolute/path/to/model-maven-tui",
+    main = "model_maven",
+    cmd = "ModelMaven",
+    opts = { cli = "m-model" },
+  },
+}
+```
+
+然后在 Python 项目内运行 `:ModelMaven`。插件只建立自己的工作区 buffer 映射，不会覆盖全局映射。用 `:checkhealth model_maven` 检查 Neovim、CLI 可发现性及加载的工作区来源；若 runtimepath 中有多个版本会提示冲突。该检查不会导入用户模型，也不能保证插件兼容性。
+
+若已有插件占用 `:ModelMaven`，本插件不会覆盖该命令；请检查 `:checkhealth model_maven` 和 `:messages`，也可在确认加载来源后调用 `require('model_maven').open()`。健康检查会提示 Neovim 的普通模式鼠标是否启用，不会修改用户设置；终端或多路复用器是否实际转发鼠标事件仍需运行时确认。
+
+当前工作树的 npm 启动包设计携带同一工作区的 `nvim/` 目录；可通过 `m-model-tui --workspace-plugin-dir` 查找该目录，用于上述 `dir`（独立原生二进制不提供该参数）。独立启动器使用编译时内嵌的同一套 Lua 文件。若当前 Neovim 配置提前加载了另一个来源的 Model-Maven 模块，启动器会提示冲突；请调整插件配置，或在已有会话运行 `:ModelMaven`。新启动包与平台包携带工作区构建摘要，启动器检查双方声明是否匹配；这不能证明安装后文件未被修改。本地 Linux x64 候选已离线安装走查，尚不代表其他平台已发布或验证；已发布 0.1.0 的能力以该版本为准。
+
+工作区、CLI 和 Python 命令在 **Neovim 所在的系统或容器**执行，面板显示执行主机和项目目录。通过 SSH 工作时，应在远端运行 Neovim、CLI 和模型，或明确选择一个本地可访问的项目；本地编辑器到远端 worker、容器路径映射及虚拟 URI 的跨主机身份映射目前没有实现。当前 buffer 为远程或虚拟 URI 时，工具不会据此猜测项目路径；可以明确指定可访问的项目目录，但这不会建立该 URI 与项目文件的映射。远程连接中断后，训练状态应通过运行记录核查，不假定任务已停止。上述拓扑尚未经人工验证。
+
+当前工作树提供配置预览与保存、可编辑骨架、检查与前向、受支持的 Layer 修改预览和条件提交，以及监督与训练入口。已有本地样例走查，但动态模型、外部资源、其他硬件及个人插件组合仍有边界；详见后端仓库的 `docs/acceptance/local-workspace-walkthrough.md`。检查、前向与 Layer 预览会运行用户项目代码，需明确确认；项目 buffer 有未保存修改时须先由用户保存。生成的骨架使用合成输入与示例损失，不代表真实数据或模型质量已经验证。
+
+
 真实 CLI/TUI 联调可以使用统一入口运行（需要 Unix PTY 和已安装 PyTorch 的 Python）：
 
 ```sh

@@ -135,6 +135,7 @@ fn application<B: Backend>(backend: B) -> Application<B> {
     Application {
         backend,
         runtime_capabilities: RefCell::new(None),
+        runtime_declarations: RefCell::new(None),
         variants: Box::new(FileVariantStore),
         runs: Box::new(FileRunStore),
         exporter: Box::new(FileArtifactExporter),

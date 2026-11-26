@@ -2,17 +2,23 @@
 
 Use project batch parameters such as:
   path="data.csv", inputs={"features":["x1","x2"]}, targets=["y"]
+For inference without labels, omit targets; loss_inputs will be empty.
 For a model returning a named dictionary, targets can be
   {"score":["score_target"], "classes":["c1","c2"]}.
 Lists default to float32 vectors. Structured fields support fixed shapes and
-float32/float64/float16/int64/bool, for example:
+numeric or boolean dtypes available in the selected PyTorch runtime, for example:
   inputs={"image":{"columns":["p0","p1","p2","p3"],"shape":[2,2]},
           "tokens":{"columns":["t0","t1"],"dtype":"int64"}}
 For a single scalar target: targets={"$tensor":{"columns":["label"],
                                                 "shape":[],"dtype":"int64"}}
+Optional deterministic row partitions use explicit weights and seed, e.g.:
+  split="train", split_weights={"train":8,"val":1,"test":1}, split_seed=42
+Use the same weights and seed for each split. Membership is based on row position,
+not stratified, so changing row order changes the partition. A split may be empty.
 Replace this module for variable-length records or other datasets.
 """
 import csv
+import functools
 import hashlib
 import io
 import json
@@ -27,6 +33,24 @@ _MAX_ROWS = 100_000
 _MAX_COLUMNS = 4096
 _MAX_SELECTED_COLUMNS = 256
 _MAX_NUMERIC_VALUES = 2_000_000
+
+
+@functools.lru_cache(maxsize=64)
+def _dtype_info(name):
+    if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{0,63}", name):
+        raise ValueError("dtype must be a public PyTorch dtype name")
+    dtype = getattr(torch, name, None)
+    if not isinstance(dtype, torch.dtype):
+        raise ValueError(f"PyTorch dtype is unavailable: {name}")
+    if dtype == torch.bool:
+        return dtype, "bool", None
+    if dtype.is_floating_point:
+        return dtype, "float", None
+    try:
+        bounds = torch.iinfo(dtype)
+    except (TypeError, RuntimeError):
+        raise ValueError(f"CSV template supports real numeric and bool dtypes, not {name}") from None
+    return dtype, "integer", (int(bounds.min), int(bounds.max))
 
 
 def _columns(value, label):
@@ -46,12 +70,16 @@ def _field(value, label):
     columns = _columns(value.get("columns"), f"{label}.columns")
     shape = value.get("shape", [len(columns)])
     dtype = value.get("dtype", "float32")
-    if (not isinstance(shape, list) or len(shape) > 4
+    if (not isinstance(shape, list) or len(shape) > 8
             or any(type(dim) is not int or dim < 1 for dim in shape)
             or math.prod(shape) != len(columns)):
-        raise ValueError(f"{label}.shape must contain at most four positive dimensions with product equal to its column count; [] is scalar")
-    if not isinstance(dtype, str) or dtype not in {"float32", "float64", "float16", "int64", "bool"}:
-        raise ValueError(f"{label}.dtype is unsupported")
+        raise ValueError(f"{label}.shape must contain at most eight positive dimensions with product equal to its column count; [] is scalar")
+    if not isinstance(dtype, str):
+        raise ValueError(f"{label}.dtype must be a PyTorch dtype name")
+    try:
+        _dtype_info(dtype)
+    except ValueError as error:
+        raise ValueError(f"{label}.dtype: {error}") from error
     return {"columns": columns, "shape": shape, "dtype": dtype}
 
 
@@ -66,17 +94,18 @@ def _mapping(value, label):
 def _scalar(value, dtype):
     if not isinstance(value, str):
         raise ValueError("missing value")
-    if dtype == "bool":
+    _, kind, bounds = _dtype_info(dtype)
+    if kind == "bool":
         normalized = value.strip().lower()
         if normalized not in {"0", "1", "false", "true"}:
             raise ValueError("bool must be 0, 1, false or true")
         return normalized in {"1", "true"}
-    if dtype == "int64":
+    if kind == "integer":
         if not re.fullmatch(r"[+-]?[0-9]+", value.strip()):
-            raise ValueError("int64 must be a decimal integer")
+            raise ValueError(f"{dtype} must be a decimal integer")
         result = int(value)
-        if not -(1 << 63) <= result < (1 << 63):
-            raise ValueError("int64 is out of range")
+        if not bounds[0] <= result <= bounds[1]:
+            raise ValueError(f"{dtype} is out of range")
         return result
     result = float(value)
     if not math.isfinite(result):
@@ -104,18 +133,33 @@ class CsvBatch:
         self._fingerprint = state["fingerprint"]
         self._cache = None
 
-    def __call__(self, path, inputs, targets, batch_size=2):
+    def __call__(self, path, inputs, targets=None, batch_size=2, split=None, split_weights=None, split_seed=None):
         if not isinstance(path, str) or not path or len(path) > 4096:
             raise ValueError("path must be a nonempty CSV path")
         if type(batch_size) is not int or not 1 <= batch_size <= 256:
             raise ValueError("batch_size must be an integer from 1 to 256")
+        if split is None:
+            if split_weights is not None or split_seed is not None:
+                raise ValueError("split_weights and split_seed require an explicit split")
+        else:
+            if split not in ("train", "val", "test"):
+                raise ValueError("split must be train, val or test")
+            if (not isinstance(split_weights, dict) or set(split_weights) != {"train", "val", "test"}
+                    or any(type(value) is not int or value < 0 or value > 1_000_000 for value in split_weights.values())
+                    or sum(split_weights.values()) == 0):
+                raise ValueError("split_weights needs nonnegative integer train/val/test weights with positive sum")
+            if type(split_seed) is not int or not 0 <= split_seed <= 2**63 - 1:
+                raise ValueError("split_seed must be an integer in 0..2^63-1")
         input_columns = _mapping(inputs, "inputs")
         single_wrapped = isinstance(targets, dict) and set(targets) == {"$tensor"}
         named_targets = isinstance(targets, dict) and not single_wrapped
-        target_columns = (_mapping(targets, "targets") if named_targets
-                          else {"target": _field(targets["$tensor"] if single_wrapped else targets, "targets")})
+        target_columns = ({} if targets is None else
+                          _mapping(targets, "targets") if named_targets else
+                          {"target": _field(targets["$tensor"] if single_wrapped else targets, "targets")})
         config = {"path": str(Path(path).resolve()), "inputs": input_columns,
                   "targets": target_columns, "named_targets": named_targets, "batch_size": batch_size}
+        if split is not None:
+            config.update({"split": split, "split_weights": split_weights, "split_seed": split_seed})
         config_bytes = json.dumps(config, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
         source = Path(config["path"])
         before = source.stat()
@@ -149,7 +193,8 @@ class CsvBatch:
                 raise ValueError(f"CSV columns not found: {missing}")
             rows = []
             for row_number, row in enumerate(reader, start=2):
-                if len(rows) >= _MAX_ROWS or (len(rows) + 1) * len(conversions) > _MAX_NUMERIC_VALUES:
+                row_index = row_number - 2
+                if row_index >= _MAX_ROWS or (row_index + 1) * len(conversions) > _MAX_NUMERIC_VALUES:
                     raise ValueError("CSV exceeds the row or selected-value limit")
                 if None in row or any(row[column] is None for column in header):
                     raise ValueError(f"CSV row {row_number} does not match the header")
@@ -157,9 +202,17 @@ class CsvBatch:
                     values = {(column, dtype): _scalar(row[column], dtype) for column, dtype in conversions}
                 except (ValueError, TypeError) as error:
                     raise ValueError(f"CSV row {row_number} contains an invalid typed value: {error}") from error
+                if split is not None:
+                    total = sum(split_weights.values())
+                    bucket = int.from_bytes(hashlib.sha256(f"{split_seed}:{row_index}".encode()).digest()[:8], "big") % total
+                    train_end = split_weights["train"]
+                    val_end = train_end + split_weights["val"]
+                    assignment = "train" if bucket < train_end else "val" if bucket < val_end else "test"
+                    if assignment != split:
+                        continue
                 rows.append(values)
             if not rows:
-                raise ValueError("CSV has no data rows")
+                raise ValueError("CSV has no rows in the selected split" if split is not None else "CSV has no data rows")
             self._fingerprint = fingerprint
             self._cache = (identity, config_bytes, rows)
         cached_identity, cached_config, rows = self._cache
@@ -168,14 +221,17 @@ class CsvBatch:
         selected = [rows[(self._cursor + index) % len(rows)] for index in range(batch_size)]
         def tensor(field):
             dtype = field["dtype"]
-            value = torch.tensor([[row[(column, dtype)] for column in field["columns"]] for row in selected], dtype=getattr(torch, dtype))
-            value = value.reshape((batch_size, *field["shape"]))
+            value = torch.tensor([[row[(column, dtype)] for column in field["columns"]] for row in selected], dtype=_dtype_info(dtype)[0])
+            # Keep the freshly created batch tensor independent rather than a
+            # view, so exact input capture can safely restore its storage.
+            value = value.reshape((batch_size, *field["shape"])).clone()
             if not bool(torch.isfinite(value).all()):
                 raise ValueError(f"CSV value overflows {dtype}")
             return value
         kwargs = {name: tensor(field) for name, field in input_columns.items()}
         target_values = {name: tensor(field) for name, field in target_columns.items()}
-        loss_inputs = {"targets": target_values} if named_targets else {"target": target_values["target"]}
+        loss_inputs = ({} if targets is None else
+                       {"targets": target_values} if named_targets else {"target": target_values["target"]})
         self._cursor = (self._cursor + batch_size) % len(rows)
         return {"args": [], "kwargs": kwargs, "loss_inputs": loss_inputs}
 

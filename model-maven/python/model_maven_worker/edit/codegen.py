@@ -6,30 +6,24 @@ third-party dependencies; component lock data is emitted as provenance comments.
 """
 
 import json
-import keyword
 import os
 import re
 from pathlib import Path
 from typing import Any
 
 from ..protocol import UserError
+from .initialization_rng import validate_rng_devices
 
 
-_FACTORY_PART = re.compile(r"^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*$")
 _MAX_RECIPE_BYTES = 1024 * 1024
-_LAYER_TYPES = {
-    "Linear", "Dropout", "ReLU", "GELU", "LayerNorm", "Conv2d", "Identity"
-}
-
-
 def _entrypoint(value: Any, path: str) -> str:
     if not isinstance(value, str) or value.count(":") != 1:
         raise UserError("ASSEMBLY_RECIPE_INVALID", f"{path} 必须是 module:callable 入口。")
     module, attribute = value.split(":", 1)
-    if not _FACTORY_PART.fullmatch(module) or not _FACTORY_PART.fullmatch(attribute):
+    if not all(part.isidentifier() for part in module.split(".")) or not all(
+        part.isidentifier() for part in attribute.split(".")
+    ):
         raise UserError("ASSEMBLY_RECIPE_INVALID", f"{path} 入口格式无效：{value!r}。")
-    if any(keyword.iskeyword(part) for part in (module + "." + attribute).split(".")):
-        raise UserError("ASSEMBLY_RECIPE_INVALID", f"{path} 入口不能包含 Python 关键字。")
     return value
 
 
@@ -51,8 +45,8 @@ def _parameters(value: Any, path: str) -> dict:
     if not isinstance(value, dict) or len(value) > 256:
         raise UserError("ASSEMBLY_RECIPE_INVALID", f"{path} 必须是最多 256 项的参数对象。")
     for key in value:
-        if not isinstance(key, str) or not key.isidentifier() or keyword.iskeyword(key):
-            raise UserError("ASSEMBLY_RECIPE_INVALID", f"{path} 含有无效 Python 参数名：{key!r}。")
+        if not isinstance(key, str):
+            raise UserError("ASSEMBLY_RECIPE_INVALID", f"{path} 的参数名必须是字符串：{key!r}。")
     return _json_value(value, path)
 
 
@@ -91,10 +85,10 @@ def _variant_layer(operation: dict, path: str) -> dict:
     if component is not None:
         component = _entrypoint(component, f"{path}.component")
         layer_type = None
-    elif layer_type not in _LAYER_TYPES:
+    elif not isinstance(layer_type, str) or not layer_type.isidentifier() or layer_type.startswith("_"):
         raise UserError(
             "ASSEMBLY_VARIANT_LAYER_UNSUPPORTED",
-            f"{path}.layer_type 必须是内置类型之一：{', '.join(sorted(_LAYER_TYPES))}。",
+            f"{path}.layer_type 必须是 torch.nn 中的公开类名；实际可用性由运行时验证。",
         )
     return {
         "component": component,
@@ -107,6 +101,8 @@ def _variant_operation(operation: Any, path: str, depth: int = 0) -> dict:
     if depth > 2 or not isinstance(operation, dict):
         raise UserError("ASSEMBLY_VARIANT_RECIPE_INVALID", f"{path} 操作格式无效。")
     action = operation.get("action")
+    if "rng_devices" in operation and action not in {"add", "replace"}:
+        raise UserError("ASSEMBLY_VARIANT_RECIPE_INVALID", f"{path}.rng_devices 仅适用于 add/replace。")
     if action == "transaction":
         operations = operation.get("operations")
         if not isinstance(operations, list) or not 1 <= len(operations) <= 64:
@@ -145,10 +141,11 @@ def _variant_operation(operation: Any, path: str, depth: int = 0) -> dict:
         if before is not None and after is not None:
             raise UserError("ASSEMBLY_VARIANT_RECIPE_INVALID", f"{path} 不能同时指定 before 和 after。")
         name = operation.get("name")
+        if name == "":
+            name = None
         if name is not None and (
             not isinstance(name, str)
-            or not name.isidentifier()
-            or keyword.iskeyword(name)
+            or "." in name
             or len(name) > 256
         ):
             raise UserError("ASSEMBLY_VARIANT_RECIPE_INVALID", f"{path}.name 无效。")
@@ -160,6 +157,7 @@ def _variant_operation(operation: Any, path: str, depth: int = 0) -> dict:
             "before": _variant_path(before, f"{path}.before") if before is not None else None,
             "after": _variant_path(after, f"{path}.after") if after is not None else None,
             "initialization_seed": _layer_seed(operation, path),
+            **_layer_rng_devices(operation),
             **layer,
         }
     if action == "replace":
@@ -167,6 +165,7 @@ def _variant_operation(operation: Any, path: str, depth: int = 0) -> dict:
             "action": action,
             "path": _variant_child_path(operation.get("path"), f"{path}.path"),
             "initialization_seed": _layer_seed(operation, path),
+            **_layer_rng_devices(operation),
             **_variant_layer(operation, path),
         }
     if action == "set":
@@ -182,6 +181,13 @@ def _variant_operation(operation: Any, path: str, depth: int = 0) -> dict:
     raise UserError("ASSEMBLY_VARIANT_RECIPE_INVALID", f"{path} 含不支持的 Layer 操作：{action!r}。")
 
 
+def _layer_rng_devices(operation: dict) -> dict:
+    if "rng_devices" not in operation:
+        return {}
+    validate_rng_devices(operation["rng_devices"])
+    return {"rng_devices": list(operation["rng_devices"])}
+
+
 def _layer_seed(operation: dict, path: str) -> int:
     seed = operation.get("initialization_seed")
     if type(seed) is not int or not 0 <= seed < 2**64:
@@ -190,9 +196,12 @@ def _layer_seed(operation: dict, path: str) -> int:
 
 
 def _variant(value: Any) -> dict:
-    if not isinstance(value, dict) or set(value) != {"seed", "edits"}:
-        raise UserError("ASSEMBLY_VARIANT_RECIPE_INVALID", "variant 必须仅包含 seed 和活动 edits。")
+    if not isinstance(value, dict) or not {"seed", "edits"} <= set(value) or set(value) - {"seed", "edits", "device_policy", "base_rng_devices"}:
+        raise UserError("ASSEMBLY_VARIANT_RECIPE_INVALID", "variant 需要 seed、活动 edits 和可选设备策略。")
     seed, edits = value["seed"], value["edits"]
+    device_policy = value.get("device_policy", "legacy_cpu")
+    if not isinstance(device_policy, str) or device_policy not in {"legacy_cpu", "factory"}:
+        raise UserError("ASSEMBLY_VARIANT_RECIPE_INVALID", "variant.device_policy 无效。")
     if type(seed) is not int or not 0 <= seed < 2**64:
         raise UserError("ASSEMBLY_VARIANT_RECIPE_INVALID", "variant.seed 必须是无符号 64 位整数。")
     if not isinstance(edits, list) or len(edits) > 128:
@@ -201,6 +210,11 @@ def _variant(value: Any) -> dict:
         "seed": seed,
         "edits": [_variant_operation(item, f"variant.edits[{index}]") for index, item in enumerate(edits)],
     }
+    if "device_policy" in value:
+        normalized["device_policy"] = device_policy
+    if "base_rng_devices" in value:
+        validate_rng_devices(value["base_rng_devices"])
+        normalized["base_rng_devices"] = list(value["base_rng_devices"])
     if len(json.dumps(normalized, ensure_ascii=False, allow_nan=False).encode("utf-8")) > _MAX_RECIPE_BYTES:
         raise UserError("ASSEMBLY_VARIANT_RECIPE_INVALID", "Layer 变体编辑配方超过 1 MiB。")
     return normalized
@@ -253,14 +267,24 @@ def _replace_module(model, path, replacement):
     return old
 
 
-def _new_layer(layer_type, component, params, seed):
+def _new_layer(layer_type, component, params, seed, preserve_factory_device=False, rng_devices=()):
     factory = _resolve(component) if component else getattr(torch.nn, layer_type)
-    with torch.random.fork_rng(devices=[]):
+    if component is None and (not isinstance(factory, type) or not issubclass(factory, torch.nn.Module)):
+        raise TypeError(f"torch.nn.{layer_type} is not a Module class")
+    backend = rng_devices[0].split(":", 1)[0] if rng_devices else None
+    indexes = [int(device.split(":", 1)[1]) for device in rng_devices]
+    fork = (torch.random.fork_rng(devices=indexes, device_type=backend) if backend
+            else torch.random.fork_rng(devices=[]))
+    with fork:
         torch.random.default_generator.manual_seed(seed)
+        if backend:
+            generators = getattr(getattr(torch, backend), "default_generators")
+            for index in indexes:
+                generators[index].manual_seed(seed)
         layer = factory(**params)
     if not isinstance(layer, torch.nn.Module):
         raise TypeError("Layer factory did not return torch.nn.Module")
-    return layer.cpu()
+    return layer if preserve_factory_device else layer.cpu()
 
 
 def _editable_parameters(module):
@@ -307,9 +331,14 @@ def _editable_parameters(module):
 
 
 def _preserve_state(old, replacement, preserve_matching=True):
-    parameter = next(old.parameters(), None)
-    if parameter is not None and parameter.is_floating_point():
-        replacement.to(dtype=parameter.dtype)
+    state = next(old.parameters(), None)
+    if state is None:
+        state = next(old.buffers(), None)
+    if state is not None:
+        if state.is_floating_point() or state.is_complex():
+            replacement.to(device=state.device, dtype=state.dtype)
+        else:
+            replacement.to(device=state.device)
     replacement.train(old.training)
     current = replacement.state_dict()
     previous = old.state_dict()
@@ -319,7 +348,49 @@ def _preserve_state(old, replacement, preserve_matching=True):
     replacement.load_state_dict(current)
 
 
-def _insert_layer(model, operation):
+def _storage_key(tensor):
+    try:
+        if str(tensor.layout) != "torch.strided" or tensor.device.type == "meta":
+            return None
+        storage = tensor.untyped_storage()
+        return (str(tensor.device), storage._cdata) if storage.nbytes() else None
+    except (AttributeError, RuntimeError, TypeError, NotImplementedError):
+        return None
+
+
+def _preserve_external_sharing(model, old, replacement, compatible):
+    aliases = _registered_paths(model, old)
+    outside_objects, outside_storages = set(), {}
+    for accessor in ("named_parameters", "named_buffers"):
+        for path, tensor in getattr(model, accessor)(remove_duplicate=False):
+            if any(("model." + path).startswith(alias + ".") for alias in aliases):
+                continue
+            outside_objects.add(id(tensor))
+            key = _storage_key(tensor)
+            if key is not None:
+                outside_storages.setdefault(key, set()).add(id(tensor))
+    shared = []
+    for kind, accessor in (("parameter", "named_parameters"), ("buffer", "named_buffers")):
+        for name, tensor in getattr(old, accessor)(remove_duplicate=False):
+            key = _storage_key(tensor)
+            storage_shared = key is not None and any(other != id(tensor) for other in outside_storages.get(key, ()))
+            if id(tensor) not in outside_objects and not storage_shared:
+                continue
+            parent_path, _, local_name = name.rpartition(".")
+            try:
+                parent = replacement.get_submodule(parent_path) if parent_path else replacement
+            except AttributeError:
+                parent = None
+            registry = None if parent is None else (parent._parameters if kind == "parameter" else parent._buffers)
+            target = registry.get(local_name) if registry is not None else None
+            if not compatible or target is None or target.shape != tensor.shape or target.dtype != tensor.dtype:
+                raise ValueError(f"Layer edit would break externally shared {kind}: {name}")
+            shared.append((registry, local_name, tensor))
+    for registry, name, tensor in shared:
+        registry[name] = tensor
+
+
+def _insert_layer(model, operation, preserve_factory_device=False):
     parent = _module_at(model, operation["parent"])
     if isinstance(parent, torch.nn.ModuleList):
         kind = "list"
@@ -340,6 +411,8 @@ def _insert_layer(model, operation):
         operation.get("component"),
         operation["params"],
         operation["initialization_seed"],
+        preserve_factory_device,
+        operation.get("rng_devices", ()),
     )
     items = list(parent._modules.items())
     if kind == "list":
@@ -383,6 +456,7 @@ def _remove_layer(model, path, strategy):
     if strategy == "bypass":
         replacement = torch.nn.Identity()
         _preserve_state(old, replacement)
+        _preserve_external_sharing(model, old, replacement, False)
         _replace_module(model, path, replacement)
         return
     parent, name = _parent_slot(model, path)
@@ -419,13 +493,13 @@ def _registered_paths(model, target):
     return sorted(paths)
 
 
-def _apply_edit(model, operation):
+def _apply_edit(model, operation, preserve_factory_device=False):
     action = operation["action"]
     if action == "transaction":
         for child in operation["operations"]:
-            _apply_edit(model, child)
+            _apply_edit(model, child, preserve_factory_device)
     elif action == "add":
-        _insert_layer(model, operation)
+        _insert_layer(model, operation, preserve_factory_device)
     elif action == "set":
         old = _module_at(model, operation["path"])
         params = _editable_parameters(old)
@@ -437,6 +511,7 @@ def _apply_edit(model, operation):
         params.update(operation["params"])
         replacement = type(old)(**params)
         _preserve_state(old, replacement)
+        _preserve_external_sharing(model, old, replacement, True)
         _replace_module(model, operation["path"], replacement)
     elif action == "replace":
         old = _module_at(model, operation["path"])
@@ -445,8 +520,11 @@ def _apply_edit(model, operation):
             operation.get("component"),
             operation["params"],
             operation["initialization_seed"],
+            preserve_factory_device,
+            operation.get("rng_devices", ()),
         )
         _preserve_state(old, replacement, preserve_matching=False)
+        _preserve_external_sharing(model, old, replacement, False)
         _replace_module(model, operation["path"], replacement)
     elif action == "remove":
         _remove_layer(model, operation["path"], operation["strategy"])
@@ -464,9 +542,9 @@ def _apply_edit(model, operation):
         raise ValueError(f"Unsupported Layer edit: {action}")
 
 
-def _apply_variant(model, edits):
+def _apply_variant(model, edits, preserve_factory_device=False):
     for operation in edits:
-        _apply_edit(model, operation)
+        _apply_edit(model, operation, preserve_factory_device)
 '''
 
 
@@ -493,7 +571,7 @@ def validate_recipe(recipe: Any) -> dict:
         raise UserError("ASSEMBLY_RECIPE_INVALID", "model_injections 必须是最多 32 项的对象。")
     normalized_injections = {}
     for slot, specification in injections.items():
-        if not isinstance(slot, str) or not slot.isidentifier() or keyword.iskeyword(slot):
+        if not isinstance(slot, str) or not slot.isidentifier():
             raise UserError("ASSEMBLY_RECIPE_INVALID", f"无效的模型接缝名：{slot!r}。")
         if slot in normalized_model["params"]:
             raise UserError(
@@ -569,6 +647,8 @@ def generate_code(recipe: Any) -> str:
         "\"\"\"Generated Model-Maven assembly adapter.\"\"\"",
         f"# Generated from an explicit Model-Maven assembly recipe (schema v{normalized['schema_version']}).",
         "# This adapter does not vendor user modules, extension packages, or runtime dependencies.",
+        "# Make the project's module directories available to the selected Python environment.",
+        "# Use the working directory expected by user factories and relative data paths.",
         "from importlib import import_module",
         "",
         "",
@@ -583,18 +663,31 @@ def generate_code(recipe: Any) -> str:
         lines.extend(["", "import random", "import torch", "", ""])
         lines.extend(_VARIANT_HELPERS.strip("\n").splitlines())
     elif normalized.get("initialization_seed") is not None:
-        lines.extend(["", "import torch"])
+        lines.extend(["", "import random", "import torch"])
     lines.extend(["", "", "def build_model():"])
     seed = variant["seed"] if variant else normalized.get("initialization_seed")
     if variant:
+        base_rng_devices = variant.get("base_rng_devices")
+        backend, indices = validate_rng_devices(base_rng_devices or [])
+        fork = (f"torch.random.fork_rng(devices={indices!r}, device_type={backend!r})"
+                if indices else "torch.random.fork_rng(devices=[])")
+        base_scope_comment = ("    # Base construction seeds CPU and the explicitly recorded accelerator RNGs."
+                              if indices else "    # Base construction seeds Python and CPU only; accelerator RNGs are not seeded here.")
         lines.extend([
+            base_scope_comment,
+            "    # Match any device-specific initialization deliberately in your project code.",
             "    python_rng_state = random.getstate()",
             f"    random.seed({seed})",
             "    try:",
-            "        with torch.random.fork_rng(devices=[]):",
+            f"        with {fork}:",
             f"            torch.random.default_generator.manual_seed({seed})",
+            *[f"            getattr(torch, {backend!r}).default_generators[{index}].manual_seed({seed})" for index in indices],
             "            model = _build_model()",
-            f"            _apply_variant(model, {variant['edits']!r})",
+            *([] if variant.get("device_policy", "legacy_cpu") == "factory" else [
+                "            # Match the persisted variant's CPU reconstruction policy.",
+                "            model.cpu()",
+            ]),
+            f"            _apply_variant(model, {variant['edits']!r}, {variant.get('device_policy') == 'factory'!r})",
             "    finally:",
             "        random.setstate(python_rng_state)",
             "    return model",
@@ -602,9 +695,16 @@ def generate_code(recipe: Any) -> str:
         lines.extend(["", "", "def _build_model():"])
     elif seed is not None:
         lines.extend([
-            "    with torch.random.fork_rng(devices=[]):",
-            f"        torch.random.default_generator.manual_seed({seed})",
-            "        model = _build_model()",
+            "    # Base construction seeds Python and CPU only; accelerator RNGs are not seeded here.",
+            "    # Match any device-specific initialization deliberately in your project code.",
+            "    python_rng_state = random.getstate()",
+            f"    random.seed({seed})",
+            "    try:",
+            "        with torch.random.fork_rng(devices=[]):",
+            f"            torch.random.default_generator.manual_seed({seed})",
+            "            model = _build_model()",
+            "    finally:",
+            "        random.setstate(python_rng_state)",
             "    return model",
             "",
             "",
@@ -631,7 +731,10 @@ def generate_code(recipe: Any) -> str:
             f"    _component_{index} = _resolve({spec['factory']!r})(**{repr(spec['params'])})"
         )
     kwargs = [f"**{params}"] if params else []
-    kwargs.extend(f"{slot}=_component_{index}" for index, slot in enumerate(injections))
+    if injections:
+        entries = ", ".join(f"{slot!r}: _component_{index}" for index, slot in enumerate(injections))
+        lines.append(f"    _components = {{{entries}}}")
+        kwargs.append("**_components")
     call = f"_resolve({normalized['model']['factory']!r})({', '.join(kwargs)})"
     lines.append(f"    return {call}")
     lines.extend(["", "", "if __name__ == \"__main__\":", "    model = build_model()", "    print(type(model).__qualname__)", ""])

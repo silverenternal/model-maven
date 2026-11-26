@@ -3,8 +3,9 @@ use fs2::FileExt;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
+    ffi::CString,
     fs::{self, File, OpenOptions},
-    io::Write,
+    io::{self, Write},
     path::{Component, Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -189,6 +190,79 @@ fn write_json(path: &Path, value: &Value) -> Result<(), String> {
         .map_err(|error| error.to_string())
 }
 
+fn exchange_paths(left: &Path, right: &Path) -> io::Result<()> {
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::ffi::OsStrExt;
+
+        let left = CString::new(left.as_os_str().as_bytes())
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "源码路径包含 NUL。"))?;
+        let right = CString::new(right.as_os_str().as_bytes())
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "源码路径包含 NUL。"))?;
+        // Atomically return the destination that was displaced to the staged
+        // path, where its bytes can be compared with the approved base.
+        let result = unsafe {
+            libc::syscall(
+                libc::SYS_renameat2,
+                libc::AT_FDCWD,
+                left.as_ptr(),
+                libc::AT_FDCWD,
+                right.as_ptr(),
+                libc::RENAME_EXCHANGE,
+            )
+        };
+        if result == 0 {
+            Ok(())
+        } else {
+            Err(io::Error::last_os_error())
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        use std::os::unix::ffi::OsStrExt;
+
+        let left = CString::new(left.as_os_str().as_bytes())
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "源码路径包含 NUL。"))?;
+        let right = CString::new(right.as_os_str().as_bytes())
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "源码路径包含 NUL。"))?;
+        let result = unsafe {
+            libc::renameatx_np(
+                libc::AT_FDCWD,
+                left.as_ptr(),
+                libc::AT_FDCWD,
+                right.as_ptr(),
+                libc::RENAME_SWAP,
+            )
+        };
+        if result == 0 {
+            Ok(())
+        } else {
+            Err(io::Error::last_os_error())
+        }
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    {
+        let _ = (left, right);
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "当前平台没有可用的原子源码交换操作；源码未提交。",
+        ))
+    }
+}
+
+fn preserve_staged_file(mut temporary: tempfile::NamedTempFile, reason: &str) -> String {
+    temporary.disable_cleanup(true);
+    format!("{reason} 保留的冲突版本：{}", temporary.path().display())
+}
+
+fn regular_file_digest(path: &Path) -> Option<String> {
+    let metadata = fs::symlink_metadata(path).ok()?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return None;
+    }
+    fs::read(path).ok().map(|bytes| digest(&bytes))
+}
+
 fn write_source(
     root: &Path,
     relative: &str,
@@ -218,13 +292,73 @@ fn write_source(
     if digest(&latest) != expected {
         return Err(format!("源码在提交前再次变化，拒绝覆盖：{relative}"));
     }
-    temporary
-        .persist(&path)
-        .map_err(|error| error.error.to_string())?;
+    let expected_target = digest(contents);
+    exchange_paths(&path, temporary.path())
+        .map_err(|error| format!("无法安全比较并替换源码（未覆盖现有文件）：{error}"))?;
+
+    // Inspect the exact destination displaced by the atomic exchange. A
+    // pathname read before rename cannot close the external-writer race.
+    let displaced_metadata = match fs::symlink_metadata(temporary.path()) {
+        Ok(metadata) => metadata,
+        Err(error) => {
+            return Err(preserve_staged_file(
+                temporary,
+                &format!("无法核验被替换的源码：{error}。"),
+            ));
+        }
+    };
+    let displaced_digest = if displaced_metadata.file_type().is_symlink()
+        || !displaced_metadata.is_file()
+    {
+        None
+    } else {
+        match fs::read(temporary.path()) {
+            Ok(bytes) => Some(digest(&bytes)),
+            Err(error) => {
+                return Err(preserve_staged_file(
+                    temporary,
+                    &format!("无法核验被替换的源码：{error}。"),
+                ));
+            }
+        }
+    };
+    if displaced_digest.as_deref() != Some(expected) {
+        let current_digest = regular_file_digest(&path);
+        if current_digest.as_deref() == Some(expected_target.as_str())
+            && exchange_paths(&path, temporary.path()).is_ok()
+        {
+            // Preserve a newer external replacement if it raced with rollback.
+            let moved_digest = regular_file_digest(temporary.path());
+            if moved_digest.as_deref() != Some(expected_target.as_str()) {
+                if exchange_paths(&path, temporary.path()).is_err() {
+                    return Err(preserve_staged_file(
+                        temporary,
+                        "检测到并发源码修改；回滚时又有外部替换。",
+                    ));
+                }
+                return Err(preserve_staged_file(
+                    temporary,
+                    "检测到并发源码修改；已恢复外部文件，保留被替换版本。",
+                ));
+            }
+            return Err(format!("源码在原子替换时已变化，已恢复外部版本：{relative}"));
+        }
+        return Err(preserve_staged_file(
+            temporary,
+            &format!(
+                "源码在原子替换时已变化，目标摘要为 {}。",
+                displaced_digest.as_deref().unwrap_or("非普通文件")
+            ),
+        ));
+    }
     File::open(parent)
         .and_then(|directory| directory.sync_all())
         .map_err(|error| error.to_string())?;
-    Ok(digest(contents))
+    let (_, persisted) = checked_source(root, relative)?;
+    if digest(&persisted) != expected_target {
+        return Err(format!("源码在原子替换后再次变化：{relative}"));
+    }
+    Ok(expected_target)
 }
 
 fn default_state() -> Value {
@@ -511,6 +645,22 @@ fn apply_pending_files(root: &Path, store: &Path, pending: &Value) -> Result<(),
         write_source(root, relative, &item.expected, &item.contents)?;
         #[cfg(test)]
         pause_source_edit_test_failpoint("after_file_replacement");
+    }
+    // A later file replacement may race with an external edit to an earlier
+    // file. Recheck the whole batch at the commit boundary before recording
+    // the history transition as complete.
+    for file in pending["files"]
+        .as_array()
+        .ok_or("源码事务缺少文件列表。")?
+    {
+        let relative = file["path"].as_str().ok_or("源码事务文件缺少路径。")?;
+        let target = file["target_sha256"]
+            .as_str()
+            .ok_or("源码事务缺少目标指纹。")?;
+        let (_, persisted) = checked_source(root, relative)?;
+        if digest(&persisted) != target {
+            return Err(format!("源码事务在完成前再次变化：{relative}"));
+        }
     }
     #[cfg(test)]
     pause_source_edit_test_failpoint("after_all_file_replacements");

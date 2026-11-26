@@ -7,6 +7,7 @@ import ast
 import json
 from pathlib import Path
 import re
+import runpy
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -17,38 +18,15 @@ RUST_CAPABILITY = ROOT / "src/domain/capability.rs"
 RUST_RUNS = ROOT / "src/adapters/runs.rs"
 
 
-def literal_assignments(path: Path) -> dict[str, object]:
-    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-    values = {}
-    for node in tree.body:
-        if isinstance(node, ast.Assign):
-            for target in node.targets:
-                if isinstance(target, ast.Name):
-                    try:
-                        values[target.id] = ast.literal_eval(node.value)
-                    except (ValueError, TypeError):
-                        if (
-                            isinstance(node.value, ast.Call)
-                            and isinstance(node.value.func, ast.Name)
-                            and node.value.func.id == "frozenset"
-                            and len(node.value.args) == 1
-                        ):
-                            try:
-                                values[target.id] = frozenset(
-                                    ast.literal_eval(node.value.args[0])
-                                )
-                            except (ValueError, TypeError):
-                                continue
-    return values
-
-
 def fail(message: str) -> None:
     print(f"Compatibility contract violation: {message}", file=sys.stderr)
     raise SystemExit(1)
 
 
 contract = json.loads(CONTRACT.read_text(encoding="utf-8"))
-python = literal_assignments(PYTHON_PROTOCOL)
+# The worker extends its registry at module initialization. Inspect the actual
+# registry rather than the initial AST literals, which omit shared features.
+python = runpy.run_path(str(PYTHON_PROTOCOL))
 rust_source = RUST_CAPABILITY.read_text(encoding="utf-8")
 versions = {
     "worker_protocol": re.search(r"WORKER_PROTOCOL_VERSION: u32 = (\d+)", rust_source),
@@ -117,9 +95,9 @@ if dispatched_operations != set(operations):
 host_features = python.get("HOST_FEATURES")
 if not isinstance(host_features, frozenset):
     fail("Python host capability registry is missing")
-registered_features = frozenset(
-    feature for features in operations.values() for feature in features
-) | host_features
+registered_features = python.get("SUPPORTED_REQUIRED_FEATURES")
+if not isinstance(registered_features, frozenset):
+    fail("Python supported capability registry is missing")
 if registered_features != frozenset(contract.get("required_features", [])):
     fail("registered operation/host features differ from compatibility.json")
 if len(contract.get("required_features", [])) != len(set(contract.get("required_features", []))):
