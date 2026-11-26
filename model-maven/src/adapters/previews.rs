@@ -430,8 +430,7 @@ impl FilePreviewStore {
             .sync_all()
             .map_err(|error| error.to_string())?;
         temporary.persist(path).map_err(|error| error.to_string())?;
-        File::open(parent)
-            .and_then(|directory| directory.sync_all())
+        crate::adapters::sync_directory(&(parent))
             .map_err(|error| error.to_string())
     }
 

@@ -91,8 +91,7 @@ impl VariantFile {
         file.write_all(b"\n").map_err(|e| e.to_string())?;
         file.as_file().sync_all().map_err(|e| e.to_string())?;
         file.persist(&self.path).map_err(|e| e.to_string())?;
-        File::open(parent)
-            .and_then(|f| f.sync_all())
+        crate::adapters::sync_directory(&(parent))
             .map_err(|e| e.to_string())
     }
 
@@ -114,8 +113,7 @@ impl VariantFile {
             }
             Err(error) => return Err(error.error.to_string()),
         }
-        File::open(parent)
-            .and_then(|f| f.sync_all())
+        crate::adapters::sync_directory(&(parent))
             .map_err(|e| e.to_string())
     }
 }

@@ -49,6 +49,9 @@ with tempfile.TemporaryDirectory(prefix='mm-candidate-model-') as temp:
     call(['model', 'verify', '--model', 'graph_model:model', '--batch', 'real_batch:batch', '--loss', 'real_batch:loss'])
     trial = call(['try', '--model', 'graph_model:model', '--batch', 'real_batch:training_batch',
                   '--step', 'graph_model:step', '--training-mode', 'managed-step', '--steps', '2'])
+    training = call(['train', '--model', 'graph_model:model', '--batch', 'real_batch:training_batch',
+                     '--step', 'graph_model:step', '--training-mode', 'managed-step', '--steps', '2',
+                     '--checkpoint-every', '1'])
     runs = call(['runs', 'list'])
     trial_data = trial['data']
     if (trial_data.get('completed_steps') != 2 or trial_data.get('optimizer_updates') != 2
@@ -58,6 +61,12 @@ with tempfile.TemporaryDirectory(prefix='mm-candidate-model-') as temp:
     if not any(run.get('id') == trial_data.get('run_id') and run.get('status') == 'completed'
                for run in runs['data'].get('runs', [])):
         raise RuntimeError(f'completed trial not present in run history: {runs}')
+    training_data = training['data']
+    if training_data.get('completed_steps') != 2 or not training_data.get('checkpoint_saved'):
+        raise RuntimeError(f'training did not save a checkpoint: {training_data}')
+    if not any(run.get('id') == training_data.get('run_id') and run.get('status') == 'completed'
+               for run in runs['data'].get('runs', [])):
+        raise RuntimeError(f'completed training not present in run history: {runs}')
     print(json.dumps({'platform': platform.platform(), 'python': sys.version.split()[0],
                       'graph_sha256': digest, 'csv_sha256': hashlib.sha256(data.read_bytes()).hexdigest(),
                       'rows': 2, 'calls': len(calls), 'status': report['status'],
@@ -65,4 +74,6 @@ with tempfile.TemporaryDirectory(prefix='mm-candidate-model-') as temp:
                       'optimizer_updates': trial_data['optimizer_updates'],
                       'parameters_with_gradient': trial_data['parameters_with_gradient'],
                       'last_loss': trial_data['last_loss'], 'run_id': trial_data['run_id'],
-                      'run_record': 'completed'}, ensure_ascii=False))
+                      'run_record': 'completed', 'training_run': training_data['run_id'],
+                      'training_steps': training_data['completed_steps'],
+                      'checkpoint_saved': training_data['checkpoint_saved']}, ensure_ascii=False))

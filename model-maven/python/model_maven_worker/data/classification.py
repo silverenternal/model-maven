@@ -267,11 +267,12 @@ def save_project_exclusions(project_root, dataset_root, source_index, result_ind
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temporary, target)
-        directory_fd = os.open(metadata, os.O_RDONLY)
-        try:
-            os.fsync(directory_fd)
-        finally:
-            os.close(directory_fd)
+        if os.name == "posix":
+            directory_fd = os.open(metadata, os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
     finally:
         try:
             os.unlink(temporary)
@@ -298,11 +299,12 @@ def clear_project_exclusions(project_root):
     if stat.S_ISLNK(current.st_mode) or not stat.S_ISREG(current.st_mode):
         raise UserError("DATA_EXCLUSION_PROTOCOL_WRITE_FAILED", "既有数据排除协议不是普通文件；拒绝移除。")
     target.unlink()
-    directory_fd = os.open(metadata, os.O_RDONLY)
-    try:
-        os.fsync(directory_fd)
-    finally:
-        os.close(directory_fd)
+    if os.name == "posix":
+        directory_fd = os.open(metadata, os.O_RDONLY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
     return True
 
 

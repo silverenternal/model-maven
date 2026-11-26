@@ -81,9 +81,7 @@ impl FileRunStore {
         file.write_all(b"\n").map_err(|e| e.to_string())?;
         file.as_file().sync_all().map_err(|e| e.to_string())?;
         file.persist(path).map_err(|e| e.to_string())?;
-        File::open(parent)
-            .and_then(|directory| directory.sync_all())
-            .map_err(|e| e.to_string())
+        super::sync_directory(parent).map_err(|e| e.to_string())
     }
 
     fn append_event(directory: &Path, event: &Value) -> Result<(), String> {
@@ -772,9 +770,7 @@ impl RunRepository for FileRunStore {
             Self::atomic_json(&staging.join("run.json"), &metadata)?;
             Self::create_private_dir(&staging.join("checkpoints"))?;
             fs::rename(&staging, &directory).map_err(|e| e.to_string())?;
-            File::open(&runs)
-                .and_then(|directory| directory.sync_all())
-                .map_err(|e| e.to_string())
+            super::sync_directory(&runs).map_err(|e| e.to_string())
         })();
         if let Err(error) = initialized {
             let _ = fs::remove_dir_all(&staging);

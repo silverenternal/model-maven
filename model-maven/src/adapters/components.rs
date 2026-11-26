@@ -5,7 +5,7 @@ use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, BTreeSet},
-    fs::{self, DirBuilder, File, OpenOptions},
+    fs::{self, DirBuilder, OpenOptions},
     io::Write,
     path::{Path, PathBuf},
 };
@@ -1231,8 +1231,7 @@ impl ComponentResolver for FileComponentRegistry {
         temporary
             .persist_noclobber(&path)
             .map_err(|error| error.to_string())?;
-        File::open(parent)
-            .and_then(|directory| directory.sync_all())
+        crate::adapters::sync_directory(&(parent))
             .map_err(|error| error.to_string())?;
         self.inspect(root, &format!("{id}@{version}"))
     }
@@ -1458,8 +1457,7 @@ impl ComponentResolver for FileComponentRegistry {
         temporary
             .persist(&path)
             .map_err(|error| error.error.to_string())?;
-        File::open(parent)
-            .and_then(|directory| directory.sync_all())
+        crate::adapters::sync_directory(&(parent))
             .map_err(|error| error.to_string())?;
         Ok(())
     }
