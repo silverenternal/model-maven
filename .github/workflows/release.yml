@@ -1,109 +1,49 @@
-name: Release candidate
-on:
-  workflow_dispatch:
+name: Installed candidate model diagnostic
+on: workflow_dispatch
 permissions:
   contents: read
+  actions: read
 jobs:
-  binaries:
+  model:
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { platform: linux-x64, runner: ubuntu-24.04, arch: x64, exe: '' }
-          - { platform: linux-arm64, runner: ubuntu-24.04-arm, arch: arm64, exe: '' }
-          - { platform: darwin-x64, runner: macos-15-intel, arch: x64, exe: '' }
-          - { platform: darwin-arm64, runner: macos-15, arch: arm64, exe: '' }
-          - { platform: win32-x64, runner: windows-2025, arch: x64, exe: '.exe' }
-          - { platform: win32-arm64, runner: windows-11-arm, arch: arm64, exe: '.exe' }
+          - {runner: ubuntu-24.04, arch: x64, pyarch: x64}
+          - {runner: ubuntu-24.04-arm, arch: arm64, pyarch: arm64}
+          - {runner: macos-15-intel, arch: x64, pyarch: x64}
+          - {runner: macos-15, arch: arm64, pyarch: arm64}
+          - {runner: windows-2025, arch: x64, pyarch: x64}
+          - {runner: windows-11-arm, arch: arm64, pyarch: x64}
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 60
-    defaults:
-      run:
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          architecture: ${{ matrix.pyarch }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          architecture: ${{ matrix.arch }}
+      - name: Install CPU PyTorch for this isolated diagnostic
         shell: bash
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.88.0
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-          architecture: ${{ matrix.arch }}
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          architecture: ${{ matrix.arch }}
-      - name: Build binaries
-        env:
-          MODEL_MAVEN_BUILD_REVISION: ${{ github.sha }}
         run: |
-          cargo build --manifest-path model-maven/Cargo.toml --release --locked
-          cargo build --manifest-path model-maven-tui/Cargo.toml --release --locked
-      - name: Prepare Windows pseudo-console
-        if: runner.os == 'Windows'
-        run: python -m pip install pywinpty==3.1.2
-      - name: Prepare Neovim for Windows preview
-        if: runner.os == 'Windows'
-        run: python model-maven-tui/scripts/fetch_windows_neovim.py
-      - name: Exercise Windows live 3D preview
-        if: runner.os == 'Windows'
-        shell: pwsh
-        env:
-          MODEL_MAVEN_TUI_SOURCE: ${{ github.workspace }}/model-maven-tui
-          MODEL_MAVEN_TUI_BIN: ${{ github.workspace }}/model-maven-tui/target/release/m-model-tui.exe
-          MODEL_MAVEN_REDUCE_MOTION: '1'
-        run: python model-maven-tui/scripts/verify_live_preview_windows.py
-      - name: Package native binaries with notices
-        run: |
-          target=$(rustc -vV | sed -n 's/^host: //p')
-          python model-maven/scripts/collect_rust_notices.py --target "$target" --cli-source model-maven --tui-source model-maven-tui --output-dir "$RUNNER_TEMP/notices"
-          python model-maven/scripts/prepare_npm_bundle.py --kind platform --platform '${{ matrix.platform }}' --cli 'model-maven/target/release/m-model${{ matrix.exe }}' --tui 'model-maven-tui/target/release/m-model-tui${{ matrix.exe }}' --third-party-notices "$RUNNER_TEMP/notices" --name '@silverenternal/model-maven' --license MIT --output-dir release
-      - uses: actions/upload-artifact@v4
-        with:
-          name: binaries-${{ matrix.platform }}
-          path: release/*
-          if-no-files-found: error
-  launcher:
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-      - run: python model-maven/scripts/prepare_npm_bundle.py --kind launcher --name '@silverenternal/model-maven' --license MIT --output-dir release
-      - uses: actions/upload-artifact@v4
-        with:
-          name: launcher
-          path: release/*
-          if-no-files-found: error
-  install-test:
-    needs: [binaries, launcher]
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { runner: ubuntu-24.04, arch: x64 }
-          - { runner: ubuntu-24.04-arm, arch: arm64 }
-          - { runner: macos-15-intel, arch: x64 }
-          - { runner: macos-15, arch: arm64 }
-          - { runner: windows-2025, arch: x64 }
-          - { runner: windows-11-arm, arch: arm64 }
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-          architecture: ${{ matrix.arch }}
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          architecture: ${{ matrix.arch }}
+          python -m pip install 'numpy<2'
+          if [[ '${{ matrix.runner }}' == 'ubuntu-24.04' ]]; then
+            python -m pip install torch==2.2.2 --index-url https://download.pytorch.org/whl/cpu
+          else
+            python -m pip install torch==2.2.2
+          fi
       - uses: actions/download-artifact@v4
         with:
           pattern: '*'
           path: release
           merge-multiple: true
-      - run: python model-maven/scripts/verify_npm_platforms.py release
+          run-id: 45837704187
+          github-token: ${{ github.token }}
+      - name: Install candidate and run generated graph with real CSV
+        env:
+          MM_TARGET_ARCH: ${{ matrix.arch }}
+        run: python model-maven/scripts/verify_candidate_npm_model.py release
