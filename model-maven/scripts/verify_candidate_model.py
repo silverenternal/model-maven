@@ -27,7 +27,7 @@ with tempfile.TemporaryDirectory(prefix='mm-candidate-model-') as temp:
         raise RuntimeError('expected at least two CSV rows')
     (root / 'batch.csv').write_bytes(data.read_bytes())
     env['MM_CANDIDATE_CSV'] = str(root / 'batch.csv')
-    (root / 'real_batch.py').write_text('''import csv\nimport os\nfrom pathlib import Path\nimport torch\n\ndef tensor(columns):\n    with Path(os.environ["MM_CANDIDATE_CSV"]).open(newline="", encoding="utf-8") as source:\n        rows = list(csv.DictReader(source))[:2]\n    return torch.tensor([[float(row[c]) for c in columns] for row in rows], dtype=torch.float32)\n\ndef batch():\n    return {"args": [], "kwargs": {"input": tensor(["a", "b"]), "input_2": tensor(["c", "d"])}}\n\ndef training_batch():\n    result = batch()\n    result["loss_inputs"] = {"targets": {"output": tensor(["target", "target2"])}}\n    return result\n\ndef loss(outputs, batch):\n    target = tensor(["target", "target2"])\n    return torch.nn.functional.mse_loss(outputs["output"], target) + torch.nn.functional.l1_loss(outputs["output_copy"], target)\n''', encoding='utf-8')
+    (root / 'real_batch.py').write_text('''import csv\nimport os\nfrom pathlib import Path\nimport torch\n\ndef tensor(columns):\n    with Path(os.environ["MM_CANDIDATE_CSV"]).open(newline="", encoding="utf-8") as source:\n        rows = list(csv.DictReader(source))[:2]\n    return torch.tensor([[float(row[c]) for c in columns] for row in rows], dtype=torch.float32)\n\ndef batch():\n    return {"args": [], "kwargs": {"input": tensor(["a", "b"]), "input_2": tensor(["c", "d"])}}\n\ndef training_batch():\n    result = batch()\n    result["loss_inputs"] = {"targets": {"output": tensor(["target", "target2"])}}\n    return result\n\ntraining_batch.MODEL_MAVEN_STATELESS = True\n\ndef loss(outputs, batch):\n    target = tensor(["target", "target2"])\n    return torch.nn.functional.mse_loss(outputs["output"], target) + torch.nn.functional.l1_loss(outputs["output_copy"], target)\n''', encoding='utf-8')
     def call(args):
         completed = subprocess.run(launcher + ['--json', '--python', sys.executable] + args,
                                    cwd=root, env=env, text=True, encoding='utf-8',
@@ -41,7 +41,7 @@ with tempfile.TemporaryDirectory(prefix='mm-candidate-model-') as temp:
         return report
     digest = hashlib.sha256(graph.read_bytes()).hexdigest()
     generated = call(['graph-generate', '--graph', str(graph), '--if-graph', digest])
-    (root / 'graph_model.py').write_text(generated['data']['source'], encoding='utf-8')
+    (root / 'graph_model.py').write_text(generated['data']['source'] + '\nstep.MODEL_MAVEN_STATELESS = True\n', encoding='utf-8')
     report = call(['model', 'probe', '--model', 'graph_model:model', '--batch', 'real_batch:batch'])
     calls = report['data'].get('calls', [])
     if not calls or report['data'].get('summary', {}).get('status') == 'failure':
@@ -52,6 +52,8 @@ with tempfile.TemporaryDirectory(prefix='mm-candidate-model-') as temp:
     training = call(['train', '--model', 'graph_model:model', '--batch', 'real_batch:training_batch',
                      '--step', 'graph_model:step', '--training-mode', 'managed-step', '--steps', '2',
                      '--checkpoint-every', '1'])
+    resumed = call(['train', '--resume', training['data']['run_id'], '--additional-steps', '1',
+                    '--checkpoint-every', '1'])
     runs = call(['runs', 'list'])
     trial_data = trial['data']
     if (trial_data.get('completed_steps') != 2 or trial_data.get('optimizer_updates') != 2
@@ -64,6 +66,8 @@ with tempfile.TemporaryDirectory(prefix='mm-candidate-model-') as temp:
     training_data = training['data']
     if training_data.get('completed_steps') != 2 or not training_data.get('checkpoint_saved'):
         raise RuntimeError(f'training did not save a checkpoint: {training_data}')
+    if resumed['data'].get('completed_steps') != 3 or not resumed['data'].get('checkpoint_saved'):
+        raise RuntimeError(f'checkpoint did not resume for one additional step: {resumed}')
     if not any(run.get('id') == training_data.get('run_id') and run.get('status') == 'completed'
                for run in runs['data'].get('runs', [])):
         raise RuntimeError(f'completed training not present in run history: {runs}')
@@ -76,4 +80,5 @@ with tempfile.TemporaryDirectory(prefix='mm-candidate-model-') as temp:
                       'last_loss': trial_data['last_loss'], 'run_id': trial_data['run_id'],
                       'run_record': 'completed', 'training_run': training_data['run_id'],
                       'training_steps': training_data['completed_steps'],
-                      'checkpoint_saved': training_data['checkpoint_saved']}, ensure_ascii=False))
+                      'checkpoint_saved': training_data['checkpoint_saved'],
+                      'resumed_steps': resumed['data']['completed_steps']}, ensure_ascii=False))
