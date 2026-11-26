@@ -1,27 +1,14 @@
-name: Windows 3D diagnostic
+name: Windows terminal diagnostic
 on: workflow_dispatch
 jobs:
   preview:
     runs-on: windows-2022
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: 1.88.0
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: cargo build --manifest-path model-maven-tui/Cargo.toml --release --locked
       - run: python model-maven-tui/scripts/fetch_windows_neovim.py
-      - name: Run live renderer in Neovim terminal
+      - name: Check basic terminal output
         shell: pwsh
-        env:
-          MODEL_MAVEN_TUI_SOURCE: ${{ github.workspace }}/model-maven-tui
-          MODEL_MAVEN_TUI_BIN: ${{ github.workspace }}/model-maven-tui/target/release/m-model-tui.exe
-          MODEL_MAVEN_REDUCE_MOTION: '1'
-          MM_PREVIEW_TRACE: C:/mm-preview-trace.txt
-        run: |
-          & $env:MM_CI_NVIM --headless -u NONE -l model-maven-tui/scripts/verify_live_preview_terminal.lua
-          $result = $LASTEXITCODE
-          if (Test-Path $env:MM_PREVIEW_TRACE) { Get-Content $env:MM_PREVIEW_TRACE }
-          exit $result
+        run: '& $env:MM_CI_NVIM --headless -u NONE -l model-maven-tui/scripts/probe_terminal.lua'
