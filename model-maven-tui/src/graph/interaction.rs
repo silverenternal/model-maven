@@ -1532,8 +1532,11 @@ fn run_inner(
     handoff: &mut crate::welcome::Handoff,
     live_path: Option<&std::path::Path>,
 ) -> io::Result<Exit> {
+    #[cfg(windows)] crate::debug_trace("terminal open start");
     let terminal = menu::Terminal::open()?;
+    #[cfg(windows)] crate::debug_trace("screen start");
     handoff.enter_screen()?;
+    #[cfg(windows)] crate::debug_trace("screen ready");
     let _mouse = MouseMode;
     let color = layout::color_enabled(io::stderr().is_terminal());
     let query_background = color
@@ -1555,7 +1558,9 @@ fn run_inner(
     } else {
         RenderMode::Cells { color }
     };
+    #[cfg(windows)] crate::debug_trace("size start");
     let mut size = (layout::viewport_width(), menu::rows());
+    #[cfg(windows)] crate::debug_trace(&format!("size ready {size:?}"));
     // Live inspection has no offline details panel; graph shortcuts must be
     // available immediately instead of focusing a panel that cannot receive Tab.
     let mut details_focused = offline.is_some();
@@ -1566,6 +1571,7 @@ fn run_inner(
         editor.is_some(),
         details_focused,
     );
+    #[cfg(windows)] crate::debug_trace("scene start");
     let mut scene = make_scene(
         view,
         offline.as_deref(),
@@ -1575,6 +1581,7 @@ fn run_inner(
         0.0,
         locale,
     );
+    #[cfg(windows)] crate::debug_trace("scene ready");
     let mut dirty = true;
     let mut panel_dirty = false;
     let mut pointer = Pointer::default();

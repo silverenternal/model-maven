@@ -84,11 +84,14 @@ pub(crate) struct Terminal {
 impl Terminal {
     pub(crate) fn open() -> io::Result<Self> {
         use crossterm::event::{EnableFocusChange, EnableMouseCapture};
+        crate::debug_trace("raw mode start");
         crossterm::terminal::enable_raw_mode()?;
+        crate::debug_trace("raw mode ready");
         if let Err(error) = crossterm::execute!(io::stderr(), EnableMouseCapture, EnableFocusChange) {
             let _ = crossterm::terminal::disable_raw_mode();
             return Err(error);
         }
+        crate::debug_trace("capture ready");
         Ok(Self { pending: std::cell::RefCell::new(std::collections::VecDeque::new()) })
     }
 

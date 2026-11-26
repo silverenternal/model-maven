@@ -15,7 +15,9 @@ pub(super) fn load(path: &std::path::Path) -> io::Result<(ModelView<'static>, Op
 
 #[cfg(any(unix, windows))]
 pub(crate) fn interactive(path: &std::path::Path, locale: crate::terminal::locale::Locale) -> io::Result<()> {
+    #[cfg(windows)] crate::debug_trace("preview load start");
     let (mut view, _) = load(path)?;
+    #[cfg(windows)] crate::debug_trace("preview load complete");
     super::interaction::show_live_preview(&mut view, path, locale)
 }
 
