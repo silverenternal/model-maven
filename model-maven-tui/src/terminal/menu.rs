@@ -84,14 +84,11 @@ pub(crate) struct Terminal {
 impl Terminal {
     pub(crate) fn open() -> io::Result<Self> {
         use crossterm::event::{EnableFocusChange, EnableMouseCapture};
-        crate::debug_trace("raw mode start");
         crossterm::terminal::enable_raw_mode()?;
-        crate::debug_trace("raw mode ready");
-        if let Err(error) = crossterm::execute!(io::stdout(), EnableMouseCapture, EnableFocusChange) {
+        if let Err(error) = crossterm::execute!(io::stderr(), EnableMouseCapture, EnableFocusChange) {
             let _ = crossterm::terminal::disable_raw_mode();
             return Err(error);
         }
-        crate::debug_trace("capture ready");
         Ok(Self { pending: std::cell::RefCell::new(std::collections::VecDeque::new()) })
     }
 
@@ -137,7 +134,7 @@ impl Terminal {
 impl Drop for Terminal {
     fn drop(&mut self) {
         use crossterm::event::{DisableFocusChange, DisableMouseCapture};
-        let _ = crossterm::execute!(io::stdout(), DisableFocusChange, DisableMouseCapture);
+        let _ = crossterm::execute!(io::stderr(), DisableFocusChange, DisableMouseCapture);
         let _ = crossterm::terminal::disable_raw_mode();
     }
 }
@@ -151,7 +148,7 @@ pub(crate) struct Screen {
 impl Screen {
     pub(crate) fn open() -> io::Result<Self> {
         let screen = Self { active: true };
-        let mut output = io::stdout().lock();
+        let mut output = io::stderr().lock();
         output.write_all(b"\x1b[?1049h\x1b[?25l")?;
         output.flush()?;
         Ok(screen)
@@ -165,7 +162,7 @@ impl Screen {
 impl Drop for Screen {
     fn drop(&mut self) {
         if self.active {
-            let mut output = io::stdout().lock();
+            let mut output = io::stderr().lock();
             let _ = write!(output, "{RESTORE_SCREEN}\x1b[?2026l");
             let _ = output.flush();
         }
@@ -201,7 +198,7 @@ where
     let terminal = Terminal::open()?;
     let _interrupt = interrupt::Guard::install();
     let _screen = Screen::open()?;
-    let mut output = io::stdout().lock();
+    let mut output = io::stderr().lock();
     let mut selected = initial.min(keys.len().saturating_sub(1));
     let mut last_frame = String::new();
     loop {
@@ -278,7 +275,7 @@ where
     let terminal = Terminal::open()?;
     let _interrupt = interrupt::Guard::install();
     let _screen = Screen::open()?;
-    let mut output = io::stdout().lock();
+    let mut output = io::stderr().lock();
     let mut value = initial.to_owned();
     let mut cursor = value.len();
     let mut pending = Vec::new();
@@ -287,8 +284,8 @@ where
     struct PasteMode;
     impl Drop for PasteMode {
         fn drop(&mut self) {
-            let _ = io::stdout().write_all(b"\x1b[?2004l");
-            let _ = io::stdout().flush();
+            let _ = io::stderr().write_all(b"\x1b[?2004l");
+            let _ = io::stderr().flush();
         }
     }
     output.write_all(b"\x1b[?2004h")?;
@@ -386,7 +383,7 @@ where
 
 pub(crate) fn supported() -> bool {
     io::stdin().is_terminal()
-        && io::stdout().is_terminal()
+        && io::stderr().is_terminal()
         && std::env::var("TERM")
             .is_ok_and(|term| !term.is_empty() && !term.eq_ignore_ascii_case("dumb"))
 }
@@ -401,7 +398,7 @@ pub(crate) fn rows() -> usize {
         ws_ypixel: 0,
     };
     // SAFETY: size is writable and stderr refers to the terminal.
-    if unsafe { libc::ioctl(io::stdout().as_raw_fd(), libc::TIOCGWINSZ, &mut size) } == 0
+    if unsafe { libc::ioctl(io::stderr().as_raw_fd(), libc::TIOCGWINSZ, &mut size) } == 0
         && size.ws_row > 0
     {
         usize::from(size.ws_row)

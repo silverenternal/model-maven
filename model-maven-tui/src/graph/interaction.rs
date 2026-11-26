@@ -637,7 +637,7 @@ struct MouseMode;
 
 impl Drop for MouseMode {
     fn drop(&mut self) {
-        let mut output = io::stdout().lock();
+        let mut output = io::stderr().lock();
         let _ = output.write_all(b"\x1b[?1003l\x1b[?1006l\x1b[?1004l");
         let _ = output.flush();
     }
@@ -1532,13 +1532,10 @@ fn run_inner(
     handoff: &mut crate::welcome::Handoff,
     live_path: Option<&std::path::Path>,
 ) -> io::Result<Exit> {
-    #[cfg(windows)] crate::debug_trace("terminal open start");
     let terminal = menu::Terminal::open()?;
-    #[cfg(windows)] crate::debug_trace("screen start");
     handoff.enter_screen()?;
-    #[cfg(windows)] crate::debug_trace("screen ready");
     let _mouse = MouseMode;
-    let color = layout::color_enabled(io::stdout().is_terminal());
+    let color = layout::color_enabled(io::stderr().is_terminal());
     let query_background = color
         && Background::override_from_env().is_none()
         && (matches!(
@@ -1546,7 +1543,7 @@ fn run_inner(
             Ok("xterm-ghostty" | "xterm-kitty")
         ) || std::env::var("TERM_PROGRAM").as_deref() == Ok("ghostty"));
     let mut display = pixels::supported(color).then(pixels::Display::default);
-    let mut output = io::stdout().lock();
+    let mut output = io::stderr().lock();
     output.write_all(b"\x1b[?1006h\x1b[?1003h\x1b[?1004h")?;
     if query_background {
         output.write_all(b"\x1b]11;?\x1b\\")?;
@@ -1558,9 +1555,7 @@ fn run_inner(
     } else {
         RenderMode::Cells { color }
     };
-    #[cfg(windows)] crate::debug_trace("size start");
     let mut size = (layout::viewport_width(), menu::rows());
-    #[cfg(windows)] crate::debug_trace(&format!("size ready {size:?}"));
     // Live inspection has no offline details panel; graph shortcuts must be
     // available immediately instead of focusing a panel that cannot receive Tab.
     let mut details_focused = offline.is_some();
@@ -1571,7 +1566,6 @@ fn run_inner(
         editor.is_some(),
         details_focused,
     );
-    #[cfg(windows)] crate::debug_trace("scene start");
     let mut scene = make_scene(
         view,
         offline.as_deref(),
@@ -1581,7 +1575,6 @@ fn run_inner(
         0.0,
         locale,
     );
-    #[cfg(windows)] crate::debug_trace("scene ready");
     let mut dirty = true;
     let mut panel_dirty = false;
     let mut pointer = Pointer::default();
@@ -1818,7 +1811,6 @@ fn run_inner(
                 panel_dirty = false;
             }
         } else if dirty || tick || marker_changed || refined {
-            #[cfg(windows)] crate::debug_trace("cell frame start");
             let frame = frame(
                 view,
                 &scene,
@@ -1834,7 +1826,6 @@ fn run_inner(
                 locale,
                 render_mode,
             );
-            #[cfg(windows)] crate::debug_trace("cell frame ready");
             let mut frame = frame;
             toolbar.decorate(&mut frame, view, scene.width, locale);
             if dirty {
@@ -1842,7 +1833,6 @@ fn run_inner(
                 let screen = frame.strip_suffix('\n').unwrap_or(&frame);
                 write!(output, "\x1b[?2026h\x1b[H\x1b[2J{screen}\x1b[?2026l")?;
                 output.flush()?;
-                #[cfg(windows)] crate::debug_trace("cell frame flushed");
             } else {
                 repaint_moving_rows(&mut output, &chrome, &frame)?;
             }

@@ -157,7 +157,7 @@ fn system_terminal_width() -> Option<usize> {
         CONSOLE_SCREEN_BUFFER_INFO, GetConsoleScreenBufferInfo,
     };
 
-    let output = std::io::stdout();
+    let output = std::io::stderr();
     let mut info = std::mem::MaybeUninit::<CONSOLE_SCREEN_BUFFER_INFO>::uninit();
     // SAFETY: stderr owns the live handle and the call initializes info on success.
     if unsafe { GetConsoleScreenBufferInfo(output.as_raw_handle(), info.as_mut_ptr()) } == 0 {

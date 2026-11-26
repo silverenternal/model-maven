@@ -110,19 +110,8 @@ enum DiagnosisCase {
     SnapshotMissing,
 }
 
-#[cfg(windows)]
-pub(crate) fn debug_trace(message: &str) {
-    use std::io::Write;
-    if let Ok(path) = std::env::var("MM_PREVIEW_TRACE") {
-        if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
-            let _ = writeln!(file, "{message}");
-        }
-    }
-}
 fn main() -> ExitCode {
-    #[cfg(windows)] debug_trace("main");
     let options = Options::parse();
-    #[cfg(windows)] debug_trace("options parsed");
     if let Some(path) = options.live_model_preview.as_deref() {
         #[cfg(any(unix, windows))]
         return match graph::preview::interactive(path, options.lang.map_or_else(workbench::preferred_locale, Locale::from)) {
