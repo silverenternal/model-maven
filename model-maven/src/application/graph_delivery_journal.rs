@@ -105,7 +105,7 @@ impl DeliveryJournalStore {
         let mut file = tempfile::NamedTempFile::new_in(&self.directory).map_err(|error| error.to_string())?;
         file.write_all(&bytes).and_then(|_| file.as_file().sync_all()).map_err(|error| error.to_string())?;
         file.persist_noclobber(self.path()).map_err(|error| error.to_string())?;
-        File::open(&self.directory).and_then(|directory| directory.sync_all()).map_err(|error| error.to_string())?;
+        crate::adapters::sync_directory(&self.directory).map_err(|error| error.to_string())?;
         Ok(())
     }
     pub(super) fn archive(&self, journal: &DeliveryJournal) -> Result<String, String> {
@@ -121,7 +121,7 @@ impl DeliveryJournalStore {
         let mut file = tempfile::NamedTempFile::new_in(&self.directory).map_err(|error| error.to_string())?;
         file.write_all(&bytes).and_then(|_| file.as_file().sync_all()).map_err(|error| error.to_string())?;
         file.persist_noclobber(self.directory.join(&name)).map_err(|error| error.to_string())?;
-        File::open(&self.directory).and_then(|directory| directory.sync_all()).map_err(|error| error.to_string())?;
+        crate::adapters::sync_directory(&self.directory).map_err(|error| error.to_string())?;
         self.finish(journal).map_err(|error| format!("已保存归档 {name}，但待恢复记录未清除：{error}"))?;
         Ok(format!(".model-maven/{name}"))
     }
@@ -131,7 +131,7 @@ impl DeliveryJournalStore {
             return Err("图交付记录已变化；保留记录。".into());
         }
         fs::remove_file(self.path()).map_err(|error| error.to_string())?;
-        File::open(&self.directory).and_then(|directory| directory.sync_all()).map_err(|error| error.to_string())?;
+        crate::adapters::sync_directory(&self.directory).map_err(|error| error.to_string())?;
         Ok(())
     }
 }

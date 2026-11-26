@@ -185,8 +185,7 @@ fn write_json(path: &Path, value: &Value) -> Result<(), String> {
     temporary
         .persist(path)
         .map_err(|error| error.error.to_string())?;
-    File::open(parent)
-        .and_then(|directory| directory.sync_all())
+    crate::adapters::sync_directory(parent)
         .map_err(|error| error.to_string())
 }
 
@@ -351,8 +350,7 @@ fn write_source(
             ),
         ));
     }
-    File::open(parent)
-        .and_then(|directory| directory.sync_all())
+    crate::adapters::sync_directory(parent)
         .map_err(|error| error.to_string())?;
     let (_, persisted) = checked_source(root, relative)?;
     if digest(&persisted) != expected_target {
@@ -463,8 +461,7 @@ fn complete_transition(store: &Path, pending: &Value) -> Result<(), String> {
     #[cfg(test)]
     pause_source_edit_test_failpoint("after_history_state_write");
     fs::remove_file(pending_path(store)).map_err(|error| error.to_string())?;
-    File::open(store)
-        .and_then(|directory| directory.sync_all())
+    crate::adapters::sync_directory(store)
         .map_err(|error| error.to_string())
 }
 
@@ -894,11 +891,9 @@ impl SourceEditRepository for FileSourceEditStore {
             }));
             paths.push(relative_path.clone());
         }
-        File::open(&transaction_dir)
-            .and_then(|directory| directory.sync_all())
+        crate::adapters::sync_directory(&transaction_dir)
             .map_err(|error| error.to_string())?;
-        File::open(store.join("transactions"))
-            .and_then(|directory| directory.sync_all())
+        crate::adapters::sync_directory(&store.join("transactions"))
             .map_err(|error| error.to_string())?;
         let before_revision = files_digest(&file_records, "before")?;
         let after_revision = files_digest(&file_records, "after")?;

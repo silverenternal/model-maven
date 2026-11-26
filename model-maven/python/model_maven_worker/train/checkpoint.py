@@ -122,11 +122,12 @@ def atomic_json_file(path, value):
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temporary, path)
-        descriptor = os.open(path.parent, os.O_RDONLY)
-        try:
-            os.fsync(descriptor)
-        finally:
-            os.close(descriptor)
+        if os.name == "posix":
+            descriptor = os.open(path.parent, os.O_RDONLY)
+            try:
+                os.fsync(descriptor)
+            finally:
+                os.close(descriptor)
     finally:
         if temporary and os.path.exists(temporary):
             os.unlink(temporary)
@@ -188,11 +189,12 @@ def save_training_checkpoint(torch_module, directory, payload):
             os.fsync(stream.fileno())
         os.replace(temporary, target)
         temporary = None
-        directory_fd = os.open(directory, os.O_RDONLY)
-        try:
-            os.fsync(directory_fd)
-        finally:
-            os.close(directory_fd)
+        if os.name == "posix":
+            directory_fd = os.open(directory, os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
         checksum = _sha256_file(target)
         manifest = {
             "schema_version": 1,

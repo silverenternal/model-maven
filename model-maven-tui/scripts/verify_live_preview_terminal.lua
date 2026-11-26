@@ -43,8 +43,15 @@ doc.nodes[#doc.nodes+1] = {id='extra',kind='input',inputs={},outputs={'value'}}
 assert(view.update(doc,'draft'), 'cannot update preview')
 assert(vim.wait(5000,function() return contents():find('/3',1,true) ~= nil end,50), 'draft update was not rendered: '..contents())
 assert(camera() == after_mouse, 'draft update reset camera')
+local zoom_before = assert(contents():match('(%d+)%%'))
+vim.api.nvim_chan_send(view.job, '+')
+assert(vim.wait(5000, function()
+  local zoom = contents():match('(%d+)%%')
+  return zoom and zoom ~= zoom_before
+end, 50), 'zoom did not change: '..contents())
+local zoom_after = assert(contents():match('(%d+)%%'))
 print('live 3D: keyboard orbit '..before..' -> '..after_key..'; mouse -> '..after_mouse..'; draft has 3 nodes')
 state.closed = true
 view.close()
 if not vim.env.MODEL_MAVEN_PROBE_EMBEDDED then vim.cmd('qa!') end
-return {before=before, after_key=after_key, after_mouse=after_mouse, nodes=#doc.nodes}
+return {before=before, after_key=after_key, after_mouse=after_mouse, nodes=#doc.nodes, zoom_before=zoom_before, zoom_after=zoom_after}

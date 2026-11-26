@@ -7,7 +7,7 @@ use serde_json::Value;
 #[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
 use std::{
-    fs::{self, File, OpenOptions},
+    fs::{self, OpenOptions},
     io::Write,
     path::{Path, PathBuf},
 };
@@ -242,8 +242,7 @@ fn write_json_atomic(path: &Path, value: &Value) -> Result<(), String> {
     temporary
         .persist(path)
         .map_err(|error| error.error.to_string())?;
-    File::open(directory)
-        .and_then(|directory| directory.sync_all())
+    crate::adapters::sync_directory(directory)
         .map_err(|error| error.to_string())
 }
 
@@ -274,8 +273,7 @@ impl ProjectConfigStore for FileProjectConfigStore {
             }
             Err(error) => return Err(error.error.to_string()),
         }
-        File::open(&directory)
-            .and_then(|directory| directory.sync_all())
+        crate::adapters::sync_directory(&directory)
             .map_err(|error| error.to_string())?;
         Ok(path)
     }
@@ -339,8 +337,7 @@ impl ProjectConfigStore for FileProjectConfigStore {
         temporary
             .persist(&path)
             .map_err(|error| error.to_string())?;
-        File::open(&directory)
-            .and_then(|directory| directory.sync_all())
+        crate::adapters::sync_directory(&directory)
             .map_err(|error| error.to_string())?;
         Ok(path)
     }

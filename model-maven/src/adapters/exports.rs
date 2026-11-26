@@ -1498,8 +1498,7 @@ impl ArtifactExporter for FileArtifactExporter {
             &stage.join("README.md"),
             export_readme(&manifest).as_bytes(),
         )?;
-        File::open(stage)
-            .and_then(|directory| directory.sync_all())
+        crate::adapters::sync_directory(stage)
             .map_err(|error| error.to_string())?;
 
         let backup = if target.exists() {
@@ -1532,8 +1531,7 @@ impl ArtifactExporter for FileArtifactExporter {
             }
             return Err(format!("无法提交导出目录：{error}"));
         }
-        File::open(&parent)
-            .and_then(|directory| directory.sync_all())
+        crate::adapters::sync_directory(&parent)
             .map_err(|error| error.to_string())?;
         drop(staging);
 
