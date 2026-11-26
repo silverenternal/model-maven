@@ -6,6 +6,13 @@ use std::{
 #[cfg(unix)]
 use std::os::fd::AsRawFd;
 
+// Neovim's Windows terminal connects the child console to stdout; stderr may
+// be inherited from the editor's parent and must not carry the visual frame.
+#[cfg(windows)]
+pub(crate) fn output() -> io::Stdout { io::stdout() }
+#[cfg(not(windows))]
+pub(crate) fn output() -> io::Stderr { io::stderr() }
+
 #[cfg(unix)]
 pub(crate) struct Terminal {
     fd: libc::c_int,
@@ -85,7 +92,7 @@ impl Terminal {
     pub(crate) fn open() -> io::Result<Self> {
         use crossterm::event::{EnableFocusChange, EnableMouseCapture};
         crossterm::terminal::enable_raw_mode()?;
-        if let Err(error) = crossterm::execute!(io::stderr(), EnableMouseCapture, EnableFocusChange) {
+        if let Err(error) = crossterm::execute!(output(), EnableMouseCapture, EnableFocusChange) {
             let _ = crossterm::terminal::disable_raw_mode();
             return Err(error);
         }
@@ -134,7 +141,7 @@ impl Terminal {
 impl Drop for Terminal {
     fn drop(&mut self) {
         use crossterm::event::{DisableFocusChange, DisableMouseCapture};
-        let _ = crossterm::execute!(io::stderr(), DisableFocusChange, DisableMouseCapture);
+        let _ = crossterm::execute!(output(), DisableFocusChange, DisableMouseCapture);
         let _ = crossterm::terminal::disable_raw_mode();
     }
 }
@@ -148,7 +155,7 @@ pub(crate) struct Screen {
 impl Screen {
     pub(crate) fn open() -> io::Result<Self> {
         let screen = Self { active: true };
-        let mut output = io::stderr().lock();
+        let mut output = output().lock();
         output.write_all(b"\x1b[?1049h\x1b[?25l")?;
         output.flush()?;
         Ok(screen)
@@ -162,7 +169,7 @@ impl Screen {
 impl Drop for Screen {
     fn drop(&mut self) {
         if self.active {
-            let mut output = io::stderr().lock();
+            let mut output = output().lock();
             let _ = write!(output, "{RESTORE_SCREEN}\x1b[?2026l");
             let _ = output.flush();
         }
