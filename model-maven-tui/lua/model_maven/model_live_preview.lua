@@ -11,10 +11,10 @@ function M.open(state, document, source, renderer)
   local view = {live=true, dir=dir, path=path, document_key=nil}
   -- Give the model room to be inspected on large terminals as well as small
   -- ones; an absolute size ceiling wasted most of an ultrawide display.
-  local height = clamp(math.floor(vim.o.lines * .72), 12, vim.o.lines - 4)
+  local height = clamp(math.floor(vim.o.lines * .80), 12, vim.o.lines - 4)
   -- Leave enough horizontal room for an operable graph editor on ordinary
   -- terminals. Users can still enlarge or move the window deliberately.
-  local width = clamp(math.floor(vim.o.columns * .53), 24, vim.o.columns - 46)
+  local width = clamp(math.floor(vim.o.columns * .62), 24, vim.o.columns - 46)
   view.row, view.col, view.width, view.height = 1, math.max(1, vim.o.columns - width - 2), width, height
   local function write(doc, label)
     local ok, raw = pcall(vim.json.encode, {document=doc, source=label, locale=require('model_maven.locale').current()})
@@ -160,7 +160,8 @@ function M.open(state, document, source, renderer)
     close()
   end})
   local success, job = pcall(api.nvim_win_call, bwin, function()
-    return vim.fn.jobstart({renderer, '--live-model-preview', path, '--lang', require('model_maven.locale').current()}, {term=true, on_exit=function(_, code)
+    local command = {renderer, '--live-model-preview', path, '--lang', require('model_maven.locale').current()}
+    local options = {on_exit=function(_, code)
       vim.schedule(function()
         if not view.closed and state.model_preview == view then
           state.model_preview=nil; close()
@@ -174,7 +175,14 @@ function M.open(state, document, source, renderer)
           end
         end
       end)
-    end})
+    end}
+    -- Neovim 0.10 silently ignores jobstart's newer `term` option. Use its
+    -- terminal API there, otherwise the renderer runs with no visible buffer.
+    if vim.fn.has('nvim-0.11') == 1 then
+      options.term = true
+      return vim.fn.jobstart(command, options)
+    end
+    return vim.fn.termopen(command, options)
   end)
   if not success or type(job) ~= 'number' or job <= 0 then close(); return nil end
   view.job=job

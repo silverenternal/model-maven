@@ -37,6 +37,9 @@ jobs:
         run: |
           cargo build --manifest-path model-maven/Cargo.toml --release --locked
           cargo build --manifest-path model-maven-tui/Cargo.toml --release --locked
+      - name: Prepare Windows pseudo-console
+        if: runner.os == 'Windows'
+        run: python -m pip install pywinpty==3.1.2
       - name: Prepare Neovim for Windows preview
         if: runner.os == 'Windows'
         run: python model-maven-tui/scripts/fetch_windows_neovim.py
@@ -47,7 +50,7 @@ jobs:
           MODEL_MAVEN_TUI_SOURCE: ${{ github.workspace }}/model-maven-tui
           MODEL_MAVEN_TUI_BIN: ${{ github.workspace }}/model-maven-tui/target/release/m-model-tui.exe
           MODEL_MAVEN_REDUCE_MOTION: '1'
-        run: '& $env:MM_CI_NVIM --headless -u NONE -l model-maven-tui/scripts/verify_live_preview_terminal.lua'
+        run: python model-maven-tui/scripts/verify_live_preview_windows.py
       - name: Package native binaries with notices
         run: |
           target=$(rustc -vV | sed -n 's/^host: //p')

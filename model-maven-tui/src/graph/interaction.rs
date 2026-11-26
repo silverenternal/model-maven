@@ -637,7 +637,7 @@ struct MouseMode;
 
 impl Drop for MouseMode {
     fn drop(&mut self) {
-        let mut output = io::stderr().lock();
+        let mut output = menu::output().lock();
         let _ = output.write_all(b"\x1b[?1003l\x1b[?1006l\x1b[?1004l");
         let _ = output.flush();
     }
@@ -1535,7 +1535,7 @@ fn run_inner(
     let terminal = menu::Terminal::open()?;
     handoff.enter_screen()?;
     let _mouse = MouseMode;
-    let color = layout::color_enabled(io::stderr().is_terminal());
+    let color = layout::color_enabled(menu::output().is_terminal());
     let query_background = color
         && Background::override_from_env().is_none()
         && (matches!(
@@ -1543,7 +1543,7 @@ fn run_inner(
             Ok("xterm-ghostty" | "xterm-kitty")
         ) || std::env::var("TERM_PROGRAM").as_deref() == Ok("ghostty"));
     let mut display = pixels::supported(color).then(pixels::Display::default);
-    let mut output = io::stderr().lock();
+    let mut output = menu::output().lock();
     output.write_all(b"\x1b[?1006h\x1b[?1003h\x1b[?1004h")?;
     if query_background {
         output.write_all(b"\x1b]11;?\x1b\\")?;
