@@ -20,7 +20,6 @@ jobs:
           MODEL_MAVEN_TUI_BIN: ${{ github.workspace }}/model-maven-tui/target/release/m-model-tui.exe
           MODEL_MAVEN_REDUCE_MOTION: '1'
           MM_PREVIEW_TRACE: C:/mm-preview-trace.txt
-          MM_PREVIEW_TRACE: C:/mm-preview-trace.txt
         run: |
           & $env:MM_CI_NVIM --headless -u NONE -l model-maven-tui/scripts/verify_live_preview_terminal.lua
           $result = $LASTEXITCODE
